@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import random as _random
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -41,9 +42,6 @@ from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNI
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
 
-# MVP: one attempt. An unmeasured retry is a guess; retry policy is day 4 (§27.5).
-MAX_ATTEMPTS = 1
-
 
 def register(executor: StepExecutor) -> StepExecutor:
     EXECUTORS[executor.kind] = executor
@@ -53,6 +51,12 @@ def register(executor: StepExecutor) -> StepExecutor:
 class Abandon(Exception):
     """Leave the run without journaling anything: the pre-dispatch gate refused, or the fence went
     away mid-attempt. The successor disposes the open step from journal state alone (§8.2)."""
+
+
+class Drain(Exception):
+    """SIGTERM arrived and the next step would be live work. Stop at the step boundary, release the
+    lease voluntarily, append nothing special: the next holder's RECOVERY_STARTED{cause=DRAIN} is
+    the whole record (§5, drain). Draining is not a lifecycle state."""
 
 
 class Suspended(Exception):
@@ -77,6 +81,7 @@ class StepEngine:
         provider: Any = None,
         tools: Any = None,
         clock: Any = None,
+        should_drain: Callable[[], bool] | None = None,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -85,6 +90,7 @@ class StepEngine:
         self.provider = provider
         self.tools = tools
         self.clock = clock
+        self.should_drain = should_drain
         self.live_from_step: int | None = None
         self.replayed_steps = 0
         self.recovery_completed = False
@@ -103,6 +109,11 @@ class StepEngine:
             if journaled.state == RESOLVED_UNKNOWN:
                 raise Suspended("resolved_unknown", {"step_index": intent.step_index})
             return await self._recover_open(intent, journaled)
+        # The one boundary where stopping is free: everything behind is journaled, nothing ahead
+        # has been attempted. An in-flight step is never interrupted — it is already bounded by
+        # `asyncio.timeout(tool.timeout)`, which is what `shutdown_grace` must exceed.
+        if self.should_drain is not None and self.should_drain():
+            raise Drain(f"draining at step {intent.step_index}")
         await self._reach_live(intent.step_index)
         return await self._live(intent)
 
@@ -345,24 +356,15 @@ class StepEngine:
                     await tx.update_effect(intent.effect_key or "", status="AMBIGUOUS", outcome_seq=seq)
                     await tx.set_run(attempt_deadline=None)
                 return await self._resolve(intent, n)
-            if n >= MAX_ATTEMPTS:
-                # PURE / IDEMPOTENT / MODEL are safe to re-run, but MVP allows one attempt only.
-                async with self.journal.append(self.lease) as tx:
-                    await tx.append(
-                        StepFailedEvent(
-                            step_index=intent.step_index,
-                            attempt_no=n,
-                            error="attempt_abandoned",
-                            retryable=True,
-                        )
-                    )
-                    if intent.kind is StepKind.TOOL:
-                        await tx.update_effect(intent.effect_key or "", status="ABSENT")
-                    await tx.set_run(attempt_deadline=None)
-                raise StepFailed(intent.step_index, "attempt_abandoned", retryable=True)
-            return await self._start_attempt(
-                intent, n + 1, close=(n, "attempt_abandoned")
-            )
+            # PURE / MODEL re-run; IDEMPOTENT re-runs under the SAME effect_key, which the key
+            # derivation guarantees: it is (run_root_id, step_index, tool, canonical_args), none of
+            # which an attempt changes, so a receiver that honours the key applies it once (§8.3).
+            #
+            # This is recovery, not retry: a FAILED outcome still ends the run, because the MVP
+            # runs one attempt and an unmeasured retry policy is a guess (day 4, §27.5). But an
+            # attempt a crash abandoned has no outcome to retry from, and refusing to re-run it
+            # would fail every run the IDEMPOTENT band exists to measure.
+            return await self._start_attempt(intent, n + 1, close=(n, "attempt_abandoned"))
         if state == AMBIGUOUS:
             return await self._resolve(intent, journaled.attempts)
         if state == FAILED:

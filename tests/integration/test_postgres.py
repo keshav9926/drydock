@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import os
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 
+from crashproof.workloads.tool_chain_1_effect import build_world
+from crashproof.world.server import WorldServer
 from keel import Keel
 from keel.agents import demo
 from keel.core.errors import Fenced
@@ -46,23 +46,22 @@ async def journal():
 
 
 @pytest.fixture
-def sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "world.jsonl"
-    monkeypatch.setattr(demo, "SINK", path)
-    return path
+async def world(monkeypatch: pytest.MonkeyPatch):
+    w = build_world()
+    server = WorldServer(w, port=0)
+    await server.start()
+    monkeypatch.setattr(demo, "WORLD_URL", server.base_url)
+    try:
+        yield w
+    finally:
+        await server.stop()
 
 
-def receipts(sink: Path) -> list[dict]:
-    if not sink.exists():
-        return []
-    return [json.loads(x) for x in sink.read_text(encoding="utf8").splitlines() if x.strip()]
-
-
-def _keel(journal) -> Keel:
+def _keel(journal, variant: str = "EXTERNAL") -> Keel:
     return Keel(
         journal=journal,
         provider=ScriptedProvider(demo.SCRIPT),
-        tools=[demo.search, demo.create_issue],
+        tools=[demo.search, demo.create_issue_tool(variant)],
         programs=[demo.tool_chain],
     )
 
@@ -92,26 +91,27 @@ async def test_two_workers_one_run_only_one_appends(journal) -> None:
     assert events[-1].body.reason == "successor"
 
 
-async def test_clean_run(journal, sink: Path) -> None:
+async def test_clean_run(journal, world) -> None:
     k = _keel(journal)
     result = await k.run(demo.tool_chain, {"task": "file an issue"})
     assert result.phase == "COMPLETED"
-    assert len(receipts(sink)) == 1
+    assert world.applied_counts() == {"issues.create#1": 1}
     row = await journal.run_row(result.run_id)
     assert row.phase == "COMPLETED" and row.terminal_at is not None
     assert row.lease_expires_at is None
 
 
-async def test_crash_after_effect_resumes_without_redeciding(journal, sink: Path) -> None:
+async def test_crash_after_effect_resumes_without_redeciding(journal, world) -> None:
     k = _keel(journal)
+    world.hold("issues.create", 400)  # the response is withheld: the kill lands in the window
     handle = await k.start(demo.tool_chain, {"task": "file an issue"})
     lease = await journal.claim("w1", TTL)
     task = asyncio.create_task(k.worker(worker_id="w1", lease_ttl=2.0).execute(lease))
     for _ in range(400):
-        if receipts(sink):
+        if world.receipt_counts().get("issues.create#1"):
             break
         await asyncio.sleep(0.005)
-    assert receipts(sink)
+    assert world.receipt_counts().get("issues.create#1")
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
@@ -125,7 +125,7 @@ async def test_crash_after_effect_resumes_without_redeciding(journal, sink: Path
 
     view = await k.get(handle.run_id)
     assert view.phase == "COMPLETED"
-    assert len(receipts(sink)) == 1
+    assert world.applied_counts()["issues.create#1"] == 1
     assert [(s.step_index, s.state, s.origin) for s in view.steps] == [
         (0, "COMPLETED", "memo"),
         (1, "COMPLETED", "memo"),
@@ -176,3 +176,25 @@ async def test_duplicate_effect_key_is_loud(journal) -> None:
                     intent_seq=seq,
                 )
             )
+
+
+async def test_sigterm_hands_the_run_back(journal, world) -> None:
+    """Drain against the real schema. The memory journal and Postgres can disagree in exactly two
+    places — the four control-plane statements and the CHECK constraints — so both are tested here.
+    """
+    k = _keel(journal)
+    handle = await k.start(demo.tool_chain, {"task": "file an issue"})
+    w = k.worker(worker_id="w1", lease_ttl=2.0)
+    w.draining = True
+    await w.execute(await journal.claim("w1", TTL))
+
+    row = await journal.run_row(handle.run_id)
+    assert row.lease_expires_at is None and row.runnable_reason == "DRAIN"
+    assert [e.type for e in await journal.read(handle.run_id)] == ["RUN_CREATED", "RECOVERY_STARTED"]
+    assert (await journal.recoveries(handle.run_id))[0].outcome == "RELEASED"
+
+    second = await journal.claim("w2", TTL)
+    assert second.cause == "DRAIN"
+    await k.worker(worker_id="w2", lease_ttl=2.0).execute(second)
+    assert (await k.get(handle.run_id)).phase == "COMPLETED"
+    assert world.applied_counts()["issues.create#1"] == 1

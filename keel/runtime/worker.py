@@ -13,7 +13,7 @@ import os
 import signal
 import socket
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from collections.abc import Callable
 from typing import Any
 
@@ -28,7 +28,7 @@ from keel.events import (
 )
 from keel.journal.protocol import JournalBackend, Lease
 from keel.runtime.ctx import Ctx
-from keel.runtime.steps import Abandon, StepEngine, Suspended
+from keel.runtime.steps import Abandon, Drain, StepEngine, Suspended
 from keel.state.fold import fold
 
 DEFAULT_LEASE_TTL = 30.0
@@ -130,6 +130,7 @@ class Worker:
             provider=self.provider,
             tools=self.tools,
             clock=self.clock,
+            should_drain=lambda: self.draining,
         )
         ctx = Ctx(
             engine,
@@ -171,6 +172,14 @@ class Worker:
             return
         except StepFailed as exc:
             await self._finish(engine, lease, RunFailed(error=exc.error, step_index=exc.step_index), "FAILED")
+            return
+        except Drain:
+            # SIGTERM: hand the run back rather than hold it until the lease lapses. Nothing is
+            # appended — `runnable_at = now()` and a NULL lease are the entire handover, and the
+            # successor's RECOVERY_STARTED{cause=DRAIN} records that it happened (§5).
+            now = self.clock.now() if self.clock is not None else datetime.now(UTC)
+            await journal.release(lease, runnable_at=now, runnable_reason="DRAIN")
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome="RELEASED")
             return
         except Abandon:
             # Append nothing, release nothing: the lease lapses and the successor disposes the open

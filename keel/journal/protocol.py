@@ -175,6 +175,7 @@ class JournalBackend(Protocol):
         runnable_at: datetime | None = None,
         wake_at: datetime | None = None,
         phase: str | None = None,
+        runnable_reason: str | None = None,
     ) -> None: ...
 
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]: ...

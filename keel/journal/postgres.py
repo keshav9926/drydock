@@ -396,14 +396,16 @@ class PostgresJournal:
         runnable_at: datetime | None = None,
         wake_at: datetime | None = None,
         phase: str | None = None,
+        runnable_reason: str | None = None,
     ) -> None:
         pool = await self._ready()
         async with pool.connection() as conn:
             await conn.execute(
                 "UPDATE runs SET lease_expires_at = NULL, runnable_at = %s, wake_at = %s,"
-                " phase = coalesce(%s, phase), attempt_deadline = NULL, updated_at = now()"
+                " phase = coalesce(%s, phase), runnable_reason = %s,"
+                " attempt_deadline = NULL, updated_at = now()"
                 " WHERE run_id = %s AND lease_epoch = %s AND lease_expires_at IS NOT NULL",
-                (runnable_at, wake_at, phase, lease.run_id, lease.epoch),
+                (runnable_at, wake_at, phase, runnable_reason, lease.run_id, lease.epoch),
             )
             await conn.execute(
                 "UPDATE recoveries SET released_at = now() WHERE run_id = %s AND lease_epoch = %s",

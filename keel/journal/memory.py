@@ -24,6 +24,12 @@ from keel.journal.blobs import MemoryBlobStore, externalise, internalise
 from keel.journal.protocol import EffectRow, Lease, RecoveryRow, RunRow
 
 _TERMINAL = {"RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"}
+# The `recoveries.outcome` CHECK, mirrored. Postgres and this backend can disagree in exactly two
+# places — the four control-plane statements and the CHECK constraints — so this one is copied
+# rather than trusted: a permissive memory backend makes every fast test a lie.
+_RECOVERY_OUTCOMES = frozenset(
+    {"LIVE", "WAITING", "TERMINAL", "SUSPENDED", "FENCED", "RELEASED", "CRASHED", "FORCED_CANCEL"}
+)
 
 
 class _MemoryAppendTx:
@@ -262,6 +268,7 @@ class MemoryJournal:
         runnable_at: datetime | None = None,
         wake_at: datetime | None = None,
         phase: str | None = None,
+        runnable_reason: str | None = None,
     ) -> None:
         async with self._lock:
             run = self._runs.get(lease.run_id)
@@ -269,6 +276,7 @@ class MemoryJournal:
                 return
             run.lease_expires_at = None
             run.runnable_at = runnable_at
+            run.runnable_reason = runnable_reason
             run.wake_at = wake_at
             if phase:
                 run.phase = phase
@@ -338,6 +346,8 @@ class MemoryJournal:
         return rows
 
     async def set_recovery(self, run_id: RunId, lease_epoch: int, **fields: Any) -> None:
+        if fields.get("outcome") is not None and fields["outcome"] not in _RECOVERY_OUTCOMES:
+            raise IllegalTransition(f"unknown recovery outcome {fields['outcome']!r}")
         row = self._recoveries.get((run_id, lease_epoch))
         if row is None:
             return

@@ -1,0 +1,54 @@
+# W1 — the workload matrix v0 is built on (§13.2, §14.1).
+#
+# Runtime-neutral by construction: it names tools with effect classes, World endpoints with dedup
+# flags, a decision script that is a pure function of request content, and the expected end state.
+# Nothing here references a checkpointer, an activity, a step id or a journal — that is what makes
+# the same document runnable against Keel and against LangGraph.
+workload: tool_chain_1_effect
+version: 1
+budget: {max_model_calls: 6, max_tokens: 20000}
+tool_timeout_s: 1
+
+tools:
+  - {name: search, effect_class: PURE, endpoint: kv.search}
+  - {name: create_issue, effect_class: EXTERNAL, endpoint: issues.create, resolution: probe}
+
+# The two published bands. Variant B differs from A in one line, which is the point: the class and
+# the receiver change, the program does not (§28.3).
+variants:
+  EXTERNAL:
+    key_source: none
+    tools:
+      - {name: create_issue, effect_class: EXTERNAL, endpoint: issues.create, resolution: probe}
+    required_effects: ["issues.create#1"]
+    world_state: {"issues.create#1": 1}
+  IDEMPOTENT:
+    key_source: framework
+    tools:
+      - {name: create_issue, effect_class: IDEMPOTENT, endpoint: issues.upsert, idempotency: KEY}
+    required_effects: ["issues.upsert#1"]
+    world_state: {"issues.upsert#1": 1}
+
+world:
+  endpoints:
+    - {id: kv.search, service: kv, dedup: false, natural: false, kind: read}
+    - {id: issues.create, service: issues, dedup: false, natural: false, kind: write, logical_identity: [title]}
+    - {id: issues.upsert, service: issues, dedup: true, natural: true, kind: write, logical_identity: [title]}
+
+# The node is selected by key = the ordered [(tool_name, occurrence)] pairs answered in the
+# request. Tool result *content* is never part of the key, only of `@x.result` templating — so a
+# runtime that duplicates an effect gets a measured duplicate rather than a broken script.
+script:
+  - key: []
+    decision: {tool_calls: [{name: search, args: {q: "flaky test in ci"}}]}
+  - key: [[search, 1]]
+    decision: {tool_calls: [{name: create_issue, args: {title: "CI flake: test_retry", body: "@search.result"}}]}
+    alternate: {tool_calls: [{name: create_issue, args: {title: "CI flake (rephrased)", body: "@search.result"}}]}
+  - key: [[search, 1], [create_issue, 1]]
+    decision: {final: "Created issue @create_issue.result.id"}
+
+# `required_effects` and `world_state` are per variant, because they name the endpoint under test;
+# status and result are not, because the program is the same program.
+expected:
+  status: COMPLETED
+  result: {matches: "Created issue .*"}
