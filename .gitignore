@@ -10,3 +10,6 @@ bench/results/
 # demo receiver logs
 .demo-sink.jsonl
 keel-demo-sink.jsonl
+
+# working notes and phase write-ups: explanation, not source
+notes/

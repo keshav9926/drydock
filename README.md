@@ -1,8 +1,10 @@
-# keel
+# drydock
 
-**Keel** — a single-node, event-sourced, agent-native durable execution runtime (Python, Postgres).
-**Crashproof** — the fault-injection and conformance harness that runs Keel *and other runtimes* through
-the same workloads under the same faults, and publishes a matrix. Built from day 2.
+Two things live here, and the second is the point of the first.
+
+**`keel/`** — a single-node, event-sourced, agent-native durable execution runtime (Python, Postgres).
+**`crashproof/`** — the fault-injection and conformance harness that runs Keel *and other runtimes*
+through the same workloads under the same faults, and publishes a matrix. Built from phase 2.
 
 > Framework checkpoints are snapshots; durable execution means someone notices the crash, resumes, and
 > neither double-fires nor loses an effect. An agent that cannot survive `kill -9` is a demo.
