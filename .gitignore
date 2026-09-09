@@ -13,3 +13,6 @@ keel-demo-sink.jsonl
 
 # working notes and phase write-ups: explanation, not source
 notes/
+
+# agent working brief: tooling, not source
+CLAUDE.md
