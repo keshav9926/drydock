@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+bench/results/
+.env
+
+# demo receiver logs
+.demo-sink.jsonl
+keel-demo-sink.jsonl

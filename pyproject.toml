@@ -1,0 +1,30 @@
+[project]
+name = "keel"
+version = "0.1.0"
+description = "Keel — an event-sourced, agent-native durable execution runtime, and Crashproof, its conformance harness."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.9",
+  "psycopg[binary,pool]>=3.2",
+  "typer>=0.12",
+  "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "hypothesis>=6.112"]
+anthropic = ["anthropic>=0.40"]
+
+[project.scripts]
+keel = "keel.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["keel", "crashproof"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
