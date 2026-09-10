@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -109,6 +110,17 @@ class Workload(Frozen):
         """What `world_from_endpoints` consumes — the World is declared here but does not import
         this module."""
         return [e.model_dump() for e in self.world.endpoints]
+
+    @staticmethod
+    def node_key(tool_names: "Sequence[str]") -> tuple[tuple[str, int], ...]:
+        """The ordered (tool, occurrence) pairs answered so far — the only thing about a decision
+        node that is stable across a restart, and therefore the only sound way to select one."""
+        seen: dict[str, int] = {}
+        key = []
+        for name in tool_names:
+            seen[name] = seen.get(name, 0) + 1
+            key.append((name, seen[name]))
+        return tuple(key)
 
     def node_for(self, key: tuple[tuple[str, int], ...]) -> ScriptNode | None:
         for node in self.script:

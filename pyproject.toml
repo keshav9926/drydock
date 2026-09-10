@@ -15,6 +15,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "hypothesis>=6.112"]
 anthropic = ["anthropic>=0.40"]
+langgraph = [
+    "langgraph>=0.2",
+    "langgraph-checkpoint-postgres>=2.0",
+]
 
 [project.scripts]
 keel = "keel.cli.main:main"

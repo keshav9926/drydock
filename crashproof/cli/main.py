@@ -46,6 +46,12 @@ def _adapters() -> dict[str, Any]:
         from crashproof.adapters.keel import KeelAdapter
 
         ADAPTERS["keel"] = KeelAdapter
+        try:
+            from crashproof.adapters.langgraph import LangGraphAdapter
+
+            ADAPTERS["langgraph"] = LangGraphAdapter
+        except ImportError:  # the extra is not installed; the column prints as a missing arm
+            pass
     return ADAPTERS
 
 

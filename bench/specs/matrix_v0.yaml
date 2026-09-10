@@ -29,8 +29,10 @@ triggers:
 adapters:
   - name: keel
     key_source: framework             # `effect_key` — a pure function of what Keel itself persists
+    # Keel's timing pins are adapter-owned constants (§13.4) and print themselves in config_pin;
+    # a config entry carries only what its adapter takes as an argument.
     configs:
-      - {id: default, lease_ttl_s: 2, tool_timeout_s: 1}
+      - {id: default}
   # LangGraph runs key_source=none: it has no documented idempotency-key primitive, and a
   # synthesised `thread_id + node` key would be an adapter's invention, not the framework's, so it
   # would be exploratory and never in the headline matrix (§13.6).

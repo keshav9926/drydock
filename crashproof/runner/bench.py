@@ -35,6 +35,7 @@ class Cell:
     trigger: str
     spec: FaultSpec
     key_source: str = "none"
+    settings: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_baseline(self) -> bool:
@@ -79,6 +80,7 @@ class Matrix:
                                 variant=variant["id"],
                                 trigger=trigger,
                                 key_source=adapter.get("key_source", "none"),
+                                settings={k: v for k, v in config.items() if k != "id"},
                                 spec=self._spec_for(trigger, variant["id"]),
                             )
                         )
@@ -141,7 +143,7 @@ async def run_matrix(
         for seed in matrix.seed_range():
             if (cell.id, seed) in already:
                 continue
-            adapter = factory(workload, cell.variant)
+            adapter = factory(workload, cell.variant, **cell.settings)
             row = await run_trial(
                 adapter=adapter,
                 workload=workload,

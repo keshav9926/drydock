@@ -177,19 +177,14 @@ class WorkloadProvider:
 
 
 def node_key(req: Any) -> tuple[tuple[str, int], ...]:
-    """The ordered (tool_name, occurrence) pairs answered in this request. Stable across a restart,
-    which is the whole reason it is the key."""
-    seen: dict[str, int] = {}
-    key: list[tuple[str, int]] = []
-    for message in req.messages:
-        if message.role != "tool_result":
-            continue
-        name = message.content.get("tool") if isinstance(message.content, dict) else None
-        if not name:
-            continue
-        seen[name] = seen.get(name, 0) + 1
-        key.append((name, seen[name]))
-    return tuple(key)
+    """The tools this request already has answers for, in order."""
+    return Workload.node_key(
+        [
+            m.content["tool"]
+            for m in req.messages
+            if m.role == "tool_result" and isinstance(m.content, dict) and m.content.get("tool")
+        ]
+    )
 
 
 def _results_by_tool(req: Any) -> dict[str, Any]:
