@@ -6,6 +6,7 @@ This module has no I/O imports — VERIFY, the CLI and the TUI fold the same cod
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -61,6 +62,40 @@ class StepState:
 
 
 @dataclass(slots=True)
+class Charged:
+    """The budget projection: a run-wide fold, never bounded by a segment boundary, or a run would
+    forget what it had spent every few hundred steps (§16.4).
+
+    `tokens_charged` is an *upper bound* on what the provider billed, which is the whole point. A
+    model attempt with no outcome stays charged at its reservation for good: it may well have been
+    served, the runtime cannot know, so it assumes it was.
+    """
+
+    tokens_charged: int = 0
+    model_calls: int = 0  # STARTED attempts, not outcomes
+    tool_calls: int = 0
+    reserved: dict[tuple[int, int], int] = field(default_factory=dict)
+
+    def start(self, step_index: int, attempt_no: int, reservation: int | None, kind: str) -> None:
+        if kind in ("MODEL", "COMPACT"):
+            self.model_calls += 1
+            if reservation:
+                self.tokens_charged += reservation
+                self.reserved[(step_index, attempt_no)] = reservation
+        elif kind == "TOOL":
+            self.tool_calls += 1
+
+    def settle(self, step_index: int, attempt_no: int, usage: dict[str, int] | None) -> None:
+        """Swap the reservation for what the attempt actually reported. An outcome carrying no
+        usage — a provider error — leaves the reservation charged."""
+        reservation = self.reserved.pop((step_index, attempt_no), None)
+        if reservation is None or usage is None:
+            return
+        self.tokens_charged -= reservation
+        self.tokens_charged += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+
+
+@dataclass(slots=True)
 class RunState:
     run_id: UUID | None = None
     program: str = ""
@@ -77,6 +112,8 @@ class RunState:
     live_from_step: dict[int, int] = field(default_factory=dict)
     recovery_cause: dict[int, str] = field(default_factory=dict)
     recovery_open: bool = False
+    budget: Mapping[str, Any] = field(default_factory=dict)
+    charged: Charged = field(default_factory=Charged)
 
     # --- what re-execution asks -------------------------------------------
     def step(self, step_index: int) -> StepState | None:
@@ -155,6 +192,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.program = b.program
         st.program_version = b.program_version
         st.args = b.args
+        st.budget = b.budget
         st.phase = "CREATED"
     elif t == "RECOVERY_STARTED":
         st.epochs.append(b.lease_epoch)
@@ -192,8 +230,10 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s = st.steps[b.step_index]
         s.state = RUNNING
         s.attempts = b.attempt_no
+        st.charged.start(b.step_index, b.attempt_no, b.reservation, s.kind)
     elif t == "STEP_COMPLETED":
         s = st.steps[b.step_index]
+        st.charged.settle(b.step_index, b.attempt_no, b.usage)
         s.state = COMPLETED
         s.result = b.result
         s.outcome_seq = ev.seq

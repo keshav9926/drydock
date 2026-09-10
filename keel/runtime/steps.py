@@ -38,6 +38,8 @@ from keel.events import (
 )
 from keel.journal.protocol import EffectRow, JournalBackend, Lease
 from keel.providers.protocol import ModelRequest
+from keel.runtime.budget import BudgetExceeded, Reservation, admit, reserve_model, reserve_tool
+from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNING, RunState
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
@@ -85,6 +87,7 @@ class StepEngine:
         tools: Any = None,
         clock: Any = None,
         should_drain: Callable[[], bool] | None = None,
+        retry: RetryPolicy = NO_RETRY,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -94,6 +97,7 @@ class StepEngine:
         self.tools = tools
         self.clock = clock
         self.should_drain = should_drain
+        self.retry = retry
         self.live_from_step: int | None = None
         self.replayed_steps = 0
         self.recovery_completed = False
@@ -147,11 +151,35 @@ class StepEngine:
             outcome="LIVE",
         )
 
+    async def _reserve(self, intent: StepIntent) -> Reservation:
+        """What this attempt could cost, computed before the barrier so a refusal costs nothing."""
+        if intent.kind is StepKind.TOOL:
+            return reserve_tool()
+        if intent.kind not in (StepKind.MODEL, StepKind.COMPACT) or self.provider is None:
+            return Reservation()
+        req = ModelRequest.model_validate(intent.args)
+        return reserve_model(await self.provider.count_tokens(req), req.max_tokens)
+
+    async def _refuse(self, intent: StepIntent, exc: BudgetExceeded) -> None:
+        """A pre-dispatch refusal: attempt_no 0, never retryable, no attempt and so no bill."""
+        async with self.journal.append(self.lease) as tx:
+            await tx.append(
+                StepFailedEvent(
+                    step_index=intent.step_index, attempt_no=0, error=str(exc), retryable=False
+                )
+            )
+        raise StepFailed(intent.step_index, str(exc), retryable=False)
+
     # --- live path (§5.10 transaction shapes) --------------------------------
     async def _live(self, intent: StepIntent) -> Any:
         tool = self._tool_of(intent)
         timeout = getattr(tool, "timeout", 60.0)
         eff_class = intent.effect_class
+        reservation = await self._reserve(intent)
+        try:
+            admit(self.state.budget, self.state.charged, reservation)
+        except BudgetExceeded as exc:
+            await self._refuse(intent, exc)
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent))
             now = await tx.now()
@@ -177,6 +205,7 @@ class StepEngine:
                     lease_epoch=self.lease.epoch,
                     started_at=now,
                     attempt_deadline=deadline,
+                    reservation=reservation.tokens or None,
                 ),
                 causation_seq=intent_seq,
             )
@@ -190,6 +219,7 @@ class StepEngine:
                 )
             if deadline is not None:
                 await tx.set_run(attempt_deadline=deadline)
+        self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout)
 
@@ -202,6 +232,11 @@ class StepEngine:
         tool = self._tool_of(intent)
         timeout = getattr(tool, "timeout", 60.0)
         eff_class = intent.effect_class
+        reservation = await self._reserve(intent)
+        try:
+            admit(self.state.budget, self.state.charged, reservation)
+        except BudgetExceeded as exc:
+            await self._refuse(intent, exc)
         async with self.journal.append(self.lease) as tx:
             if close is not None:
                 await tx.append(close)
@@ -214,6 +249,7 @@ class StepEngine:
                     lease_epoch=self.lease.epoch,
                     started_at=now,
                     attempt_deadline=deadline,
+                    reservation=reservation.tokens or None,
                 )
             )
             if intent.kind is StepKind.TOOL:
@@ -226,6 +262,9 @@ class StepEngine:
                 )
             if deadline is not None:
                 await tx.set_run(attempt_deadline=deadline)
+        self.state.charged.start(
+            intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind)
+        )
         return await self._dispatch(intent, attempt_no, started_seq, deadline, timeout)
 
     async def _dispatch(
@@ -329,8 +368,15 @@ class StepEngine:
             # The zombie's outcome append is rejected: the journal never records that effect (§8.4).
             raise Abandon("fenced at outcome commit") from exc
         if isinstance(outcome, Completed):
+            self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
             return outcome.result
         if isinstance(outcome, Failed):
+            if outcome.retryable and self.retry.may_retry(attempt_no):
+                # An EXTERNAL timeout never reaches here — it is AMBIGUOUS, because retrying a
+                # request that left the process is exactly how systems duplicate effects (§8.5).
+                delay = self.retry.backoff_s(attempt_no, lease_ttl_s=self.lease.ttl_seconds)
+                await asyncio.sleep(delay)  # inside the lease, with the heartbeat still running
+                return await self._start_attempt(intent, attempt_no + 1)
             raise StepFailed(intent.step_index, outcome.error, retryable=outcome.retryable)
         return await self._resolve(intent, attempt_no)
 

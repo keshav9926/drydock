@@ -28,6 +28,7 @@ from keel.events import (
 )
 from keel.journal.protocol import JournalBackend, Lease
 from keel.runtime.ctx import Ctx
+from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, StepEngine, Suspended
 from keel.state.fold import fold
 
@@ -52,6 +53,7 @@ class Worker:
         lease_ttl: float = DEFAULT_LEASE_TTL,
         shutdown_grace: float = 10.0,
         poll: float = 1.0,
+        retry: RetryPolicy = NO_RETRY,
     ) -> None:
         self.journal = journal
         self.resolve = resolve
@@ -62,6 +64,7 @@ class Worker:
         self.lease_ttl = lease_ttl
         self.shutdown_grace = shutdown_grace
         self.poll = poll
+        self.retry = retry
         self.draining = False
         # `lease_ttl` must exceed the largest registered non-PURE tool.timeout, or the pre-dispatch
         # gate could never clear and every attempt would abandon with STARTED open (§8.4).
@@ -131,6 +134,7 @@ class Worker:
             tools=self.tools,
             clock=self.clock,
             should_drain=lambda: self.draining,
+            retry=self.retry,
         )
         ctx = Ctx(
             engine,
