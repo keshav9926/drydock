@@ -15,6 +15,7 @@ it, which is the honest disposal of a fault whose effect nobody can observe.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -96,6 +97,7 @@ class Injector:
                 params=entry.params,
                 trigger_observed_at=time.time(),
                 trigger_observed_mono_ns=time.monotonic_ns(),
+                sut_pid=os.getpid(),
                 sut_ref=self.sut_ref() if self.sut_ref else {},
             )
         )

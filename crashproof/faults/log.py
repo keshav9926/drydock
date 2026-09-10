@@ -61,6 +61,12 @@ class FaultFired(BaseModel):
     params: dict[str, Any] = {}
     trigger_observed_at: float = 0.0
     trigger_observed_mono_ns: int = 0
+    #: The firing process's *own* pid. The supervisor cannot infer it: a venv launcher shim (Windows
+    #: Store Python is one) makes `Popen.pid` the launcher, with the real interpreter a grandchild.
+    #: Killing a tree hides that; freezing one does not, and a freeze aimed at a launcher freezes
+    #: nothing. So the only process that knows for certain says so, in the row it was going to
+    #: write anyway.
+    sut_pid: int = 0
     sut_ref: dict[str, Any] = {}
 
 

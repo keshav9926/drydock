@@ -43,6 +43,12 @@ LEASE_TTL_S = 2.0
 TOOL_TIMEOUT_S = 1.0
 HEARTBEAT_S = LEASE_TTL_S / 3
 PAUSE_MS = 3000.0  # pinned, not drawn: "past the TTL" must mean one thing in the Keel arm
+# How often a worker looks for claimable work. At the default 1 s a successor can lose the race to
+# a 3 s freeze it was meant to take over from, which would leave the zombie cell measuring nothing
+# about fencing. It is a detection setting like the reaper's period, so it is pinned and printed
+# rather than left at a default that happens to matter (§13.4).
+CLAIM_POLL_S = 0.2
+REAPER_PERIOD_S = 0.2
 
 ENV_WORLD = "CRASHPROOF_WORLD_URL"
 ENV_DSN = "CRASHPROOF_KEEL_DSN"
@@ -265,6 +271,8 @@ class KeelAdapter:
             tool_timeout_s=TOOL_TIMEOUT_S,
             heartbeat_s=HEARTBEAT_S,
             successor_start_delay_s=SUCCESSOR_START_DELAY_S if worker_count > 1 else None,
+            claim_poll_s=CLAIM_POLL_S,
+            reaper_period_s=REAPER_PERIOD_S,
             retry="max_attempts=1",
             worker_count=worker_count,
             pause_ms=PAUSE_MS,
@@ -535,10 +543,10 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         # it would mark the run ORPHANED and leave it there. So the second observer is a whole
         # worker — it simply waits long enough that the first one gets the run (§11.2).
         await asyncio.sleep(float(os.environ.get("CRASHPROOF_KEEL_START_DELAY_S", SUCCESSOR_START_DELAY_S)))
-    worker = app.worker(worker_id=f"{role}-{os.getpid()}", lease_ttl=LEASE_TTL_S)
+    worker = app.worker(worker_id=f"{role}-{os.getpid()}", lease_ttl=LEASE_TTL_S, poll=CLAIM_POLL_S)
     tasks = [
         asyncio.create_task(worker.run_forever()),
-        asyncio.create_task(Reaper(app.journal, period=0.2).run_forever()),
+        asyncio.create_task(Reaper(app.journal, period=REAPER_PERIOD_S).run_forever()),
     ]
     try:
         await asyncio.gather(*tasks)

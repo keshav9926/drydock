@@ -44,6 +44,8 @@ class ConfigPin:
     worker_count: int = 1
     pause_ms: float | None = None
     successor_start_delay_s: float | None = None
+    claim_poll_s: float | None = None
+    reaper_period_s: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:

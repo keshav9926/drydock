@@ -82,6 +82,7 @@ class Supervisor:
         self._sut: subprocess.Popen | None = None
         self._others: list[subprocess.Popen] = []
         self._seen_faults: set[str] = set()
+        self._logs: list[Any] = []
 
     # --- the loop ------------------------------------------------------------
     async def run(self, submit: Any) -> SupervisorResult:
@@ -124,10 +125,7 @@ class Supervisor:
             Cursor(trial_id=self.trial_id, recovery_index=recovery_index, started_at=time.time())
         )
         proc = subprocess.Popen(
-            self.argv,
-            env={**os.environ, **self.env},
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            self.argv, env={**os.environ, **self.env}, **self._output(f"sut-{recovery_index}")
         )
         self.trial.write_cursor(
             Cursor(
@@ -150,10 +148,17 @@ class Supervisor:
                 subprocess.Popen(
                     self.argv,
                     env={**os.environ, **self.env, **self.secondary_env},
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    **self._output(f"successor-{len(self._others)}"),
                 )
             )
+
+    def _output(self, name: str) -> dict[str, Any]:
+        """A SUT's own output goes to a file in its trial directory. Discarding it means a worker
+        that dies on startup leaves no trace at all, and the trial reports a timeout with no
+        explanation — which is exactly the shape of a harness bug hiding as a finding."""
+        log = (self.trial.path / "sut" / f"{name}.log").open("w", encoding="utf8", errors="replace")
+        self._logs.append(log)
+        return {"stdout": log, "stderr": subprocess.STDOUT}
 
     def _close_incarnation(self) -> None:
         if self._sut is None:
@@ -163,6 +168,8 @@ class Supervisor:
         current.ended_at = time.time()
 
     def _stop_all(self) -> None:
+        for log in self._logs:
+            log.close()
         for proc in ([self._sut] if self._sut else []) + self._others:
             if proc.poll() is None:
                 process.resume(proc.pid)  # a frozen process cannot be killed until it is thawed
@@ -184,8 +191,10 @@ class Supervisor:
             if row.type != "pause_past_ttl":
                 continue
             pause_ms = float(row.params.get("pause_ms", DEFAULT_PAUSE_MS))
-            pid = self._sut.pid if self._sut else None
-            if pid is None:
+            # The firing process's own pid, not `Popen.pid`: a launcher shim makes those different,
+            # and a freeze aimed at the launcher stops nothing at all.
+            pid = row.sut_pid or (self._sut.pid if self._sut else 0)
+            if not pid:
                 continue
             process.suspend(pid)
             await asyncio.sleep(pause_ms / 1000.0)  # past the lease, past the attempt deadline
