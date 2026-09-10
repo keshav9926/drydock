@@ -28,8 +28,10 @@ while quietly re-firing a side effect looks identical, from the inside, to one t
   and `probe`. It is ground truth outside every runtime under test.
 - **Both published bands of matrix v0**, measured end to end. `create_issue` is registered twice under one
   name, and the program cannot tell which it is calling.
-- **The recovery table, completed.** A crash that abandons a `PURE` or `IDEMPOTENT` attempt now re-runs it
-  under the same `effect_key` instead of failing the run — recovery is not retry.
+- **The recovery table, completed.** A crash that abandons a `PURE` or `IDEMPOTENT` attempt re-runs it
+  under the same `effect_key` instead of failing the run, and a `probe` that comes back `ABSENT` takes the
+  same edge: the receiver has said the effect never landed, so there is nothing to guess about. Recovery
+  is not retry.
 - **Drain on SIGTERM** hands the run back at a step boundary rather than holding it until the lease lapses.
 - **Property tests** — the fold, the effect key and the step machine, on `MemoryJournal` + `FakeClock`.
 

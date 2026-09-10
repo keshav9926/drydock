@@ -128,10 +128,16 @@ def test_probe_answers_by_identity_and_by_key(world) -> None:
     assert oracle.probe(world, effect_key="never-sent")["verdict"] == "ABSENT"
 
 
-def test_probing_a_never_seen_identity_does_not_create_one(world) -> None:
-    oracle.probe(world, endpoint="issues.create", args={"title": "ghost"})
-    assert world.applied_counts() == {}
-    assert world.receipt_counts() == {}
+def test_probing_a_never_seen_identity_does_not_consume_a_landmark(world) -> None:
+    """An occurrence number is a landmark — `required_effects` and fault triggers are written in
+    them. Handing one to an identity that only ever got asked about would renumber the effect that
+    really arrives, and a correct run would fail 'no phantom completion' for a question."""
+    assert oracle.probe(world, endpoint="issues.create", args={"title": "ghost"})["verdict"] == "ABSENT"
+    assert world.label_for("issues.create", {"title": "ghost"}) is None
+    assert world.applied_counts() == {} and world.receipt_counts() == {}
+
+    landed = world.receive("issues.create", ISSUE)
+    assert landed["logical_identity"] == "issues.create#1", "the ghost took no number"
 
 
 async def test_client_and_oracle_over_http(served: WorldClient) -> None:

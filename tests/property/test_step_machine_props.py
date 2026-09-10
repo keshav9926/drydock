@@ -65,6 +65,41 @@ def test_a_crash_in_the_ambiguity_window_is_disposed_by_class(
 
 
 @PROP
+@given(effect_class=CLASSES, dedup=DEDUP, resolution=RESOLUTIONS)
+def test_a_crash_before_the_effect_costs_nothing_but_an_attempt(
+    effect_class: str, dedup: bool, resolution: str
+) -> None:
+    """The other side of the window: STARTED committed, the request never sent. Nothing happened,
+    so nothing has to be guessed about — a `probe` is told ABSENT and takes §7.4's at-least-once
+    edge, `RESOLVED_ABSENT -> STARTED(n+1)`, under the same key. This is the T1 cell of matrix v0
+    and the trace §11.2 predicts for `pause_past_ttl@before:tool_call`: one receipt, one applied,
+    a completed run.
+    """
+
+    async def check() -> None:
+        rig = build(
+            effect_class=effect_class, dedup=dedup, resolution=resolution, crash_before_effect=True
+        )
+        view = await rig.keel.get(await run_to_completion(rig))
+        step = view.steps[1]
+
+        if effect_class == "EXTERNAL" and resolution == "escalate":
+            # `escalate` cannot tell "never sent" from "sent and unknown", and that honesty costs a
+            # completed run. It is exactly what `probe` buys, and why the default is the cautious one.
+            assert step.state == "RESOLVED_UNKNOWN" and view.phase == "SUSPENDED"
+            assert rig.world.receipts == []
+            return
+
+        assert view.phase == "COMPLETED", f"{effect_class}/{resolution} did not recover"
+        assert step.state in ("COMPLETED", "RESOLVED_COMPLETED")
+        assert rig.world.receipt_counts()["svc.write#1"] == 1, "the effect is sent exactly once"
+        assert rig.world.applied_counts()["svc.write#1"] == 1
+        assert step.attempts == 2, "the abandoned attempt is closed and a second one carries it"
+
+    asyncio.run(check())
+
+
+@PROP
 @given(dedup=DEDUP, calls=CALLS)
 def test_the_effect_key_is_stable_across_attempts(dedup: bool, calls: int) -> None:
     """The one thing a fence cannot buy. A fence cannot reach a third party; only a key the

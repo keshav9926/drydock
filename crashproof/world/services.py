@@ -214,20 +214,31 @@ class World:
         entry = self._by_key.get(effect_key)
         return dict(entry.result) if entry else None
 
-    def label_for(self, endpoint_id: str, args: Mapping[str, Any]) -> str:
-        """The label this request *would* carry. Assigns an occurrence if the identity is new, so
-        a probe for something that never happened does not invent an applied entry."""
-        return self._label(self.endpoint(endpoint_id), dict(args))
+    def label_for(self, endpoint_id: str, args: Mapping[str, Any]) -> str | None:
+        """The label this request already carries, or None if the World has never seen it.
+
+        Deliberately non-allocating. An occurrence number is a landmark — `required_effects` and
+        fault triggers are written in them — so handing one to an identity that never arrived would
+        renumber the effect that does arrive, and a correct run would fail S3 for a request that
+        was only ever asked about.
+        """
+        ep = self.endpoint(endpoint_id)
+        return self._labels.get((ep.id, self._identity(ep, dict(args))))
 
     # --- identity, results, reads -------------------------------------------
-    def _label(self, ep: Endpoint, args: Mapping[str, Any]) -> str:
-        """`endpoint#occurrence` — the landmark faults and `required_effects` are written in."""
+    @staticmethod
+    def _identity(ep: Endpoint, args: Mapping[str, Any]) -> str:
+        """What makes two requests the same effect, regardless of any key presented."""
         fields = ep.logical_identity or tuple(sorted(args))
-        identity = json.dumps([args.get(f) for f in fields], sort_keys=True, default=str)
+        return json.dumps([args.get(f) for f in fields], sort_keys=True, default=str)
+
+    def _label(self, ep: Endpoint, args: Mapping[str, Any]) -> str:
+        """`endpoint#occurrence`, allocated on first arrival. Only `receive` may call this."""
+        identity = self._identity(ep, args)
         cached = self._labels.get((ep.id, identity))
         if cached is not None:
             return cached
-        occurrence = sum(1 for (e, _), _ in self._labels.items() if e == ep.id) + 1
+        occurrence = sum(1 for e, _ in self._labels if e == ep.id) + 1
         label = f"{ep.id}#{occurrence}"
         self._labels[(ep.id, identity)] = label
         return label

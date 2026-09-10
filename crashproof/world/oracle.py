@@ -49,10 +49,16 @@ def probe(
             return _committed(found, f"effect_key {effect_key} applied at {found['logical_identity']}")
     if endpoint is not None and args is not None:
         label = world.label_for(endpoint, args)
-        found = world.lookup(label)
+        found = world.lookup(label) if label else None
         if found is not None:
             return _committed(found, f"{label} applied {world.applied_counts()[label]}x")
-        return {"verdict": "ABSENT", "evidence": f"no application of {label}", "result": None}
+        # Asking about something is not the same as it having happened: an unseen identity has no
+        # landmark, and the probe must not hand it one (§13.2).
+        return {
+            "verdict": "ABSENT",
+            "evidence": f"no application at {endpoint} for {label or 'an identity never received'}",
+            "result": None,
+        }
     return {
         "verdict": "ABSENT",
         "evidence": f"no application under effect_key {effect_key}",

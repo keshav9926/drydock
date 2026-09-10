@@ -56,12 +56,14 @@ def build(
     tool_calls: int = 1,
     payload_bytes: int = 0,
     crash_after_effect: bool = False,
+    crash_before_effect: bool = False,
 ) -> Rig:
     """One rig: a World with one write endpoint, one tool of the given class, and a program that
     calls it `tool_calls` times with a model turn between each."""
     world = World([Endpoint(id=ENDPOINT, service="svc", kind="write", dedup=dedup, natural=natural,
                             logical_identity=("title",))])
     crash = [crash_after_effect]
+    crash_first = [crash_before_effect]
     cls = EffectClass[effect_class]
     sends_key = cls is EffectClass.IDEMPOTENT  # F1 for the band that claims a key; F0 otherwise
 
@@ -73,6 +75,10 @@ def build(
         name="write",
     )
     async def write(args: dict[str, Any], tctx: ToolCtx) -> dict[str, Any]:
+        if crash_first[0]:
+            # The other side of the same window: STARTED is committed, the request never left.
+            crash_first[0] = False
+            raise asyncio.CancelledError
         result = world.receive(ENDPOINT, args, effect_key=tctx.effect_key if sends_key else None)
         if crash[0]:
             crash[0] = False  # only the first attempt dies; the successor must be able to finish
@@ -82,9 +88,9 @@ def build(
     @write.probe_hook
     async def _probe(effect_key: str, args: dict[str, Any], tctx: Any) -> ProbeResult:
         label = world.label_for(ENDPOINT, args)
-        found = world.lookup(label)
+        found = world.lookup(label) if label else None
         if found is None:
-            return ProbeResult("ABSENT", evidence=f"no application of {label}")
+            return ProbeResult("ABSENT", evidence=f"nothing applied at {ENDPOINT}")
         return ProbeResult("COMMITTED", evidence=label, result=found, external_ref=label)
 
     @program(name=f"prop_{effect_class}_{tool_calls}", version="1.0")

@@ -42,6 +42,9 @@ from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNI
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
 
+# A probe that cannot tell, distinguished from a step whose value happens to be None.
+_UNRESOLVED = object()
+
 
 def register(executor: StepExecutor) -> StepExecutor:
     EXECUTORS[executor.kind] = executor
@@ -190,23 +193,18 @@ class StepEngine:
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout)
 
-    async def _start_attempt(
-        self, intent: StepIntent, attempt_no: int, *, close: tuple[int, str] | None = None
-    ) -> Any:
-        """Close an abandoned attempt and open the next one in ONE transaction (§8.3)."""
+    async def _start_attempt(self, intent: StepIntent, attempt_no: int, *, close: Any = None) -> Any:
+        """Close the previous attempt and open the next one in ONE transaction (§8.3).
+
+        One transaction because the pair is the invariant: a crash between "that attempt is
+        over" and "this attempt has begun" would leave the step settled with work still to do,
+        and the successor would read a terminal outcome that was never terminal."""
         tool = self._tool_of(intent)
         timeout = getattr(tool, "timeout", 60.0)
         eff_class = intent.effect_class
         async with self.journal.append(self.lease) as tx:
             if close is not None:
-                await tx.append(
-                    StepFailedEvent(
-                        step_index=intent.step_index,
-                        attempt_no=close[0],
-                        error=close[1],
-                        retryable=True,
-                    )
-                )
+                await tx.append(close)
             now = await tx.now()
             deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
             started_seq = await tx.append(
@@ -364,7 +362,16 @@ class StepEngine:
             # runs one attempt and an unmeasured retry policy is a guess (day 4, §27.5). But an
             # attempt a crash abandoned has no outcome to retry from, and refusing to re-run it
             # would fail every run the IDEMPOTENT band exists to measure.
-            return await self._start_attempt(intent, n + 1, close=(n, "attempt_abandoned"))
+            return await self._start_attempt(
+                intent,
+                n + 1,
+                close=StepFailedEvent(
+                    step_index=intent.step_index,
+                    attempt_no=n,
+                    error="attempt_abandoned",
+                    retryable=True,
+                ),
+            )
         if state == AMBIGUOUS:
             return await self._resolve(intent, journaled.attempts)
         if state == FAILED:
@@ -378,9 +385,9 @@ class StepEngine:
         resolution = getattr(tool, "resolution", "escalate")
         probe = getattr(tool, "probe", None)
         if resolution == "probe" and probe is not None:
-            verdict = await self._probe(intent, probe)
-            if verdict is not None:
-                return verdict
+            outcome = await self._probe(intent, probe, attempt_no)
+            if outcome is not _UNRESOLVED:
+                return outcome
         async with self.journal.append(self.lease) as tx:
             seq = await tx.append(
                 StepResolved(
@@ -394,23 +401,29 @@ class StepEngine:
             await tx.update_effect(intent.effect_key or "", status="RESOLVED_UNKNOWN", outcome_seq=seq)
         raise Suspended("resolved_unknown", {"step_index": intent.step_index})
 
-    async def _probe(self, intent: StepIntent, probe: Any) -> Any:
-        """Day 2 wires the World oracle behind this; the shape is fixed on day 1 so `escalate` and
-        `probe` share one code path."""
+    async def _probe(self, intent: StepIntent, probe: Any, attempt_no: int) -> Any:
+        """Ask the receiver. Three answers, and three different things to do (§7.4).
+
+        # ponytail: `events_resolved_once` is UNIQUE on (run_id, step_index, method), so a step
+        # may carry one probe resolution. A second becomes reachable only when timeouts start
+        # producing ambiguity (day 4); that is the phase that should decide whether the guard
+        # grows an attempt_no.
+        """
         sctx = StepCtx(
             run_id=self.lease.run_id,
             run_root_id=self.run_root_id,
-            attempt_no=0,
+            attempt_no=attempt_no,
             clock=self.clock,
             effect_key=intent.effect_key,
             tools=self.tools,
         )
         result = await probe(intent.effect_key, intent.args, sctx)
         if result.verdict == "UNKNOWN":
-            return None
-        resolution = "RESOLVED_COMPLETED" if result.verdict == "COMMITTED" else "RESOLVED_FAILED"
+            return _UNRESOLVED
+        if result.verdict == "ABSENT":
+            return await self._reattempt_after_absent(intent, attempt_no, result)
         value = result.result
-        if result.verdict == "COMMITTED" and value is None:
+        if value is None:
             # The worker was killed before it received the response; anything not read back from
             # the receiver would be invented. The sentinel is the one honest option (§23.4).
             value = {
@@ -422,22 +435,42 @@ class StepEngine:
             seq = await tx.append(
                 StepResolved(
                     step_index=intent.step_index,
-                    attempt_no=0,
-                    resolution=resolution,
+                    attempt_no=attempt_no,
+                    resolution="RESOLVED_COMPLETED",
                     method="probe",
                     evidence={"evidence": result.evidence, "result": value},
                 )
             )
             await tx.update_effect(
                 intent.effect_key or "",
-                status="RESOLVED_COMMITTED" if result.verdict == "COMMITTED" else "RESOLVED_ABSENT",
+                status="RESOLVED_COMMITTED",
                 outcome_seq=seq,
                 resolution="probe",
                 external_ref=result.external_ref,
             )
-        if resolution == "RESOLVED_FAILED":
-            raise StepFailed(intent.step_index, result.evidence, retryable=False)
         return value
+
+    async def _reattempt_after_absent(self, intent: StepIntent, attempt_no: int, result: Any) -> Any:
+        """ABSENT is neither a failure nor a guess: the receiver is saying the effect never
+        landed, which is the recovery table's "provably nothing happened" case one level down.
+        So the step takes §7.4's at-least-once edge, RESOLVED_ABSENT -> STARTED(n+1), under the
+        same effect_key — the trace §11.2 predicts for `pause_past_ttl@before:tool_call`, and
+        the reason T1 is a recovered cell rather than a failed one.
+
+        The resolution and the re-attempt commit together, or a crash between them would leave
+        the successor reading a settled RESOLVED_FAILED and failing a run whose effect provably
+        never happened."""
+        return await self._start_attempt(
+            intent,
+            attempt_no + 1,
+            close=StepResolved(
+                step_index=intent.step_index,
+                attempt_no=attempt_no,
+                resolution="RESOLVED_FAILED",
+                method="probe",
+                evidence={"evidence": result.evidence, "verdict": "ABSENT"},
+            ),
+        )
 
     def _tool_of(self, intent: StepIntent) -> Any:
         if intent.kind is not StepKind.TOOL or self.tools is None:
