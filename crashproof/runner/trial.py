@@ -138,6 +138,12 @@ async def run_trial(
             reached_terminal=sup.terminal,
         )
         verdicts = invariants.verify(facts)
+        # Model calls are counted at the wire, from the shim's own observation log, not from each
+        # adapter's self-report. Measuring one runtime from inside its process and another from
+        # outside it is how an economy metric becomes a statement about instrumentation (§14.3);
+        # counting `before:model_call` is the same act in every arm, and it is the only way the
+        # column exists at all for a runtime that keeps no model-call tally of its own.
+        model_calls = sum(1 for o in trial.observations() if o.boundary == "before:model_call")
         m = metrics.compute(
             world_applied=facts.world_applied,
             world_receipts=facts.world_receipts,
@@ -149,7 +155,7 @@ async def run_trial(
             faults=fault_rows,
             t_restarts=sup.t_restarts,
             wall_ms=sup.wall_ms,
-            model_calls=result.model_calls,
+            model_calls=model_calls,
             tokens=result.tokens,
             storage_bytes=result.storage_bytes,
             detect_ms=result.detect_ms,

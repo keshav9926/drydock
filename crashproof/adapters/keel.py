@@ -522,17 +522,17 @@ async def _worker() -> None:  # pragma: no cover - subprocess
     world = WorldClient(os.environ[ENV_WORLD])
     role = os.environ.get(ENV_ROLE, "worker")
 
-    shim = None
-    if role == "worker":
-        # Only the process under test carries the shim. The successor in a pause cell must never
-        # fire a fault, or the cell would freeze the very process that exists to take over.
-        shim = ToolShim(
-            trial,
-            Schedule.read(trial.schedule_path),
-            trial_id=cursor.trial_id,
-            recovery_index=cursor.recovery_index,
-            world=world,
-        )
+    # Every SUT process carries a shim; only the one under test may fire. The successor observes
+    # so that its model and tool calls are counted at the wire like anybody else's, and cannot
+    # match, so it can never freeze the very process it exists to take over from.
+    shim = ToolShim(
+        trial,
+        Schedule.read(trial.schedule_path),
+        trial_id=cursor.trial_id,
+        recovery_index=cursor.recovery_index,
+        world=world,
+        observe_only=role != "worker",
+    )
 
     app = build_app(workload, variant, world, shim, os.environ[ENV_DSN])
     from keel.runtime.reaper import Reaper

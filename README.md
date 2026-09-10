@@ -34,19 +34,23 @@ Duplicate *applied* effects, `EXTERNAL` band (`issues.create`, `dedup: false`, n
 | `before:tool_call` | 0 | 0 | 0 | 0 |
 | `after:tool_effect` | **0** | **30** | **30** | **30** |
 | `after:tool_return` | **0** | **30** | **30** | **30** |
-| `pause_past_ttl` | **3** | 0 | 0 | 0 |
+| `pause_past_ttl` | **11** | 0 | 0 | 0 |
 
 The middle two rows are the thesis. A kill between the effect landing and the outcome being recorded
 duplicates the issue in every LangGraph trial and in none of Keel's — the journal remembers that the
 attempt started, so the successor asks the receiver instead of guessing. S1 is PASS for all four
 columns, because LangGraph claims `at_least_once` and is held to that; the duplicate is printed anyway.
 
-The last row is the honest cost. Under a frozen worker that outlives its lease, Keel duplicated 3 times
-in 30 — the residual window the constitution names and refuses to claim away, since a fence protects
-the journal and cannot reach a third party. In the `IDEMPOTENT` band the same freeze produced 5
+The last row is the honest cost. Under a worker frozen past its lease, Keel duplicated in **11 of 30**
+trials — the residual window the constitution names and refuses to claim away, since a fence protects
+the journal and cannot reach a third party. In the `IDEMPOTENT` band the same freeze produced 10
 re-sends and **0** duplicate effects: the key travels, and the receiver does the rest. LangGraph's
 zombie column is 0 for a different reason — with no successor, nothing takes over while it is frozen,
 so nothing races it.
+
+Model calls are counted at the wire, identically for every arm, so the economy column exists for
+runtimes that keep no tally of their own. After a kill at `after:tool_effect`: `+0` for Keel and
+LangGraph `sync`, **`+2`** for `async` and `exit`, which re-run model calls the checkpoint did not save.
 
 The pieces: a **fault spec** addressed by workload landmarks rather than ordinals in any one
 runtime's traffic; a pure **seeded expansion** where all of a trial's randomness lives; a **trial

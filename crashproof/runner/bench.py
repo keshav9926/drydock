@@ -129,8 +129,12 @@ async def run_matrix(
     workload = load_named(matrix.workload)
     store = ResultStore(out_dir)
     already = store.done() if resume else set()
+    # A resumed run must pick its baselines back up out of the store. Rebuilding them only from
+    # cells this invocation happens to run would silently drop the pairing for every fault cell
+    # whose baseline was completed earlier — and an unpaired delta metric is not a smaller number,
+    # it is no number at all.
+    baselines = _baselines_from(store) if resume else {}
     selected = [c for c in matrix.cells() if not cells or any(fnmatch.fnmatch(c.id, g) for g in cells)]
-    baselines: dict[tuple[str, str, str, int], Metrics] = {}
     # Rows are counted, not kept: they are already durable in the store, and holding twelve hundred
     # of them with their journals and raw observations is a megabyte-scale reason for a long run to
     # die two thirds of the way through.
@@ -166,6 +170,18 @@ async def run_matrix(
             if on_row:
                 on_row(row, cell, None)
     return written
+
+
+def _baselines_from(store: ResultStore) -> dict[tuple[str, str, str, int], Metrics]:
+    out: dict[tuple[str, str, str, int], Metrics] = {}
+    for row in store.rows():
+        if not row["cell_id"].endswith(f".{BASELINE_TRIGGER}"):
+            continue
+        adapter, config, variant, _ = row["cell_id"].split(".", 3)
+        m = Metrics(**{k: v for k, v in row["metrics"].items() if k != "raw"})
+        m.raw = row["metrics"]["raw"]
+        out[(adapter, config, variant, row["seed"])] = m
+    return out
 
 
 def _metrics(row: TrialRow) -> Metrics:

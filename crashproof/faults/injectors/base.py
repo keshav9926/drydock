@@ -37,11 +37,17 @@ class Injector:
         trial_id: str,
         recovery_index: int = 0,
         sut_ref: Callable[[], dict[str, Any]] | None = None,
+        observe_only: bool = False,
     ) -> None:
         self.trial = trial
         self.trial_id = trial_id
         self.recovery_index = recovery_index
         self.sut_ref = sut_ref
+        # A second SUT process — the successor in a zombie cell — must never fire the fault aimed
+        # at its predecessor, but it must still be *seen*: model and tool calls are counted at the
+        # wire from this log, and a process whose work is invisible makes the economy metrics a
+        # statement about which process happened to carry the instrument.
+        self.observe_only = observe_only
         # Firing state is trial-owned: a restarted worker rebuilds it from the directory, because
         # the process that accumulated it was killed.
         self.matcher = Matcher(
@@ -77,6 +83,8 @@ class Injector:
                     ts=time.time(),
                 )
             )
+            if self.observe_only:
+                return
             entry = self.matcher.match(landmark, boundary)
             if entry is None:
                 return
