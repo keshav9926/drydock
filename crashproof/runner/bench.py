@@ -122,7 +122,7 @@ async def run_matrix(
     resume: bool = False,
     on_row: Any = None,
     keel_commit: str = "",
-) -> list[TrialRow]:
+) -> int:
     """Baselines first, then the fault cells that are paired against them."""
     import fnmatch
 
@@ -131,7 +131,10 @@ async def run_matrix(
     already = store.done() if resume else set()
     selected = [c for c in matrix.cells() if not cells or any(fnmatch.fnmatch(c.id, g) for g in cells)]
     baselines: dict[tuple[str, str, str, int], Metrics] = {}
-    rows: list[TrialRow] = []
+    # Rows are counted, not kept: they are already durable in the store, and holding twelve hundred
+    # of them with their journals and raw observations is a megabyte-scale reason for a long run to
+    # die two thirds of the way through.
+    written = 0
 
     for cell in sorted(selected, key=lambda c: (not c.is_baseline, c.id)):
         factory = adapters.get(cell.adapter)
@@ -159,10 +162,10 @@ async def run_matrix(
                 baselines[(cell.adapter, cell.config, cell.variant, seed)] = _metrics(row)
             store.append(row.as_dict())
             store.write_cursor({"cell": cell.id, "seed": seed})
-            rows.append(row)
+            written += 1
             if on_row:
                 on_row(row, cell, None)
-    return rows
+    return written
 
 
 def _metrics(row: TrialRow) -> Metrics:

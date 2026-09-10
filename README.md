@@ -23,17 +23,30 @@ uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --cells 'keel.*'
 uv run crashproof report bench/results/latest --out bench/reports/matrix_v0.md
 ```
 
-`bench/specs/matrix_v0.yaml` expands to §28.3's arithmetic exactly — 40 cells, 30 seeds,
-1 200 trials — across four `(location, fault)` pairs and two bands. The Keel arm is measured; the
-LangGraph arm is declared in the spec and prints as a missing column until its adapter lands, because
-a missing arm and an N/A arm are different findings.
+**[`bench/reports/matrix_v0.md`](bench/reports/matrix_v0.md)** — 40 cells, 30 seeds, **1 200 trials**,
+four runtime configs, two bands, every arm running the same spec. Every safety invariant held in every
+scored trial; no counterexamples.
 
-| trigger | what it aims at | what Keel does |
-|---|---|---|
-| `before:tool_call` | STARTED committed, nothing sent | probe → ABSENT → attempt 2, one receipt |
-| `after:tool_effect` | the World has it, the framework does not | AMBIGUOUS → probe → RESOLVED_COMPLETED |
-| `after:tool_return` | the framework has it and is writing it down | recovered from the journal |
-| `pause_past_ttl` | alive, past its lease, still able to send | a successor takes over; the zombie is fenced |
+Duplicate *applied* effects, `EXTERNAL` band (`issues.create`, `dedup: false`, no key), out of 30 seeds:
+
+| (location, fault) | keel | langgraph sync | async | exit |
+|---|---|---|---|---|
+| `before:tool_call` | 0 | 0 | 0 | 0 |
+| `after:tool_effect` | **0** | **30** | **30** | **30** |
+| `after:tool_return` | **0** | **30** | **30** | **30** |
+| `pause_past_ttl` | **3** | 0 | 0 | 0 |
+
+The middle two rows are the thesis. A kill between the effect landing and the outcome being recorded
+duplicates the issue in every LangGraph trial and in none of Keel's — the journal remembers that the
+attempt started, so the successor asks the receiver instead of guessing. S1 is PASS for all four
+columns, because LangGraph claims `at_least_once` and is held to that; the duplicate is printed anyway.
+
+The last row is the honest cost. Under a frozen worker that outlives its lease, Keel duplicated 3 times
+in 30 — the residual window the constitution names and refuses to claim away, since a fence protects
+the journal and cannot reach a third party. In the `IDEMPOTENT` band the same freeze produced 5
+re-sends and **0** duplicate effects: the key travels, and the receiver does the rest. LangGraph's
+zombie column is 0 for a different reason — with no successor, nothing takes over while it is frozen,
+so nothing races it.
 
 The pieces: a **fault spec** addressed by workload landmarks rather than ordinals in any one
 runtime's traffic; a pure **seeded expansion** where all of a trial's randomness lives; a **trial
