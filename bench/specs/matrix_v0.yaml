@@ -1,0 +1,42 @@
+# matrix v0 — the day-3 result (§14.2, §28.3).
+#
+# One workload, four (location, fault) pairs, two bands, and every arm running the *same* spec.
+# That last clause is the publication rule: a cross-runtime cell is one spec run unchanged against
+# every adapter in it, Keel included. Triggers name workload landmarks rather than ordinals in any
+# one runtime's traffic, so a schedule lands on the same logical point in every arm even when the
+# arms issue different numbers of raw requests.
+workload: tool_chain_1_effect
+mode: shim
+seeds: {count: 30, base: 7}          # seeds 7..36 in every cell; trial id t-<seed>
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, L1, L2]   # the MVP set; L3 and C1 are v1 (§27)
+
+# The endpoint under test. The band changes the class and the receiver; the program does not.
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+# `pause_past_ttl` fires at the same boundary as T1, so the axis is (location, fault) rather than
+# location alone — four pairs, not three.
+triggers:
+  - before:tool_call                  # T1: nothing has been sent
+  - after:tool_effect                 # T2: the World has it, the framework does not
+  - after:tool_return                 # T3: the framework has it and is writing it down
+  - pause_past_ttl@before:tool_call   # the zombie: alive, past its lease, still able to send
+
+adapters:
+  - name: keel
+    key_source: framework             # `effect_key` — a pure function of what Keel itself persists
+    configs:
+      - {id: default, lease_ttl_s: 2, tool_timeout_s: 1}
+  # LangGraph runs key_source=none: it has no documented idempotency-key primitive, and a
+  # synthesised `thread_id + node` key would be an adapter's invention, not the framework's, so it
+  # would be exploratory and never in the headline matrix (§13.6).
+  - name: langgraph
+    key_source: none
+    configs:
+      - {id: sync, durability: sync}
+      - {id: async, durability: async}
+      - {id: exit, durability: exit}

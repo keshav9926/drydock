@@ -105,7 +105,7 @@ async def run_trial(
             env=adapter.worker_env(handle),
             is_terminal=lambda: _terminal(adapter, handle, workload),
             worker_count=worker_count,
-            secondary_env={"CRASHPROOF_KEEL_ROLE": "reaper"},
+            secondary_env={"CRASHPROOF_KEEL_ROLE": "successor"},
         )
         sup = await supervisor.run(lambda: adapter.submit(handle))
 
@@ -116,7 +116,10 @@ async def run_trial(
             {**row.model_dump(), "executed": executed.get(row.fault_id, True)}
             for row in trial.faults()
         ]
-        valid = all(row["executed"] for row in fault_rows)
+        # A trial is scored only if it tested what it claimed to. Two ways it might not have: a
+        # fault row recorded for a fault that did not happen, or a schedule that never fired at
+        # all — which would otherwise read as a clean recovery from a crash that never occurred.
+        valid = all(row["executed"] for row in fault_rows) and bool(fault_rows or spec.is_baseline)
 
         facts = invariants.TrialFacts(
             world_receipts=[_receipt(r) for r in world.receipts],

@@ -12,11 +12,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterator
 
 RESULTS = "results.jsonl"
 CURSOR = "cursor.json"
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def slug(cell_id: str) -> str:
+    """A directory name for a cell. The cell id itself keeps its colons — it is the published
+    identity a counterexample cites — but `after:tool_effect` is not a filename on Windows, so the
+    two are allowed to differ and the row carries the real one."""
+    return _UNSAFE.sub("_", cell_id)
 
 
 class ResultStore:

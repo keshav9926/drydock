@@ -43,6 +43,7 @@ class ConfigPin:
     retry: str = "none"
     worker_count: int = 1
     pause_ms: float | None = None
+    successor_start_delay_s: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:

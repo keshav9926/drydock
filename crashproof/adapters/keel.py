@@ -48,7 +48,11 @@ ENV_WORLD = "CRASHPROOF_WORLD_URL"
 ENV_DSN = "CRASHPROOF_KEEL_DSN"
 ENV_WORKLOAD = "CRASHPROOF_WORKLOAD"
 ENV_VARIANT = "CRASHPROOF_VARIANT"
-ENV_ROLE = "CRASHPROOF_KEEL_ROLE"  # "worker" | "reaper": the second observer, in pause cells only
+ENV_ROLE = "CRASHPROOF_KEEL_ROLE"  # "worker" | "successor": the second observer, in pause cells only
+# The successor waits before it starts claiming, so the *shimmed* worker is the one that picks up
+# the run and therefore the one the fault lands in. It is a bias, not a guarantee — a trial whose
+# schedule fired nothing is marked invalid rather than scored (§11.7).
+SUCCESSOR_START_DELAY_S = 1.5
 
 
 # =============================================================================
@@ -265,6 +269,7 @@ class KeelAdapter:
             lease_ttl_s=LEASE_TTL_S,
             tool_timeout_s=TOOL_TIMEOUT_S,
             heartbeat_s=HEARTBEAT_S,
+            successor_start_delay_s=SUCCESSOR_START_DELAY_S if worker_count > 1 else None,
             retry="max_attempts=1",
             worker_count=worker_count,
             pause_ms=PAUSE_MS,
@@ -516,8 +521,8 @@ async def _worker() -> None:  # pragma: no cover - subprocess
 
     shim = None
     if role == "worker":
-        # Only the process under test carries the shim. The second observer in a pause cell is a
-        # plain reaper: it must not fire faults, or the cell would kill its own successor.
+        # Only the process under test carries the shim. The successor in a pause cell must never
+        # fire a fault, or the cell would freeze the very process that exists to take over.
         shim = ToolShim(
             trial,
             Schedule.read(trial.schedule_path),
@@ -530,10 +535,16 @@ async def _worker() -> None:  # pragma: no cover - subprocess
     from keel.runtime.reaper import Reaper
 
     await app.upsert_programs()
+    if role != "worker":
+        # A frozen process cannot reap itself, and a reaper that cannot *claim* is no successor:
+        # it would mark the run ORPHANED and leave it there. So the second observer is a whole
+        # worker — it simply waits long enough that the first one gets the run (§11.2).
+        await asyncio.sleep(float(os.environ.get("CRASHPROOF_KEEL_START_DELAY_S", SUCCESSOR_START_DELAY_S)))
     worker = app.worker(worker_id=f"{role}-{os.getpid()}", lease_ttl=LEASE_TTL_S)
-    tasks = [asyncio.create_task(Reaper(app.journal, period=0.2).run_forever())]
-    if role == "worker":
-        tasks.insert(0, asyncio.create_task(worker.run_forever()))
+    tasks = [
+        asyncio.create_task(worker.run_forever()),
+        asyncio.create_task(Reaper(app.journal, period=0.2).run_forever()),
+    ]
     try:
         await asyncio.gather(*tasks)
     finally:
