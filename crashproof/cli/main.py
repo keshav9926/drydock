@@ -50,8 +50,8 @@ def _adapters() -> dict[str, Any]:
 
 
 def _run(coro: Any) -> Any:
-    """psycopg cannot use Windows' default event loop, and every adapter opens a connection."""
-    from keel.core import aio
+    """psycopg cannot use Windows' default event loop, and the adapters open connections."""
+    from crashproof.runner import aio
 
     return aio.run(coro)
 
