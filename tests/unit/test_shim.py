@@ -42,7 +42,7 @@ SPEC = {
 def killed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
     monkeypatch.setattr(process, "die_now", lambda: calls.append("kill"))
-    monkeypatch.setattr(process, "suspend_self", lambda: calls.append("freeze"))
+    monkeypatch.setattr(process, "freeze_self", lambda marker=None: calls.append("freeze"))
     return calls
 
 
@@ -128,4 +128,4 @@ def test_a_freeze_is_a_freeze_and_not_an_exit(tmp_path, killed) -> None:
     inj = _injector(tmp_path, doc)
     inj.at("tool:create_issue", "after:tool_effect")
     assert killed == ["freeze"], "the process stays alive; that is the entire point of the cell"
-    assert inj.trial.faults()[0].type == "pause_past_ttl", "and the row is what asks to be thawed"
+    assert inj.trial.faults()[0].type == "pause_past_ttl", "and the row is what asks to be frozen"

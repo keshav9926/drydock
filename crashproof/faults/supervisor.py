@@ -10,8 +10,8 @@ its own work is `self`; one whose server re-drives it is `engine`; one that has 
 a `self` runtime the help that would make it look like an `engine` one.
 
 It learns that a fault fired by tailing `faults.jsonl`. That file is the only channel from an
-in-SUT injector back to the harness, which is why a frozen worker's row is written and fsynced
-*before* it suspends itself: the row is what asks to be thawed.
+in-SUT injector back to the harness, which is why a parked worker's row is written and fsynced
+*before* it stops: the row is what asks to be frozen, and later thawed.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class Supervisor:
 
         try:
             while time.time() < deadline:
-                await self._thaw_if_frozen()
+                await self._freeze_and_thaw()
 
                 if self._sut is not None and self._sut.poll() is not None:
                     self._close_incarnation()
@@ -171,17 +171,26 @@ class Supervisor:
             self._close_incarnation()
 
     # --- freezing ------------------------------------------------------------
-    async def _thaw_if_frozen(self) -> None:
-        """The fault log is the channel. A `pause_past_ttl` row means the worker has already
-        stopped every one of its threads and is waiting to be let go."""
+    async def _freeze_and_thaw(self) -> None:
+        """The fault log is the channel. A `pause_past_ttl` row means the worker has parked at the
+        boundary with nothing sent, and is waiting to be stopped.
+
+        The supervisor does the stopping because a process cannot reliably stop *itself* on both
+        platforms: POSIX self-`SIGSTOP` lifts on `SIGCONT`, but Windows self-suspension leaves a
+        state a later resume does not clear. Freezing from outside is one code path that works
+        on both, and the worker is parked at the same instant either way.
+        """
         for row in self._new_faults():
             if row.type != "pause_past_ttl":
                 continue
             pause_ms = float(row.params.get("pause_ms", DEFAULT_PAUSE_MS))
-            await asyncio.sleep(pause_ms / 1000.0)
             pid = self._sut.pid if self._sut else None
-            if pid is not None:
-                process.resume(pid)
+            if pid is None:
+                continue
+            process.suspend(pid)
+            await asyncio.sleep(pause_ms / 1000.0)  # past the lease, past the attempt deadline
+            process.resume(pid)
+            self.trial.thaw_marker(row.fault_id).write_text("1", encoding="utf8")
             self.result.thawed.append(
                 {"fault_id": row.fault_id, "pid": pid, "pause_ms": pause_ms, "at": time.time()}
             )

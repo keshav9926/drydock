@@ -6,9 +6,15 @@ expired — so a `time.sleep` that leaves the heartbeat task running would measu
 the stalled-handler variant the specification stages at V2, §27.7). What is needed is a whole
 process, all threads, stopped.
 
-POSIX has `SIGSTOP` for exactly this. Windows has no signal for it; `NtSuspendProcess` is the
-equivalent and takes the same two calls. Both are here rather than in the injector, because the
-shim freezes itself and the supervisor thaws it, and the two must agree.
+POSIX has `SIGSTOP`, and a process may raise it on itself — which is what the specification
+prescribes for `shim` mode, because it puts the freeze exactly at the boundary.
+
+**Windows cannot do that.** `NtSuspendProcess` on the current process leaves a suspend state that a
+later `NtResumeProcess` from the supervisor does not lift; the process stays frozen for good.
+Verified directly: external suspend + external resume works, self-suspend + external resume does
+not. So on Windows the freeze is aimed from outside, and the firing thread simply *parks* at the
+boundary until the supervisor — which has already read the fault row — stops the whole process.
+Nothing has been sent when the freeze lands either way, which is what the cell is about.
 """
 
 from __future__ import annotations
@@ -16,9 +22,15 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import time
+from pathlib import Path
 
 WINDOWS = sys.platform == "win32"
 KILL_CODE = 137  # 128 + SIGKILL, the exit status a SIGKILLed process reports on POSIX
+
+#: An upper bound on the park, in case the supervisor never arrives. Not the normal exit: the
+#: worker leaves as soon as the thaw marker appears.
+PARK_S = 30.0
 
 
 def die_now() -> None:
@@ -34,29 +46,43 @@ def kill(pid: int) -> None:
 
         subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True, check=False)
     else:
-        with _suppress_gone():
-            os.kill(pid, signal.SIGKILL)
+        _ignore_gone(lambda: os.kill(pid, signal.SIGKILL))
 
 
-def suspend_self() -> None:
-    """Stop every thread of this process. The supervisor is the only thing that can thaw it, which
-    is why the fault row is written and fsynced first — it is the channel that asks."""
-    if WINDOWS:
-        _nt("NtSuspendProcess", _current_process())
-    else:
+def freeze_self(thaw_marker: "Path | None" = None) -> None:
+    """Stop here, at the boundary, with nothing sent.
+
+    On POSIX that is a self-`SIGSTOP`, and every thread — heartbeat included — stops with it.
+
+    On Windows the supervisor does the stopping, so the worker parks instead: it polls for a marker
+    the supervisor writes *after* resuming it. Polling is what makes this exact rather than a
+    guess — a frozen process cannot poll, so the first successful read is necessarily after the
+    thaw. Timing heuristics ("did that sleep overrun?") miss when the freeze lands between two
+    iterations, and a missed detection is a worker parked for no reason.
+    """
+    if not WINDOWS:
         os.kill(os.getpid(), signal.SIGSTOP)
+        return
+    deadline = time.monotonic() + PARK_S
+    while time.monotonic() < deadline:
+        if thaw_marker is not None and thaw_marker.exists():
+            return
+        time.sleep(0.01)
+
+
+def suspend(pid: int) -> None:
+    """Freeze another process, every thread of it."""
+    if WINDOWS:
+        _with_handle(pid, "NtSuspendProcess")
+    else:
+        _ignore_gone(lambda: os.kill(pid, signal.SIGSTOP))
 
 
 def resume(pid: int) -> None:
     if WINDOWS:
-        handle = _open_process(pid)
-        try:
-            _nt("NtResumeProcess", handle)
-        finally:
-            _close(handle)
+        _with_handle(pid, "NtResumeProcess")
     else:
-        with _suppress_gone():
-            os.kill(pid, signal.SIGCONT)
+        _ignore_gone(lambda: os.kill(pid, signal.SIGCONT))
 
 
 def terminate(pid: int) -> None:
@@ -64,48 +90,38 @@ def terminate(pid: int) -> None:
     if WINDOWS:
         kill(pid)  # Windows has no SIGTERM for another process; the drain cells are day 4 (POSIX)
     else:
-        with _suppress_gone():
-            os.kill(pid, signal.SIGTERM)
+        _ignore_gone(lambda: os.kill(pid, signal.SIGTERM))
 
 
 # --- Windows plumbing --------------------------------------------------------
 _PROCESS_SUSPEND_RESUME = 0x0800
 
 
-def _nt(fn: str, handle: int) -> None:
+def _with_handle(pid: int, fn: str) -> None:
+    """Handles are pointer-sized; leaving ctypes to guess `c_int` truncates them on 64-bit."""
     import ctypes
 
-    status = getattr(ctypes.windll.ntdll, fn)(ctypes.c_void_p(handle))
-    if status != 0:
-        raise OSError(f"{fn} failed with NTSTATUS 0x{status & 0xFFFFFFFF:08x}")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    getattr(ntdll, fn).argtypes = [ctypes.c_void_p]
 
-
-def _current_process() -> int:
-    import ctypes
-
-    return ctypes.windll.kernel32.GetCurrentProcess()
-
-
-def _open_process(pid: int) -> int:
-    import ctypes
-
-    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_SUSPEND_RESUME, False, pid)
+    handle = kernel32.OpenProcess(_PROCESS_SUSPEND_RESUME, 0, pid)
     if not handle:
-        raise OSError(f"OpenProcess({pid}) failed: {ctypes.GetLastError()}")
-    return handle
+        return  # the process is already gone, which is not an error here
+    try:
+        status = getattr(ntdll, fn)(handle)
+        if status != 0:
+            raise OSError(f"{fn}({pid}) failed with NTSTATUS 0x{status & 0xFFFFFFFF:08x}")
+    finally:
+        kernel32.CloseHandle(handle)
 
 
-def _close(handle: int) -> None:
-    import ctypes
-
-    ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
-
-
-class _suppress_gone:
+def _ignore_gone(action) -> None:
     """A process that has already exited is not an error here — it is the outcome we wanted."""
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        return exc_type is not None and issubclass(exc_type, (ProcessLookupError, OSError))
+    try:
+        action()
+    except (ProcessLookupError, OSError):
+        pass

@@ -118,6 +118,11 @@ class TrialDir:
     def receipts_path(self) -> Path:
         return self.path / "world" / "receipts.jsonl"
 
+    def thaw_marker(self, fault_id: str) -> Path:
+        """Written by the supervisor after it resumes a frozen worker, and polled by the worker.
+        A frozen process cannot poll, so the first successful read is necessarily after the thaw."""
+        return self.path / f"thawed-{fault_id}"
+
     @classmethod
     def from_env(cls) -> "TrialDir":
         path = os.environ.get(cls.ENV)

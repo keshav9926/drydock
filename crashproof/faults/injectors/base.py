@@ -107,8 +107,8 @@ class Injector:
         if entry.type == "kill":
             process.die_now()
         elif entry.type == "pause_past_ttl":
-            # Freeze every thread of this process, heartbeat included, and wait to be thawed. The
-            # fault row is already durable, and it is what asks the supervisor to thaw us.
-            process.suspend_self()
+            # Stop here with nothing sent, and stay stopped past the lease. The fault row is
+            # already durable, and it is what tells the supervisor to freeze and later thaw us.
+            process.freeze_self(self.trial.thaw_marker(entry.fault_id))
         else:  # pragma: no cover - refused at spec load (§11.3)
             raise NotImplementedError(f"fault type {entry.type!r} is not built")
