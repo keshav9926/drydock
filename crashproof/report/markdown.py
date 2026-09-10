@@ -97,6 +97,10 @@ def _cell(cell: CellSummary | None) -> str:
     return "<br>".join([safety, live, raw] + ([" · ".join(extra)] if extra else []))
 
 
+def _pin_value(value: Any) -> str:
+    return f"{value:g}" if isinstance(value, float) else str(value)
+
+
 def _counterexamples(cells: dict[str, CellSummary]) -> list[str]:
     rows = [(cell_id, c) for cell_id, c in sorted(cells.items()) if c.counterexamples]
     if not rows:
@@ -113,9 +117,14 @@ def _counterexamples(cells: dict[str, CellSummary]) -> list[str]:
 
 
 def _provenance(cells: dict[str, CellSummary]) -> list[str]:
-    pins = {}
+    # A pin that varies across a config's cells must show both values, not whichever cell was
+    # summarised first: `worker_count` is 2 exactly where the zombie cell needs a successor, and a
+    # table that hid that would be pinning something the trials did not run.
+    pins: dict[str, dict[str, set[str]]] = {}
     for cell in cells.values():
-        pins.setdefault(f"{cell.adapter}.{cell.config}", cell.config_pin)
+        config = pins.setdefault(f"{cell.adapter}.{cell.config}", {})
+        for key, value in cell.config_pin.items():
+            config.setdefault(key, set()).add(_pin_value(value))
     out = [
         "## Provenance",
         "",
@@ -125,7 +134,9 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
         "|---|---|",
     ]
     for name, pin in sorted(pins.items()):
-        rendered = ", ".join(f"{k}={v}" for k, v in sorted(pin.items()) if k != "framework_versions")
+        rendered = ", ".join(
+            f"{k}={'|'.join(sorted(v))}" for k, v in sorted(pin.items()) if k != "framework_versions"
+        )
         out.append(f"| `{name}` | {rendered} |")
     out += [
         "",
