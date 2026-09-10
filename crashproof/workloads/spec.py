@@ -116,6 +116,38 @@ class Workload(Frozen):
                 return node
         return None
 
+    # --- what the fault expander asks --------------------------------------
+    def expected_occurrences(self, landmark: str, boundary: str = "") -> int:
+        """How often a landmark is reached in a *fault-free* run.
+
+        It is not the reachability bound on its own — a trigger aimed at a re-issue after a restart
+        would be rejected by it, and re-issues are the whole point of counting across restarts. The
+        expander multiplies it by `1 + max_recoveries` (§11.6).
+        """
+        kind, _, name = landmark.partition(":")
+        if kind == "model":
+            nodes = self.script if name in ("*", "") else [n for n in self.script if _node_id(n) == name]
+            return len(nodes)
+        if kind == "tool":
+            calls = [c for node in self.script for c in node.decision.get("tool_calls", [])]
+            if name in ("*", ""):
+                return len(calls)
+            return sum(1 for c in calls if c.get("name") == name)
+        return 0
+
+    def landmarks(self) -> tuple[str, ...]:
+        """Every landmark a fault may be aimed at, which is also what a spec is checked against."""
+        tools = {c.get("name") for node in self.script for c in node.decision.get("tool_calls", [])}
+        return tuple(
+            [f"model:{_node_id(n)}" for n in self.script] + [f"tool:{t}" for t in sorted(tools) if t]
+        )
+
+
+def _node_id(node: ScriptNode) -> str:
+    """A script node's name is its key — the ordered (tool, occurrence) pairs already answered —
+    because that is the only thing about it that is stable across a restart."""
+    return "-".join(f"{name}{n}" for name, n in node.key) or "start"
+
 
 def load(path: Path | str) -> Workload:
     raw = Path(path).read_text(encoding="utf8")
