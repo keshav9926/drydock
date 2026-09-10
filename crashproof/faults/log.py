@@ -82,8 +82,17 @@ class TrialDir:
 
     ENV = "CRASHPROOF_TRIAL_DIR"
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, fresh: bool = False) -> None:
         self.path = Path(path)
+        if fresh and self.path.exists():
+            # A trial directory IS the firing state. Reusing a dirty one means every entry in the
+            # schedule is already spent, the fault never fires, and the trial reports a clean
+            # recovery it never performed — a false PASS, which is the one result this harness
+            # must never produce. The SUT never passes `fresh`: it is joining a trial, not
+            # starting one.
+            import shutil
+
+            shutil.rmtree(self.path)
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / "world").mkdir(exist_ok=True)
         (self.path / "sut").mkdir(exist_ok=True)

@@ -122,7 +122,11 @@ async def tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         messages = [
             *messages,
             {"role": "assistant", "content": resp.text or call.name},
-            {"role": "tool_result", "content": result},
+            # The tool's name travels with its result because the decision script is keyed on the
+            # ordered (tool, occurrence) pairs already answered — never on a counter, and never on
+            # the content of a result (§13.2). Both exclusions are what keep a runtime that
+            # duplicates an effect scored on the duplicate rather than on a broken script.
+            {"role": "tool_result", "content": {"tool": call.name, "result": result}},
         ]
     return {"answer": "step limit reached"}
 

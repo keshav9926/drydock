@@ -97,6 +97,9 @@ class World:
     ) -> None:
         self.endpoints: dict[str, Endpoint] = {e.id: e for e in endpoints}
         self.receipts: list[Receipt] = []
+        # Questions, not effects: never fsynced, never applied, but observable at the wire and
+        # therefore part of "the first thing the runtime did after it came back".
+        self.probes: list[dict[str, Any]] = []
         self._applied: dict[str, _Applied] = {}
         self._by_key: dict[str, _Applied] = {}
         self._labels: dict[tuple[str, str], str] = {}
@@ -193,6 +196,11 @@ class World:
             entry.keys.add(effect_key)
             self._by_key[effect_key] = entry
         return dict(entry.result)
+
+    def note_probe(self, endpoint: str | None, label: str | None, verdict: str) -> None:
+        self.probes.append(
+            {"endpoint": endpoint, "logical_identity": label, "verdict": verdict, "ts": time.time()}
+        )
 
     # --- the read surface the oracle and the verifier use --------------------
     def applied_counts(self) -> dict[str, int]:

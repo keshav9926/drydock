@@ -186,3 +186,29 @@ def test_the_cursor_round_trips(tmp_path) -> None:
     trial = TrialDir(tmp_path / "t-7")
     trial.write_cursor(Cursor(trial_id="t-7", recovery_index=2, sut_pid=123, started_at=1.5))
     assert trial.read_cursor().recovery_index == 2
+
+
+def test_a_fresh_trial_directory_is_empty_and_a_joining_one_is_not(tmp_path) -> None:
+    """A trial directory *is* the firing state. Reusing a dirty one would mark every entry already
+    spent, the fault would never fire, and the trial would report a clean recovery it never
+    performed — a false PASS, which is the one result this harness must never produce.
+
+    The SUT never asks for a fresh one: it is joining a trial, not starting one.
+    """
+    path = tmp_path / "t-7"
+    first = TrialDir(path)
+    first.append_fault(
+        FaultFired(fault_id="abc", trial_id="t-7", recovery_index=0, type="kill",
+                   boundary="after:tool_effect", landmark="tool:create_issue", occurrence=1)
+    )
+    first.append_observation(
+        Observation(landmark="tool:create_issue", boundary="after:tool_effect", occurrence=1,
+                    recovery_index=0, ts=1.0)
+    )
+
+    joining = TrialDir(path)
+    assert joining.fired_ids() == {"abc"}, "a restarted worker inherits what it already spent"
+
+    restarted = TrialDir(path, fresh=True)
+    assert restarted.fired_ids() == set()
+    assert restarted.occurrence_counts() == {}

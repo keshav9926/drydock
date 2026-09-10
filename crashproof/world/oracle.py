@@ -46,10 +46,12 @@ def probe(
     if effect_key is not None:
         found = world.lookup_key(effect_key)
         if found is not None:
+            world.note_probe(endpoint, found["logical_identity"], "COMMITTED")
             return _committed(found, f"effect_key {effect_key} applied at {found['logical_identity']}")
     if endpoint is not None and args is not None:
         label = world.label_for(endpoint, args)
         found = world.lookup(label) if label else None
+        world.note_probe(endpoint, label, "COMMITTED" if found else "ABSENT")
         if found is not None:
             return _committed(found, f"{label} applied {world.applied_counts()[label]}x")
         # Asking about something is not the same as it having happened: an unseen identity has no
@@ -59,6 +61,7 @@ def probe(
             "evidence": f"no application at {endpoint} for {label or 'an identity never received'}",
             "result": None,
         }
+    world.note_probe(endpoint, None, "ABSENT")
     return {
         "verdict": "ABSENT",
         "evidence": f"no application under effect_key {effect_key}",
@@ -84,6 +87,7 @@ def state(world: World) -> dict[str, Any]:
             e.id: {"dedup": e.dedup, "natural": e.natural, "kind": e.kind}
             for e in world.endpoints.values()
         },
+        "probes": list(world.probes),
         "log": [
             {
                 "seq": r.seq,
