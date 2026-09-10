@@ -13,12 +13,38 @@ The specification is [`docs/KEEL-ARCHITECTURE.md`](docs/KEEL-ARCHITECTURE.md). I
 constitution)** binds every decision here; where a section and the constitution disagree, the constitution
 wins.
 
-## Status — phase 2 of 8: effects, ambiguity and ground truth
+## Status — phase 3 of 8: the matrix
 
-Phase 1 built the spine: the journal, lease = fence = heartbeat, pure-fold projections, memoized
-re-execution, the per-class recovery table, the reaper predicate, the scripted provider and the MVP CLI.
+Phase 1 built the spine, phase 2 built the referee. Phase 3 points a saboteur at the runtime and
+publishes what the referee saw.
 
-Phase 2 builds the **referee**. Until now the runtime's own journal was the only witness to what happened
+```bash
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --cells 'keel.*'
+uv run crashproof report bench/results/latest --out bench/reports/matrix_v0.md
+```
+
+`bench/specs/matrix_v0.yaml` expands to §28.3's arithmetic exactly — 40 cells, 30 seeds,
+1 200 trials — across four `(location, fault)` pairs and two bands. The Keel arm is measured; the
+LangGraph arm is declared in the spec and prints as a missing column until its adapter lands, because
+a missing arm and an N/A arm are different findings.
+
+| trigger | what it aims at | what Keel does |
+|---|---|---|
+| `before:tool_call` | STARTED committed, nothing sent | probe → ABSENT → attempt 2, one receipt |
+| `after:tool_effect` | the World has it, the framework does not | AMBIGUOUS → probe → RESOLVED_COMPLETED |
+| `after:tool_return` | the framework has it and is writing it down | recovered from the journal |
+| `pause_past_ttl` | alive, past its lease, still able to send | a successor takes over; the zombie is fenced |
+
+The pieces: a **fault spec** addressed by workload landmarks rather than ordinals in any one
+runtime's traffic; a pure **seeded expansion** where all of a trial's randomness lives; a **trial
+directory** that is firing state outliving the process it belongs to; a **shim** that fires the same
+three instants inside every runtime; a **supervisor** that restarts with identical argv and env and
+never says what to resume; a **verifier** that is a pure function from four logs to a verdict; and a
+**report** that prints safety and estimates differently because they are different kinds of claim.
+
+## Phase 2: effects, ambiguity and ground truth
+
+Phase 2 built the **referee**. Until now the runtime's own journal was the only witness to what happened
 in the outside world, which is precisely the thing that cannot be trusted: a system that appears to recover
 while quietly re-firing a side effect looks identical, from the inside, to one that recovers correctly.
 
@@ -125,6 +151,8 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/unit/test_fence.py` | two workers, one run, exactly one appends |
 | `tests/unit/test_recovery.py` | both bands end to end, plus drain at a step boundary |
 | `tests/unit/test_world.py` | the receipt ordering, dedup semantics, the oracle |
+| `tests/unit/test_faults.py` | one (spec_hash, seed) is one schedule; firing state survives a kill |
+| `tests/unit/test_verifier.py` | judged against claims, N/A where an input is missing, never a proportion |
 | `tests/unit/test_layering.py` | the architecture, as an assertion |
 | `tests/property/test_fold_props.py` | determinism, incremental == batch, prefix monotonicity, blobs |
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
@@ -159,8 +187,7 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-Phase 3 is the make-or-break one: the `shim` injector, the supervisor and its trial-owned fault log, the
-LangGraph adapter, the verifier (S1–S5, L1–L2) and **matrix v0** — the same faults, the same workload, the
-same World, two runtimes, published. Phase 4 adds retries, timeouts→ambiguity and budgets; phase 5 VERIFY,
-FORK and `model_reask_alternate`; phases 6–8 the hook boundaries, the Hypothesis state machine, statistics
-and the published artifact. §27 is the binding staging table; nothing here is ahead of it.
+The LangGraph adapter is phase 3's remaining piece, and it is what turns a self-report into a
+comparison. Phase 4 adds retries, timeouts→ambiguity and budgets; phase 5 VERIFY, FORK and
+`model_reask_alternate`; phases 6–8 the hook boundaries, the Hypothesis state machine, statistics and
+the published artifact. §27 is the binding staging table; nothing here is ahead of it.

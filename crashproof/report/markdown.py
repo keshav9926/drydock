@@ -18,8 +18,16 @@ from typing import Any
 
 from crashproof.report.matrix import CellSummary, wilson
 
-TICK = "PASS"
-CROSS = "FAIL"
+#: Claims are printed under every column, because a verdict without the claim it was judged
+#: against is a scoreboard with the rules left off.
+SHORT_CLAIM = {
+    "none": "none",
+    "at_most_once": "at-most-once",
+    "at_least_once": "at-least-once",
+    "effectively_once": "effectively-once",
+    "exactly_once": "exactly-once",
+}
+SHORT_CLASS = {"PURE": "PURE", "IDEMPOTENT": "IDEM", "EXTERNAL": "EXT", "TRANSACTIONAL": "TXN"}
 
 
 def render(cells: dict[str, CellSummary], *, workload: str, title: str = "matrix v0") -> str:
@@ -58,8 +66,13 @@ def _column_note(band: dict[str, CellSummary], adapter: str, config: str) -> str
     sample = next((c for c in band.values() if c.adapter == adapter and c.config == config), None)
     if sample is None:
         return "—"
-    claims = ", ".join(f"{k[:4]}={v}" for k, v in sorted(sample.claims.items()))
-    return f"recovery={sample.recovery_mechanism}<br>{claims}"
+    order = ["PURE", "IDEMPOTENT", "EXTERNAL", "TRANSACTIONAL"]
+    claims = " · ".join(
+        f"{SHORT_CLASS.get(k, k)} {SHORT_CLAIM.get(v, v)}"
+        for k in order
+        if (v := sample.claims.get(k)) is not None
+    )
+    return f"recovery={sample.recovery_mechanism}<br>claims: {claims}"
 
 
 def _cell(cell: CellSummary | None) -> str:
