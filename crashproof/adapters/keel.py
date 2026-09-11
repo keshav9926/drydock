@@ -312,7 +312,7 @@ class KeelAdapter:
 
         self._admin_dsn = os.environ.get("KEEL_DSN", "postgresql://keel:keel@localhost:5432/keel")
         await self._ensure_template(self._admin_dsn)
-        self._db_name = _db_name_for(handle.trial_dir.name)
+        self._db_name = _db_name_for(handle.trial_dir)
         dsn = await database.create_from_template(self._admin_dsn, self._db_name, template=self.template_db)
 
         journal = PostgresJournal(dsn)
@@ -523,8 +523,16 @@ async def _storage_bytes(journal: Any) -> int | None:
         return None
 
 
-def _db_name_for(trial_id: str) -> str:
-    return "keel_" + re.sub(r"[^a-z0-9_]", "_", trial_id.lower())[:50]
+def _db_name_for(trial_dir: Path) -> str:
+    """Unique per trial *directory*, not per trial id. `t-7` repeats in every cell, so naming the
+    database after it alone makes two cells at the same seed collide — and `create_from_template`
+    drops before it creates, so the collision is not a failure but a database pulled out from
+    under a running trial. Harmless while trials are serial, fatal the moment they are not, and
+    §21.3 wants them parallel."""
+    import hashlib
+
+    tag = hashlib.sha256(str(trial_dir.resolve()).encode()).hexdigest()[:8]
+    return "keel_" + re.sub(r"[^a-z0-9_]", "_", trial_dir.name.lower())[:40] + "_" + tag
 
 
 # =============================================================================

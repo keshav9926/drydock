@@ -138,6 +138,15 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
             f"{k}={'|'.join(sorted(v))}" for k, v in sorted(pin.items()) if k != "framework_versions"
         )
         out.append(f"| `{name}` | {rendered} |")
+    counts = sorted({c.n for c in cells.values() if c.n})
+    if len(counts) > 1:
+        out += [
+            "",
+            f"**Mixed n.** Cells in this report were run at different seed counts ({counts}); each "
+            "cell prints its own n in the liveness line. A reduced-n cell is a weaker estimate, "
+            "not a different verdict: safety is still PASS only on zero violations in the n that "
+            "ran, and the interval beside it widens to say so (§15.3).",
+        ]
     out += [
         "",
         "**How to read a cell.** The first line is safety: PASS means zero violations in n, and a "

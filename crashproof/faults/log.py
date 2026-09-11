@@ -90,18 +90,31 @@ class TrialDir:
 
     def __init__(self, path: Path | str, *, fresh: bool = False) -> None:
         self.path = Path(path)
-        if fresh and self.path.exists():
-            # A trial directory IS the firing state. Reusing a dirty one means every entry in the
-            # schedule is already spent, the fault never fires, and the trial reports a clean
-            # recovery it never performed — a false PASS, which is the one result this harness
-            # must never produce. The SUT never passes `fresh`: it is joining a trial, not
-            # starting one.
-            import shutil
-
-            shutil.rmtree(self.path)
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / "world").mkdir(exist_ok=True)
         (self.path / "sut").mkdir(exist_ok=True)
+        if fresh:
+            self._clear()
+
+    def _clear(self) -> None:
+        """Empty the firing state, rather than removing the directory that holds it.
+
+        A trial directory IS the firing state: reusing a dirty one means every schedule entry is
+        already spent, the fault never fires, and the trial reports a clean recovery it never
+        performed — a false PASS, the one result this harness must never produce. But `rmtree` is
+        the wrong tool for saying so on Windows, where a single handle still open somewhere makes
+        the whole call fail and takes the trial with it. Emptying the named files is what `fresh`
+        actually means, and it cannot fail for a reason that has nothing to do with the trial.
+
+        The SUT never asks for this: it is joining a trial, not starting one.
+        """
+        for name in (CURSOR, FAULTS, OBSERVATIONS, SCHEDULE, RESULT):
+            _truncate(self.path / name)
+        _truncate(self.receipts_path)
+        for stale in self.path.glob("thawed-*"):
+            _truncate(stale)
+        for leftover in (self.path / "sut").glob("*"):
+            _truncate(leftover)
 
     # --- paths ---------------------------------------------------------------
     @property
@@ -169,6 +182,18 @@ class TrialDir:
             key = (obs.landmark, obs.boundary)
             counts[key] = counts.get(key, 0) + 1
         return counts
+
+
+def _truncate(path: Path) -> None:
+    """Remove a file, or empty it if something still holds it open. Either satisfies the caller:
+    what `fresh` needs is that nothing is read back, not that the inode is gone."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        try:
+            path.write_text("", encoding="utf8")
+        except OSError:
+            pass
 
 
 def _durably_write(path: Path, text: str) -> None:
