@@ -125,7 +125,12 @@ def compare(
 
     rng = random.Random(seed)
     harness = {p.a.get("recovery_mechanism") for p in pairs} | {p.b.get("recovery_mechanism") for p in pairs}
-    for name in ("recovery_latency_ms", "extra_model_calls", "wall_clock_overhead_ms"):
+    for name in (
+        "recovery_latency_ms",
+        "extra_model_calls",
+        "extra_tokens",
+        "wall_clock_overhead_ms",
+    ):
         c = _bootstrap(name, pairs, rng)
         if name in DETECTION_BOUND and "harness" in harness:
             # For a `harness` arm, detection is zero by construction — the supervisor re-invokes it

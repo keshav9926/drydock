@@ -25,32 +25,55 @@ uv run crashproof report  bench/results/tier1a --out bench/reports/tier1a.md
 uv run crashproof compare bench/results/tier1a --a 'keel.*' --b 'langgraph.sync.*'
 ```
 
-**[`bench/reports/tier1a.md`](bench/reports/tier1a.md)** — 20 cells, 30 seeds, **600 trials**, four
-faults that never touch the process. Duplicate *applied* effects, `EXTERNAL` band (`issues.create`,
-`dedup: false`, no key), out of 30 seeds:
+**[`bench/reports/tier1a.md`](bench/reports/tier1a.md)** — 32 cells, 30 seeds, **960 trials**, none
+void, seven faults that never touch the process. Duplicate *applied* effects, `EXTERNAL` band
+(`issues.create`, `dedup: false`, no key), out of 30 seeds:
 
 | (fault, boundary) | keel | langgraph sync |
 |---|---|---|
 | `tool_timeout@before:tool_call` | **0** | **30** |
 | `tool_500@after:tool_effect` | **0** | **30** |
+| `sigterm_grace_ok@after:tool_effect` | **0** | **30** |
+| `sigterm_grace_too_short@after:tool_effect` | **0** | **30** |
+| `tool_delay@after:tool_effect` | 0 | 0 |
 | `model_timeout@before:model_call` | 0 | 0 |
 | `model_500@before:model_call` | 0 | 0 |
 
-Neither of the first two faults kills anything. In both, the request left the process, the World
-applied it, and the answer never arrived — and LangGraph's node re-runs from its last checkpoint and
-files the issue again, every trial, both cells. Keel's step is `RUNNING` with an EXTERNAL effect and
-no outcome, which the recovery table calls `STEP_AMBIGUOUS` rather than a retry; the declared
-resolution asks the receiver what happened instead of guessing.
+None of these faults kills anything. In the first two the request left the process, the World applied
+it, and the answer never came — and LangGraph's tool task re-runs on resume and files the issue again,
+every trial. Keel's step is `RUNNING` with an EXTERNAL effect and no outcome, which the recovery table
+calls `STEP_AMBIGUOUS` rather than a retry; the declared resolution asks the receiver what happened
+instead of guessing.
 
-In the `IDEMPOTENT` band both arms duplicate **0** effects and both re-send **30** requests. Keel gets
-no credit for that zero: re-issuing under the same key is the correct response to an ambiguity, and it
-is the receiver that made it safe. Both columns are printed so the distinction cannot be blurred.
+The two `sigterm_grace_*` rows are the same fault at two grace periods — 3 s, longer than any arm's
+step timeout, and 150 ms, shorter than the shortest step. A runtime with a drain path should behave
+differently in the two cells. LangGraph scores them **identically**, because there is no drain path to
+give grace to: a polite shutdown and a kill are the same event. That is §27's line about deploys
+arriving as a measurement rather than an assertion.
+
+`tool_delay` is the cell where the pin is the whole story. Keel's one-second tool timeout fires inside
+the two-second delay, so the step is ambiguous in both bands — and the *declared resolution* decides
+what happens next: EXTERNAL probes the receiver and re-sends nothing (0 duplicate receipts),
+IDEMPOTENT re-issues under the same key (30). Two different correct answers to one fault, chosen by
+the effect class. LangGraph does not appear in the row at all: it declares no step timeout and waits
+the delay out.
+
+In the `IDEMPOTENT` band both arms duplicate **0** effects. Keel gets no credit for that zero —
+re-issuing under the same key is the correct response to an ambiguity, and it is the receiver that
+made it safe. Both columns are printed so the distinction cannot be blurred.
 
 **[`bench/reports/compare_tier1a_keel_vs_langgraph_sync.md`](bench/reports/compare_tier1a_keel_vs_langgraph_sync.md)**
-— 300 paired trials: `duplicate_effects` 0 vs 60, `logical_correctness` A better at p < 0.0001 over 60
-discordant pairs. Three of eight rows decline to claim anything, including one that would have
-flattered Keel — median recovery latency 108 ms against 2 361 ms is tagged *not claimable*, because
+— 480 paired trials: `duplicate_effects` 0 vs 120, `logical_correctness` A better at p < 0.0001 over
+120 discordant pairs. Four of nine rows decline to claim anything, including one that would have
+flattered Keel — median recovery latency 143 ms against 2 326 ms is tagged *not claimable*, because
 the arm it beats has a supervisor re-invoking it and therefore no detection time to spend.
+
+Tokens are counted by the harness at `before:model_call`, in every arm, by one function — charged when
+the request is sent, not when it returns, because an attempt that never came back was still billed.
+Keel's clean run costs 280 tokens of prompt to LangGraph's 163: a real cost of carrying a full message
+history where the other carries a state dict. After a fault that does not touch the model both are
+**+0**, because a synchronous checkpoint restores the state without re-deciding — LangGraph duplicates
+the effect without paying for a second decision.
 
 The pieces: a **retry policy** with full jitter, clamped inside the lease and off by default;
 **reserve-then-settle budgets** where an attempt nobody heard back from stays charged forever, which
