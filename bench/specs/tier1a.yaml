@@ -18,11 +18,20 @@ variants:
 
 # `tool_timeout` is armed at the receiver: the request is really sent and really applied, and the
 # response never comes — which is why EXTERNAL is AMBIGUOUS here and never FAILED.
+#
+# The two `sigterm_grace_*` cells are the deploy that looks like a crash. `_ok` gives the open step
+# more grace than any arm's step timeout, so a runtime with a drain path reaches its outcome and
+# releases voluntarily; `_too_short` cuts the grace below the shortest step, so the same deploy is
+# indistinguishable from a kill. A runtime with no drain at all scores the two identically, which
+# is itself the finding.
 triggers:
   - tool_timeout@before:tool_call
   - tool_500@after:tool_effect
+  - tool_delay@after:tool_effect
   - model_500@before:model_call
   - model_timeout@before:model_call
+  - sigterm_grace_ok@after:tool_effect
+  - sigterm_grace_too_short@after:tool_effect
 
 adapters:
   - name: keel

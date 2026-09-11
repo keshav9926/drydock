@@ -129,3 +129,20 @@ def test_a_freeze_is_a_freeze_and_not_an_exit(tmp_path, killed) -> None:
     inj.at("tool:create_issue", "after:tool_effect")
     assert killed == ["freeze"], "the process stays alive; that is the entire point of the cell"
     assert inj.trial.faults()[0].type == "pause_past_ttl", "and the row is what asks to be frozen"
+
+
+def test_tokens_are_counted_by_one_function_for_every_arm() -> None:
+    """Each arm sends its own prompt; the counting must not be its own too.
+
+    `extra_tokens` is meant to show how much a runtime re-sends after a recovery. That is a
+    property of the framework's prompt, so the payload is the framework's — but if Keel were
+    counted by its provider's `count_tokens` and LangGraph by nothing at all, the column would be a
+    statement about instrumentation rather than about either runtime (§14.3).
+    """
+    from crashproof.faults.injectors.shim import ToolShim
+
+    assert ToolShim.count_tokens(None) is None
+    # Same content, different key order: the dump is canonical, so the count is the same.
+    assert ToolShim.count_tokens({"a": 1, "b": 2}) == ToolShim.count_tokens({"b": 2, "a": 1})
+    # A bigger prompt costs more, which is the only monotonicity the column relies on.
+    assert ToolShim.count_tokens({"messages": ["x" * 400]}) > ToolShim.count_tokens({"messages": []})

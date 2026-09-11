@@ -143,7 +143,12 @@ async def run_trial(
         # outside it is how an economy metric becomes a statement about instrumentation (§14.3);
         # counting `before:model_call` is the same act in every arm, and it is the only way the
         # column exists at all for a runtime that keeps no model-call tally of its own.
-        model_calls = sum(1 for o in trial.observations() if o.boundary == "before:model_call")
+        observed = [o for o in trial.observations() if o.boundary == "before:model_call"]
+        model_calls = len(observed)
+        # Charged at the send, not at the return: an attempt that never came back was still billed
+        # (§16.4), and counting at the return would make every crashed attempt free — which is the
+        # accounting error the column exists to expose.
+        billed = sum(o.tokens or 0 for o in observed) or None
         m = metrics.compute(
             world_applied=facts.world_applied,
             world_receipts=facts.world_receipts,
@@ -156,7 +161,7 @@ async def run_trial(
             t_restarts=sup.t_restarts,
             wall_ms=sup.wall_ms,
             model_calls=model_calls,
-            tokens=result.tokens,
+            tokens=billed,
             storage_bytes=result.storage_bytes,
             detect_ms=result.detect_ms,
             verdicts=verdicts.as_dict(),

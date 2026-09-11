@@ -168,7 +168,11 @@ class WorkloadProvider:
 
         try:
             if self.shim is not None:
-                return await self.shim.model_call(node_id, lambda: self._respond(req, node, node_id))
+                return await self.shim.model_call(
+                    node_id,
+                    lambda: self._respond(req, node, node_id),
+                    prompt=req.model_dump(mode="json"),
+                )
             return self._respond(req, node, node_id)
         except FaultResponse as exc:
             # A provider that 500s is the same kind of unknown as a tool that does: retried per

@@ -42,6 +42,10 @@ class Observation(BaseModel):
     occurrence: int
     recovery_index: int
     ts: float
+    #: Prompt size at `before:model_call`, charged when the request is sent rather than when it
+    #: returns — an attempt that never came back was still billed (§16.4), and counting it at the
+    #: return would make every crashed attempt free.
+    tokens: int | None = None
 
 
 class FaultFired(BaseModel):

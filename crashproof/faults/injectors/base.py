@@ -28,7 +28,13 @@ from crashproof.faults.schedule import Entry, Schedule
 from crashproof.faults.triggers import Matcher
 
 DEFAULT_DELAY_MS = 2000.0
+#: The two `sigterm_grace_*` types differ only in whether the grace covers the open step, so the
+#: grace is a property of the type rather than a parameter every spec has to remember to set. Both
+#: are pinned by the harness and printed in `config_pin`: 3 s is longer than any step timeout any
+#: arm declares, and 150 ms is shorter than the shortest, so `_ok` lets the drain finish and
+#: `_too_short` cuts it off — for every arm, from one spec (§11.5).
 DEFAULT_GRACE_MS = 10_000.0
+GRACE_MS = {"sigterm_grace_ok": 3_000.0, "sigterm_grace_too_short": 150.0}
 
 
 class FaultResponse(Exception):
@@ -85,7 +91,7 @@ class Injector:
         )
 
     # --- the sequence --------------------------------------------------------
-    def at(self, landmark: str, boundary: str) -> None:
+    def at(self, landmark: str, boundary: str, *, tokens: int | None = None) -> None:
         """One boundary. Returns normally when nothing fires; may not return at all when it does."""
         with self.matcher.lock:
             occurrence = self.matcher.bump(landmark, boundary)
@@ -96,6 +102,7 @@ class Injector:
                     occurrence=occurrence,
                     recovery_index=self.recovery_index,
                     ts=time.time(),
+                    tokens=tokens,
                 )
             )
             if self.observe_only:
@@ -152,6 +159,8 @@ class Injector:
         """Ask politely, then insist. The follow-up kill is armed *inside* the SUT and timed to the
         millisecond, because tailing a file for it would put jitter into precisely the grace the
         cell measures (§11.1)."""
-        grace_ms = float(entry.params.get("grace_ms", DEFAULT_GRACE_MS))
+        grace_ms = float(
+            entry.params.get("grace_ms", GRACE_MS.get(entry.type, DEFAULT_GRACE_MS))
+        )
         threading.Timer(grace_ms / 1000.0, process.die_now).start()
         signal.raise_signal(signal.SIGTERM)

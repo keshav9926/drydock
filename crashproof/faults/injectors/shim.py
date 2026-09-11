@@ -25,6 +25,7 @@ blocking client, where the event loop's cancellation cannot reach either.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -89,7 +90,24 @@ class ToolShim(Injector):
         loop.call_soon(self.at, landmark, "after:tool_return")
 
     # --- model side ----------------------------------------------------------
-    async def model_call(self, node: str, complete: Callable[[], Any]) -> Any:
+    @staticmethod
+    def count_tokens(prompt: Any) -> int | None:
+        """One token count, applied to every arm's outgoing prompt.
+
+        Each framework assembles its own prompt, and how much it re-sends after a recovery is the
+        thing `extra_tokens` is for — so the payload has to be the framework's. What must *not*
+        differ is the counting, because measuring one runtime by its own self-report and another by
+        the harness is how an economy metric becomes a statement about instrumentation (§14.3).
+        Four characters to a token, on a canonical dump: crude, identical, and the same crudeness
+        the scripted provider's own `count_tokens` uses, so Keel's budget and this column agree.
+        """
+        if prompt is None:
+            return None
+        return len(json.dumps(prompt, sort_keys=True, default=str)) // 4
+
+    async def model_call(
+        self, node: str, complete: Callable[[], Any], *, prompt: Any = None
+    ) -> Any:
         """The scripted provider's decision node is the landmark, because it is a pure function of
         request content and therefore the same point in every runtime.
 
@@ -97,10 +115,12 @@ class ToolShim(Injector):
         a blocking sleep on the event loop would stop the runtime's own timeout from ever firing —
         the cell would measure a hang instead of a timeout.
         """
-        return await asyncio.to_thread(self._ask, landmark_of("model", node), complete)
+        return await asyncio.to_thread(
+            self._ask, landmark_of("model", node), complete, self.count_tokens(prompt)
+        )
 
-    def _ask(self, landmark: str, complete: Callable[[], Any]) -> Any:
-        self.at(landmark, "before:model_call")
+    def _ask(self, landmark: str, complete: Callable[[], Any], tokens: int | None = None) -> Any:
+        self.at(landmark, "before:model_call", tokens=tokens)
         response = complete()
         self.at(landmark, "after:model_return")
         return response

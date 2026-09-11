@@ -91,7 +91,11 @@ def build_graph(workload: Workload, variant: str, world: WorldClient, shim: Tool
             call = calls[0]
             return {"pending": {"name": call["name"], "args": _resolve(call.get("args", {}), results)}}
 
-        return await shim.model_call(node_id, decide) if shim is not None else decide()
+        return (
+            await shim.model_call(node_id, decide, prompt=dict(state))
+            if shim is not None
+            else decide()
+        )
 
     async def tools(state: State) -> dict[str, Any]:
         pending = state["pending"]
