@@ -132,6 +132,23 @@ def workloads() -> None:
 
 
 # --- inject / chaos ----------------------------------------------------------
+#: §25.2's exit codes. A harness whose failure mode is a line of red text in a log nobody reads is
+#: not a CI gate; these are what a pipeline actually branches on.
+EXIT_INVARIANT_FAIL = 7
+EXIT_TOO_NOISY = 8
+
+
+def _violated(rows: list[Any]) -> bool:
+    """A FAIL in any *scored* trial. A void trial has no verdict to fail: the harness did not take
+    the measurement, which is a different thing from the runtime breaking a rule."""
+    return any(
+        v == "FAIL"
+        for r in rows
+        if getattr(r, "valid", True)
+        for v in (r.verdicts if hasattr(r, "verdicts") else {}).values()
+    )
+
+
 @app.command()
 def inject(
     adapter: Annotated[str, typer.Option("--adapter")] = "keel",
@@ -143,8 +160,7 @@ def inject(
 ) -> None:
     """One trial, printed in full. The developer form of what `chaos` does thirty times."""
     rows = _cell(adapter, workload, variant, spec, seed, 1, out_dir, verbose=True)
-    failed = any(v == "FAIL" for r in rows for v in r.verdicts.values())
-    raise typer.Exit(1 if failed else 0)
+    raise typer.Exit(EXIT_INVARIANT_FAIL if _violated(rows) else 0)
 
 
 @app.command()
@@ -158,7 +174,8 @@ def chaos(
     out_dir: Annotated[Path, typer.Option("--out")] = Path("bench/results/chaos"),
 ) -> None:
     """One cell: n seeds of one spec against one adapter."""
-    _cell(adapter, workload, variant, spec, seed, seeds, out_dir, verbose=False)
+    rows = _cell(adapter, workload, variant, spec, seed, seeds, out_dir, verbose=False)
+    raise typer.Exit(EXIT_INVARIANT_FAIL if _violated(rows) else 0)
 
 
 def _cell(
@@ -266,6 +283,12 @@ def bench(
         )
     )
     report(out_dir, fmt="md", out_path=out_dir / "matrix.md")
+    from crashproof.report.matrix import fold
+    from crashproof.runner.store import ResultStore
+
+    cells = fold(list(ResultStore(out_dir).rows()))
+    if any(v == "FAIL" for c in cells.values() for v in c.verdicts.values()):
+        raise typer.Exit(EXIT_INVARIANT_FAIL)
 
 
 @app.command()
@@ -300,6 +323,7 @@ def compare(
     b: Annotated[str, typer.Option("--b", help="cell-id glob for arm B")] = "langgraph.sync.*",
     out_path: Annotated[Path | None, typer.Option("--out")] = None,
     seed: Annotated[int, typer.Option("--seed", help="bootstrap seed")] = 7,
+    strict: Annotated[bool, typer.Option("--strict", help="exit 8 if nothing can be claimed")] = False,
 ) -> None:
     """Compare two arms, paired on (workload, variant, trigger, spec_hash, seed)."""
     import fnmatch
@@ -314,13 +338,23 @@ def compare(
     if not a_rows or not b_rows:
         err.print(f"[red]nothing to compare: A={len(a_rows)} rows, B={len(b_rows)} rows[/]")
         raise typer.Exit(1)
-    page = render(run_compare(a_rows, b_rows, a_name=a, b_name=b, seed=seed))
+    result = run_compare(a_rows, b_rows, a_name=a, b_name=b, seed=seed)
+    page = render(result)
     if out_path is None:
         out.print(page)
-        return
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(page, encoding="utf8")
-    err.print(f"wrote {out_path}")
+    else:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(page, encoding="utf8")
+        err.print(f"wrote {out_path}")
+    # `--strict` only: the default prints the verdict and exits 0, because "too noisy to claim" is
+    # an answer, not an error. A gate that wants to fail on it has to say so (§25.2). "Not
+    # claimable" counts the same way here: a comparison that establishes nothing establishes
+    # nothing, whether the reason was the sample size or the confound.
+    if strict and not any(
+        c.verdict for c in (*result.binary, *result.continuous)
+        if not c.verdict.startswith(("too noisy", "not claimable"))
+    ):
+        raise typer.Exit(EXIT_TOO_NOISY)
 
 
 def main() -> None:  # pragma: no cover

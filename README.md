@@ -248,6 +248,8 @@ structure. Adding a file that only re-exports is worse than a documented merge:
 | `replay/recover.py` | `runtime/steps.py` | the recovery table is consulted *by* the step engine, and §23.2's own dependency direction is `runtime ← replay`. Moving it would invert the graph the layering test enforces |
 | `effects/{table,resolution}.py` | `journal/protocol.py` + `runtime/steps.py` | the effects row is written inside the fenced append transaction, so it belongs to the journal; the resolution *policy* travels on the `ToolSpec` (`resolution`, `probe`) because `runtime` may not import `effects` |
 | `world/services/{issues,kv}.py` | `world/services.py` | §11.1's own component table says `services.py`; the two services are one endpoint table and forty lines of semantics |
+| `crashproof compare a.jsonl b.jsonl --paired` (§25.2) | `crashproof compare <results-dir> --a <cell glob> --b <cell glob>` | a store is one append-only `results.jsonl`, not one file per cell, so a shell glob over filenames has nothing to match. The globs select cells instead, which is the same selection expressed against the thing that exists. `--paired` is not a flag because pairing is the only mode: an unpaired comparison of two runtimes is not a weaker claim, it is a different one |
+| §25.2 exit codes | same, now wired | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. A harness whose failure mode is red text in a log nobody reads is not a CI gate |
 
 One platform note: psycopg's async mode cannot run on Windows' default ProactorEventLoop, so every entry
 point that opens a connection selects a compatible loop in `keel/core/aio.py`.
