@@ -293,6 +293,36 @@ def report(
     err.print(f"wrote {target}  ({len(rows)} trials)")
 
 
+@app.command()
+def compare(
+    results: Annotated[Path, typer.Argument(help="a results directory")] = Path("bench/results/latest"),
+    a: Annotated[str, typer.Option("--a", help="cell-id glob for arm A")] = "keel.*",
+    b: Annotated[str, typer.Option("--b", help="cell-id glob for arm B")] = "langgraph.sync.*",
+    out_path: Annotated[Path | None, typer.Option("--out")] = None,
+    seed: Annotated[int, typer.Option("--seed", help="bootstrap seed")] = 7,
+) -> None:
+    """Compare two arms, paired on (workload, variant, trigger, spec_hash, seed)."""
+    import fnmatch
+
+    from crashproof.report.compare import compare as run_compare
+    from crashproof.report.compare import render
+    from crashproof.runner.store import ResultStore
+
+    rows = list(ResultStore(results).rows())
+    a_rows = [r for r in rows if fnmatch.fnmatch(r["cell_id"], a)]
+    b_rows = [r for r in rows if fnmatch.fnmatch(r["cell_id"], b)]
+    if not a_rows or not b_rows:
+        err.print(f"[red]nothing to compare: A={len(a_rows)} rows, B={len(b_rows)} rows[/]")
+        raise typer.Exit(1)
+    page = render(run_compare(a_rows, b_rows, a_name=a, b_name=b, seed=seed))
+    if out_path is None:
+        out.print(page)
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(page, encoding="utf8")
+    err.print(f"wrote {out_path}")
+
+
 def main() -> None:  # pragma: no cover
     app()
 
