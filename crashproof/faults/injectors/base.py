@@ -16,6 +16,8 @@ it, which is the honest disposal of a fault whose effect nobody can observe.
 from __future__ import annotations
 
 import os
+import signal
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -24,6 +26,19 @@ from crashproof.faults import process
 from crashproof.faults.log import FaultFired, Observation, TrialDir
 from crashproof.faults.schedule import Entry, Schedule
 from crashproof.faults.triggers import Matcher
+
+DEFAULT_DELAY_MS = 2000.0
+DEFAULT_GRACE_MS = 10_000.0
+
+
+class FaultResponse(Exception):
+    """What the receiver said instead of answering. A 5xx is an *unknown* outcome — epistemically
+    identical to a timeout — so the effect class decides what happens next, not the status code."""
+
+    def __init__(self, kind: str, status: int) -> None:
+        super().__init__(f"{kind}: HTTP {status}")
+        self.kind = kind
+        self.status = status
 
 
 class Injector:
@@ -120,5 +135,23 @@ class Injector:
             # Stop here with nothing sent, and stay stopped past the lease. The fault row is
             # already durable, and it is what tells the supervisor to freeze and later thaw us.
             process.freeze_self(self.trial.thaw_marker(entry.fault_id))
+        elif entry.type in ("sigterm_grace_ok", "sigterm_grace_too_short"):
+            self._sigterm(entry)
+        elif entry.type in ("tool_delay", "model_timeout"):
+            # A blocking sleep, deliberately: it runs on the same worker thread as the request, so
+            # a runtime whose own timeout should fire still gets the chance to fire it.
+            time.sleep(float(entry.params.get("delay_ms", DEFAULT_DELAY_MS)) / 1000.0)
+        elif entry.type in ("tool_500", "model_500"):
+            raise FaultResponse(entry.type, entry.params.get("status", 500))
+        elif entry.type == "tool_timeout":
+            pass  # armed at the World by the shim, which knows which endpoint (§11.5)
         else:  # pragma: no cover - refused at spec load (§11.3)
             raise NotImplementedError(f"fault type {entry.type!r} is not built")
+
+    def _sigterm(self, entry: Entry) -> None:
+        """Ask politely, then insist. The follow-up kill is armed *inside* the SUT and timed to the
+        millisecond, because tailing a file for it would put jitter into precisely the grace the
+        cell measures (§11.1)."""
+        grace_ms = float(entry.params.get("grace_ms", DEFAULT_GRACE_MS))
+        threading.Timer(grace_ms / 1000.0, process.die_now).start()
+        signal.raise_signal(signal.SIGTERM)

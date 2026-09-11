@@ -49,6 +49,11 @@ PAUSE_MS = 3000.0  # pinned, not drawn: "past the TTL" must mean one thing in th
 # rather than left at a default that happens to matter (§13.4).
 CLAIM_POLL_S = 0.2
 REAPER_PERIOD_S = 0.2
+#: Retries arrive with the faults that exercise them (§28.4). Printed in config_pin, because a
+#: runtime that retries internally can exhaust the restart budget and score L2 FAIL for a reason
+#: that is not a durability property.
+MAX_ATTEMPTS = 3
+MODEL_TIMEOUT_S = 2.0
 
 ENV_WORLD = "CRASHPROOF_WORLD_URL"
 ENV_DSN = "CRASHPROOF_KEEL_DSN"
@@ -106,10 +111,19 @@ def _build_tool(
         name=decl.name,
     )
     async def run(args: dict[str, Any], tctx: ToolCtx) -> Any:
+        from crashproof.faults.injectors.base import FaultResponse
+        from keel.core.errors import Rejected, UnknownOutcome
+
         key = tctx.effect_key if sends_key else None
-        if shim is not None:
-            return await shim.tool_call(decl.name, endpoint, args, effect_key=key)
-        return await world.acall(endpoint, args, effect_key=key)
+        try:
+            if shim is not None:
+                return await shim.tool_call(decl.name, endpoint, args, effect_key=key)
+            return await world.acall(endpoint, args, effect_key=key)
+        except FaultResponse as exc:
+            # Translating the harness's fault into the runtime's own vocabulary is the adapter's
+            # job and the limit of it: which status means "unknown" and which means "no" is the
+            # receiver's semantics, not a favour to the runtime.
+            raise (Rejected if 400 <= exc.status < 500 else UnknownOutcome)(str(exc)) from exc
 
     if decl.resolution == "probe":
 
@@ -149,9 +163,17 @@ class WorkloadProvider:
         key = node_key(req)
         node = self.workload.node_for(key)
         node_id = "-".join(f"{n}{i}" for n, i in key) or "start"
-        if self.shim is not None:
-            return self.shim.model_call(node_id, lambda: self._respond(req, node, node_id))
-        return self._respond(req, node, node_id)
+        from crashproof.faults.injectors.base import FaultResponse
+        from keel.core.errors import Rejected, UnknownOutcome
+
+        try:
+            if self.shim is not None:
+                return await self.shim.model_call(node_id, lambda: self._respond(req, node, node_id))
+            return self._respond(req, node, node_id)
+        except FaultResponse as exc:
+            # A provider that 500s is the same kind of unknown as a tool that does: retried per
+            # policy, and the abandoned attempt stays charged, which is what keeps S9 true.
+            raise (Rejected if 400 <= exc.status < 500 else UnknownOutcome)(str(exc)) from exc
 
     def _respond(self, req: Any, node: Any, node_id: str = "") -> Any:
         from keel.providers.protocol import Message, ModelResponse, ToolCall, Usage
@@ -273,10 +295,10 @@ class KeelAdapter:
             successor_start_delay_s=SUCCESSOR_START_DELAY_S if worker_count > 1 else None,
             claim_poll_s=CLAIM_POLL_S,
             reaper_period_s=REAPER_PERIOD_S,
-            retry="max_attempts=1",
+            retry=f"max_attempts={MAX_ATTEMPTS}, backoff=exponential+jitter",
+            extra={"model_timeout_s": MODEL_TIMEOUT_S, **extra},
             worker_count=worker_count,
             pause_ms=PAUSE_MS,
-            extra=extra,
         )
 
     def worker_count(self, spec: Any) -> int:
@@ -543,7 +565,15 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         # it would mark the run ORPHANED and leave it there. So the second observer is a whole
         # worker — it simply waits long enough that the first one gets the run (§11.2).
         await asyncio.sleep(float(os.environ.get("CRASHPROOF_KEEL_START_DELAY_S", SUCCESSOR_START_DELAY_S)))
-    worker = app.worker(worker_id=f"{role}-{os.getpid()}", lease_ttl=LEASE_TTL_S, poll=CLAIM_POLL_S)
+    from keel.runtime.retry import RetryPolicy
+
+    worker = app.worker(
+        worker_id=f"{role}-{os.getpid()}",
+        lease_ttl=LEASE_TTL_S,
+        poll=CLAIM_POLL_S,
+        retry=RetryPolicy(max_attempts=MAX_ATTEMPTS),
+        model_timeout_s=MODEL_TIMEOUT_S,
+    )
     tasks = [
         asyncio.create_task(worker.run_forever()),
         asyncio.create_task(Reaper(app.journal, period=REAPER_PERIOD_S).run_forever()),

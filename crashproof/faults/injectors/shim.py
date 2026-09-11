@@ -29,8 +29,14 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from crashproof.faults.injectors.base import Injector
+from crashproof.faults.schedule import Entry
 from crashproof.faults.triggers import landmark_of
 from crashproof.world.client import WorldClient
+
+#: `tool_timeout` withholds one response indefinitely, so the SUT's own bound is what ends the
+#: attempt — which is the thing the cell measures. One response, because the fault fired once: an
+#: unbounded hold would time out every later attempt and measure a receiver that never came back.
+HOLD_FOREVER_MS = -1
 
 
 class ToolShim(Injector):
@@ -40,6 +46,17 @@ class ToolShim(Injector):
     def __init__(self, *args: Any, world: WorldClient, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.world = world
+        self._endpoint: str | None = None
+
+    def _execute(self, entry: Entry) -> None:
+        """`tool_timeout` is armed at the receiver rather than simulated here: the request really
+        is sent, the World really does receipt and apply it, and the response never comes. That is
+        what makes the EXTERNAL answer AMBIGUOUS rather than FAILED — the effect landed, and the
+        runtime has no way to know."""
+        if entry.type == "tool_timeout" and self._endpoint:
+            self.world.hold(self._endpoint, HOLD_FOREVER_MS, times=1)
+            return
+        super()._execute(entry)
 
     async def tool_call(
         self, name: str, endpoint: str, args: Mapping[str, Any], *, effect_key: str | None = None
@@ -55,6 +72,7 @@ class ToolShim(Injector):
     ) -> Any:
         """Everything that must be uninterruptible, on one thread: the freeze, the request, and
         the boundary that fires once the World has the effect and we do not have the answer."""
+        self._endpoint = endpoint
         self.at(landmark, "before:tool_call")
         result = self.world.call(endpoint, args, effect_key=effect_key)
         self.at(landmark, "after:tool_effect")
@@ -71,10 +89,17 @@ class ToolShim(Injector):
         loop.call_soon(self.at, landmark, "after:tool_return")
 
     # --- model side ----------------------------------------------------------
-    def model_call(self, node: str, complete: Callable[[], Any]) -> Any:
+    async def model_call(self, node: str, complete: Callable[[], Any]) -> Any:
         """The scripted provider's decision node is the landmark, because it is a pure function of
-        request content and therefore the same point in every runtime."""
-        landmark = landmark_of("model", node)
+        request content and therefore the same point in every runtime.
+
+        On a thread, like the tool path, for one reason: a `model_timeout` is a blocking sleep, and
+        a blocking sleep on the event loop would stop the runtime's own timeout from ever firing —
+        the cell would measure a hang instead of a timeout.
+        """
+        return await asyncio.to_thread(self._ask, landmark_of("model", node), complete)
+
+    def _ask(self, landmark: str, complete: Callable[[], Any]) -> Any:
         self.at(landmark, "before:model_call")
         response = complete()
         self.at(landmark, "after:model_return")

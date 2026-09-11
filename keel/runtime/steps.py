@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from keel.core.errors import Fenced, StepFailed
+from keel.core.errors import Fenced, StepFailed, Rejected, UnknownOutcome
 from keel.core.errors import NondeterminismDetected
 from keel.core.protocols import (
     Ambiguous,
@@ -43,6 +43,11 @@ from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNING, RunState
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
+
+#: A model call with no bound is an unbounded wait, which is the weak behaviour the `model_timeout`
+#: cell exists to catch — so MODEL steps get a deadline like everything else. Generous by default
+#: and pinned small in the benchmark, where a trial cannot afford to wait a minute to learn nothing.
+DEFAULT_MODEL_TIMEOUT_S = 60.0
 
 # A probe that cannot tell, distinguished from a step whose value happens to be None.
 _UNRESOLVED = object()
@@ -88,6 +93,7 @@ class StepEngine:
         clock: Any = None,
         should_drain: Callable[[], bool] | None = None,
         retry: RetryPolicy = NO_RETRY,
+        model_timeout_s: float = DEFAULT_MODEL_TIMEOUT_S,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -98,6 +104,7 @@ class StepEngine:
         self.clock = clock
         self.should_drain = should_drain
         self.retry = retry
+        self.model_timeout_s = model_timeout_s
         self.live_from_step: int | None = None
         self.replayed_steps = 0
         self.recovery_completed = False
@@ -173,7 +180,7 @@ class StepEngine:
     # --- live path (§5.10 transaction shapes) --------------------------------
     async def _live(self, intent: StepIntent) -> Any:
         tool = self._tool_of(intent)
-        timeout = getattr(tool, "timeout", 60.0)
+        timeout = self._timeout_of(intent, tool)
         eff_class = intent.effect_class
         reservation = await self._reserve(intent)
         try:
@@ -223,6 +230,11 @@ class StepEngine:
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout)
 
+    def _timeout_of(self, intent: StepIntent, tool: Any) -> float:
+        if intent.kind is StepKind.TOOL:
+            return getattr(tool, "timeout", DEFAULT_MODEL_TIMEOUT_S)
+        return self.model_timeout_s
+
     async def _start_attempt(self, intent: StepIntent, attempt_no: int, *, close: Any = None) -> Any:
         """Close the previous attempt and open the next one in ONE transaction (§8.3).
 
@@ -230,7 +242,7 @@ class StepEngine:
         over" and "this attempt has begun" would leave the step settled with work still to do,
         and the successor would read a terminal outcome that was never terminal."""
         tool = self._tool_of(intent)
-        timeout = getattr(tool, "timeout", 60.0)
+        timeout = self._timeout_of(intent, tool)
         eff_class = intent.effect_class
         reservation = await self._reserve(intent)
         try:
@@ -301,6 +313,17 @@ class StepEngine:
                 if eff_class == EffectClass.EXTERNAL
                 else Failed("timeout", retryable=True)
             )
+        except UnknownOutcome as exc:
+            # "Applied, then failed to answer" is the classic case, and it is indistinguishable
+            # from "never applied" — so it is disposed exactly like a timeout (§11.5).
+            outcome = (
+                Ambiguous(f"error_response: {exc}")
+                if eff_class == EffectClass.EXTERNAL
+                else Failed(f"error_response: {exc}", retryable=True)
+            )
+        except Rejected as exc:
+            # The receiver spoke plainly. Retrying a refusal only wastes an attempt.
+            outcome = Failed(f"rejected: {exc}", retryable=False)
         except Exception as exc:  # noqa: BLE001 - a tool's own error is an outcome, not a crash
             outcome = Failed(f"{type(exc).__name__}: {exc}", retryable=False)
         return await self._commit_outcome(intent, attempt_no, started_seq, outcome)

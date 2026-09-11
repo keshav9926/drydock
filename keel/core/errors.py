@@ -107,3 +107,18 @@ class ForkOverrideBeforeFork(KeelError): ...
 
 
 class ForkWithLiveChildren(KeelError): ...
+
+
+class UnknownOutcome(KeelError):
+    """The receiver — a tool's, or a model provider's — did not answer, or answered that it could
+    not: a 5xx, a dropped connection, a malformed reply.
+
+    Epistemically identical to a timeout — the request left the process and the outcome is unknown
+    — so the *class* decides what happens next, not the status code (§9.2). EXTERNAL becomes
+    AMBIGUOUS and is disposed by its declared resolution; everything else is safe to re-execute.
+    """
+
+
+class Rejected(KeelError):
+    """The receiver said no, definitively: a 4xx. That is knowledge, not ambiguity, so the step
+    fails and is not retried for any class."""

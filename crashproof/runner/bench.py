@@ -54,6 +54,9 @@ class Matrix:
     triggers: list[str] = field(default_factory=list)
     adapters: list[dict[str, Any]] = field(default_factory=list)
     landmark: str = "tool:create_issue"
+    #: A fault aimed at a model boundary needs a model landmark. Aiming a model fault at a
+    #: tool landmark is a trigger that can never match, which is a silently empty cell.
+    model_landmark: str = "model:*"
 
     @classmethod
     def load(cls, path: Path | str) -> "Matrix":
@@ -103,11 +106,12 @@ class Matrix:
             return from_doc(base)
         fault_type, _, boundary = trigger.rpartition("@")
         boundary = boundary or trigger
+        landmark = self.model_landmark if "model" in boundary else self.landmark
         base["faults"] = [
             {
                 "id": "f1",
                 "type": fault_type or "kill",
-                "trigger": {"boundary": boundary, "landmark": self.landmark, "occurrence": 1},
+                "trigger": {"boundary": boundary, "landmark": landmark, "occurrence": 1},
             }
         ]
         return from_doc(base)

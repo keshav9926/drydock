@@ -33,10 +33,36 @@ BOUNDARIES = (*SHIM_BOUNDARIES, "supervisor")
 
 #: Fault types that end the process, so the supervisor must have restarts left for them.
 RESTART_CAUSING = frozenset({"kill", "sigterm_grace_ok", "sigterm_grace_too_short", "pause_past_ttl"})
+#: Types the supervisor must not treat as a restart request: the worker is still alive.
+NON_FATAL = frozenset({"tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500"})
 
-#: What the MVP shim can actually do. A spec naming anything else is refused at load, loudly,
-#: rather than producing a trial that quietly never fires.
-MVP_FAULT_TYPES = frozenset({"kill", "pause_past_ttl"})
+#: What the shim can actually do. A spec naming anything else is refused at load, loudly, rather
+#: than producing a trial that quietly never fires. The rest of §11.5 arrives with its mode: the
+#: journal faults need `hook` (phase 6), and the duplicate-response and partition faults need the
+#: proxy, because a shim can neither deliver a response twice nor stop forwarding.
+SHIM_FAULT_TYPES = frozenset(
+    {
+        "kill",
+        "pause_past_ttl",
+        "tool_timeout",
+        "tool_500",
+        "tool_delay",
+        "model_timeout",
+        "model_500",
+        "sigterm_grace_ok",
+        "sigterm_grace_too_short",
+    }
+)
+
+#: Which boundary each type may be aimed at. A timeout fired after the effect has already landed
+#: would be a different fault wearing the same name, so the pairing is checked rather than trusted.
+FAULT_BOUNDARIES = {
+    "tool_timeout": {"before:tool_call"},
+    "tool_500": {"after:tool_effect"},
+    "tool_delay": {"before:tool_call", "after:tool_effect"},
+    "model_timeout": {"before:model_call"},
+    "model_500": {"before:model_call"},
+}
 
 
 class CrashproofSpecError(Exception):
@@ -116,10 +142,16 @@ class FaultSpec(Frozen):
                 f"mode {self.mode!r} is not built: `hook` is phase 6 and `proxy` is week 2 (§27.7)"
             )
         for f in self.faults:
-            if f.type not in MVP_FAULT_TYPES:
+            if f.type not in SHIM_FAULT_TYPES:
                 raise CrashproofSpecError(
                     f"fault {f.id!r}: type {f.type!r} is not built; the shim fires "
-                    f"{sorted(MVP_FAULT_TYPES)} (§27.7 stages the rest)"
+                    f"{sorted(SHIM_FAULT_TYPES)} (§27.7 stages the rest)"
+                )
+            allowed = FAULT_BOUNDARIES.get(f.type)
+            if allowed and f.trigger.boundary not in allowed:
+                raise CrashproofSpecError(
+                    f"fault {f.id!r}: {f.type} is only meaningful at {sorted(allowed)}, "
+                    f"not {f.trigger.boundary}"
                 )
             if f.trigger.boundary not in SHIM_BOUNDARIES and f.trigger.boundary != "supervisor":
                 raise CrashproofSpecError(f"fault {f.id!r}: {f.trigger.boundary} is not a shim boundary")

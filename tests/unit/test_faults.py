@@ -115,9 +115,19 @@ def test_unbuilt_modes_and_fault_types_are_refused_at_load() -> None:
     with pytest.raises(CrashproofSpecError):
         from_doc({**T2, "mode": "proxy"})
     with pytest.raises(CrashproofSpecError):
-        from_doc({**T2, "faults": [{**T2["faults"][0], "type": "tool_500"}]})
+        from_doc({**T2, "faults": [{**T2["faults"][0], "type": "journal_unavailable"}]})
     with pytest.raises(CrashproofSpecError):
         from_doc({**T2, "faults": [{**T2["faults"][0], "trigger": {"boundary": "during:nap", "landmark": "tool:x"}}]})
+
+
+def test_a_fault_aimed_at_the_wrong_boundary_is_refused() -> None:
+    """A timeout fired after the effect has already landed is a different fault wearing the same
+    name, and it would quietly change what the cell measures."""
+    with pytest.raises(CrashproofSpecError):
+        from_doc({**T2, "faults": [{"id": "f", "type": "tool_timeout",
+                                    "trigger": {"boundary": "after:tool_effect", "landmark": "tool:x"}}]})
+    from_doc({**T2, "faults": [{"id": "f", "type": "tool_timeout",
+                                "trigger": {"boundary": "before:tool_call", "landmark": "tool:x"}}]})
 
 
 def test_the_workload_declares_its_landmarks() -> None:

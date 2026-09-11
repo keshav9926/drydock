@@ -104,6 +104,7 @@ class World:
         self._by_key: dict[str, _Applied] = {}
         self._labels: dict[tuple[str, str], str] = {}
         self._holds: dict[str, float] = {}
+        self._hold_budget: dict[str, int | None] = {}
         self._log = Path(log_path) if log_path else None
         self._fh = self._log.open("a", encoding="utf8") if self._log else None
 
@@ -121,14 +122,30 @@ class World:
         self.endpoints[endpoint_id] = new
         return new
 
-    def hold(self, endpoint_id: str, ms: float) -> None:
+    def hold(self, endpoint_id: str, ms: float, times: int | None = None) -> None:
         """Withhold the response for `ms` after the effect has been applied, so a kill can be aimed
-        into the effect → acknowledgement window (§11.1). Negative means "never answer"."""
+        into the effect → acknowledgement window (§11.1). Negative means "never answer".
+
+        `times` bounds how many responses are held. A fault that fires once must hold once: an
+        unbounded hold would make every later attempt time out too, and the cell would measure a
+        receiver that is permanently down rather than the single timeout it was aimed at.
+        """
         self.endpoint(endpoint_id)
         self._holds[endpoint_id] = ms
+        self._hold_budget[endpoint_id] = times
 
     def hold_ms(self, endpoint_id: str) -> float:
-        return self._holds.get(endpoint_id, 0.0)
+        """Read and spend one of the hold's remaining uses."""
+        ms = self._holds.get(endpoint_id, 0.0)
+        if not ms:
+            return 0.0
+        left = self._hold_budget.get(endpoint_id)
+        if left is None:
+            return ms
+        if left <= 0:
+            return 0.0
+        self._hold_budget[endpoint_id] = left - 1
+        return ms
 
     def endpoint(self, endpoint_id: str) -> Endpoint:
         try:

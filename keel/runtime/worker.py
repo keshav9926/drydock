@@ -54,6 +54,7 @@ class Worker:
         shutdown_grace: float = 10.0,
         poll: float = 1.0,
         retry: RetryPolicy = NO_RETRY,
+        model_timeout_s: float = 60.0,
     ) -> None:
         self.journal = journal
         self.resolve = resolve
@@ -65,6 +66,7 @@ class Worker:
         self.shutdown_grace = shutdown_grace
         self.poll = poll
         self.retry = retry
+        self.model_timeout_s = model_timeout_s
         self.draining = False
         # `lease_ttl` must exceed the largest registered non-PURE tool.timeout, or the pre-dispatch
         # gate could never clear and every attempt would abandon with STARTED open (§8.4).
@@ -135,6 +137,7 @@ class Worker:
             clock=self.clock,
             should_drain=lambda: self.draining,
             retry=self.retry,
+            model_timeout_s=self.model_timeout_s,
         )
         ctx = Ctx(
             engine,

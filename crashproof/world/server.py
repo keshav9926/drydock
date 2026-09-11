@@ -109,7 +109,7 @@ class WorldServer:
                 args=body.get("args"),
             )
         if path == "/control/hold":
-            world.hold(body["endpoint"], float(body["ms"]))
+            world.hold(body["endpoint"], float(body["ms"]), body.get("times"))
             return 200, {"held": body["endpoint"], "ms": body["ms"]}
         if path == "/control/dedup":
             ep = world.set_dedup(body["endpoint"], dedup=body.get("dedup"), natural=body.get("natural"))

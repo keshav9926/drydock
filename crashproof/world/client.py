@@ -87,8 +87,10 @@ class WorldClient:
         return await asyncio.to_thread(self.state)
 
     # --- control -------------------------------------------------------------
-    def hold(self, endpoint: str, ms: float) -> dict[str, Any]:
-        return self._request("POST", "/control/hold", {"endpoint": endpoint, "ms": ms})
+    def hold(self, endpoint: str, ms: float, times: int | None = None) -> dict[str, Any]:
+        return self._request(
+            "POST", "/control/hold", {"endpoint": endpoint, "ms": ms, "times": times}
+        )
 
     def set_dedup(self, endpoint: str, *, dedup: bool | None = None, natural: bool | None = None) -> dict[str, Any]:
         return self._request(
