@@ -23,9 +23,16 @@ from urllib.parse import urlsplit
 
 DEFAULT_URL = "http://127.0.0.1:8600"
 
+#: The client is the *harness's*, so its socket timeout is a harness parameter and belongs in
+#: `config_pin` beside every runtime's own timeouts. Left at a library default it silently becomes
+#: the effective timeout for any runtime that has none of its own — a graph runtime whose tool is
+#: just a function — and the `tool_timeout` cell would then compare one runtime's declared bound
+#: against the harness's socket, which is not a comparison of runtimes at all.
+DEFAULT_TIMEOUT_S = 5.0
+
 
 class WorldClient:
-    def __init__(self, base_url: str = DEFAULT_URL, *, timeout: float = 30.0) -> None:
+    def __init__(self, base_url: str = DEFAULT_URL, *, timeout: float = DEFAULT_TIMEOUT_S) -> None:
         parts = urlsplit(base_url if "://" in base_url else f"http://{base_url}")
         self.host = parts.hostname or "127.0.0.1"
         self.port = parts.port or 80

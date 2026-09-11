@@ -40,7 +40,7 @@ from crashproof.faults.injectors.shim import ToolShim
 from crashproof.faults.log import TrialDir
 from crashproof.faults.schedule import Schedule
 from crashproof.workloads.spec import Workload, load_named
-from crashproof.world.client import WorldClient
+from crashproof.world.client import DEFAULT_TIMEOUT_S, WorldClient
 
 ENV_WORLD = "CRASHPROOF_WORLD_URL"
 ENV_DSN = "CRASHPROOF_LG_DSN"
@@ -180,7 +180,10 @@ class LangGraphAdapter:
             durability=self.durability,
             retry="framework default",
             worker_count=worker_count,
-            extra=extra,
+            # LangGraph has no documented per-step timeout: a tool is a function, and what ends a
+            # hung call is the client's socket timeout. That is a harness parameter, so it is
+            # pinned and printed rather than left to be discovered in a latency column.
+            extra={"world_client_timeout_s": DEFAULT_TIMEOUT_S, "step_timeout": "none documented", **extra},
         )
 
     def worker_count(self, spec: Any) -> int:
