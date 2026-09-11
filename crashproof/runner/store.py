@@ -58,8 +58,14 @@ class ResultStore:
         )
 
     def done(self) -> set[tuple[str, int]]:
-        """`(cell_id, seed)` pairs already recorded, so `bench --resume` does not re-run them."""
-        return {(r["cell_id"], r["seed"]) for r in self.rows()}
+        """`(cell_id, seed)` pairs already *measured*, so `bench --resume` does not re-run them.
+
+        Invalid rows do not count. A void trial is a measurement the harness failed to take — a
+        fault recorded for a fault that did not happen, a SUT that died before it ran — and
+        treating it as done freezes the failure into the store permanently, because resume is the
+        only thing that would ever go back for it. The void row stays where it is; resume appends
+        the real one beside it, and `fold` reports both (one scored, one counted as void)."""
+        return {(r["cell_id"], r["seed"]) for r in self.rows() if r.get("valid", True)}
 
     def write_cursor(self, cursor: dict[str, Any]) -> None:
         self.cursor_path.write_text(json.dumps(cursor, indent=2, default=str), encoding="utf8")

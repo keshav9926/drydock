@@ -80,12 +80,18 @@ class Comparison:
 
 
 def pair(a_rows: list[dict[str, Any]], b_rows: list[dict[str, Any]]) -> tuple[list[Pairing], int, int]:
-    """Same spec, same seed, both sides. Anything else is not a pair."""
+    """Same spec, same seed, both sides, both valid. Anything else is not a pair.
+
+    Void trials are dropped here rather than at the call site, because a comparison is the one
+    place where an unscored row does the most damage: its metrics are whatever the collector could
+    reach before the trial fell over, and a paired test would read that as a difference between
+    runtimes. `fold` already voids them in the matrix; pairing has to agree.
+    """
     def key(r: dict[str, Any]) -> tuple[Any, ...]:
         return (r["workload"], r["workload_variant"], r["cell_id"].split(".", 3)[3], r["spec_hash"], r["seed"])
 
-    left = {key(r): r for r in a_rows}
-    right = {key(r): r for r in b_rows}
+    left = {key(r): r for r in a_rows if r.get("valid", True)}
+    right = {key(r): r for r in b_rows if r.get("valid", True)}
     shared = sorted(set(left) & set(right))
     return (
         [Pairing(k, left[k], right[k]) for k in shared],

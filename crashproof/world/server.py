@@ -13,6 +13,7 @@ joke, and an in-loop server is a requirement, not a preference.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -29,6 +30,11 @@ class WorldServer:
         self.host = host
         self.port = port
         self._server: asyncio.Server | None = None
+        #: Set on `stop`. A held response is the one place a handler outlives its request by
+        #: design, and `Server.wait_closed` waits for handlers — so without something to wake the
+        #: hold, shutting the World down after a `tool_timeout` blocks for the length of the hold.
+        #: The trial that armed it is already over; the socket is already dead.
+        self._closing = asyncio.Event()
 
     async def start(self) -> int:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
@@ -44,6 +50,7 @@ class WorldServer:
 
     async def stop(self) -> None:
         if self._server is not None:
+            self._closing.set()  # release any held response before waiting on its handler
             self._server.close()
             await self._server.wait_closed()
             self._server = None
@@ -125,7 +132,12 @@ class WorldServer:
         # ---- the effect has been applied and durably receipted; the caller has not heard ----
         held = world.hold_ms(endpoint_id)
         if held:
-            await asyncio.sleep(_NEVER if held < 0 else held / 1000.0)
+            # Sleep, but wake on shutdown. `asyncio.sleep` alone would keep the World alive for the
+            # whole hold after the trial that armed it has ended — an hour, for an indefinite one.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._closing.wait(), _NEVER if held < 0 else held / 1000.0
+                )
         return 200, result
 
 

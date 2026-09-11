@@ -167,3 +167,27 @@ def test_the_workload_declares_both_bands() -> None:
     assert (endpoints["issues.create"].dedup, endpoints["issues.create"].natural) == (False, False)
     assert (endpoints["issues.upsert"].dedup, endpoints["issues.upsert"].natural) == (True, True)
     assert WORKLOAD.spec_hash and len(WORKLOAD.spec_hash) == 16
+
+
+async def test_an_indefinite_hold_does_not_outlive_the_trial(tmp_path: Path) -> None:
+    """`stop()` must return promptly even with a response held forever.
+
+    `tool_timeout` arms `hold(endpoint, -1)`, and `Server.wait_closed` waits for handlers. Without
+    something to wake the hold, tearing the World down after that fault blocks for the length of
+    the hold — an hour — with the trial that armed it already over and its socket already dead.
+    The bench does not hang: it stalls one trial at a time until something kills the parent.
+    """
+    world = build_world(log_path=tmp_path / "receipts.jsonl")
+    world.hold("issues.create", -1)
+    server = WorldServer(world, port=0)
+    await server.start()
+    client = WorldClient(server.base_url)
+    call = asyncio.create_task(client.acall("issues.create", ISSUE))
+    for _ in range(200):  # let the request reach the handler and park there
+        if world.receipts:
+            break
+        await asyncio.sleep(0.005)
+    assert world.receipts, "the request never reached the World"
+
+    await asyncio.wait_for(server.stop(), timeout=5.0)
+    call.cancel()
