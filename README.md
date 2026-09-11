@@ -13,7 +13,53 @@ The specification is [`docs/KEEL-ARCHITECTURE.md`](docs/KEEL-ARCHITECTURE.md). I
 constitution)** binds every decision here; where a section and the constitution disagree, the constitution
 wins.
 
-## Status — phase 3 of 8: the matrix
+## Status — phase 4 of 8: ambiguity
+
+A crash is the easy fault. Phase 4 is the one where the process stays alive and the *answer* goes
+missing — the request left, the receiver applied it, and nothing came back. Retrying is how correct
+systems duplicate effects; failing is how they abandon work that already happened.
+
+```bash
+uv run crashproof bench --matrix bench/specs/tier1a.yaml --out bench/results/tier1a
+uv run crashproof report  bench/results/tier1a --out bench/reports/tier1a.md
+uv run crashproof compare bench/results/tier1a --a 'keel.*' --b 'langgraph.sync.*'
+```
+
+**[`bench/reports/tier1a.md`](bench/reports/tier1a.md)** — 20 cells, 30 seeds, **600 trials**, four
+faults that never touch the process. Duplicate *applied* effects, `EXTERNAL` band (`issues.create`,
+`dedup: false`, no key), out of 30 seeds:
+
+| (fault, boundary) | keel | langgraph sync |
+|---|---|---|
+| `tool_timeout@before:tool_call` | **0** | **30** |
+| `tool_500@after:tool_effect` | **0** | **30** |
+| `model_timeout@before:model_call` | 0 | 0 |
+| `model_500@before:model_call` | 0 | 0 |
+
+Neither of the first two faults kills anything. In both, the request left the process, the World
+applied it, and the answer never arrived — and LangGraph's node re-runs from its last checkpoint and
+files the issue again, every trial, both cells. Keel's step is `RUNNING` with an EXTERNAL effect and
+no outcome, which the recovery table calls `STEP_AMBIGUOUS` rather than a retry; the declared
+resolution asks the receiver what happened instead of guessing.
+
+In the `IDEMPOTENT` band both arms duplicate **0** effects and both re-send **30** requests. Keel gets
+no credit for that zero: re-issuing under the same key is the correct response to an ambiguity, and it
+is the receiver that made it safe. Both columns are printed so the distinction cannot be blurred.
+
+**[`bench/reports/compare_tier1a_keel_vs_langgraph_sync.md`](bench/reports/compare_tier1a_keel_vs_langgraph_sync.md)**
+— 300 paired trials: `duplicate_effects` 0 vs 60, `logical_correctness` A better at p < 0.0001 over 60
+discordant pairs. Three of eight rows decline to claim anything, including one that would have
+flattered Keel — median recovery latency 108 ms against 2 361 ms is tagged *not claimable*, because
+the arm it beats has a supervisor re-invoking it and therefore no detection time to spend.
+
+The pieces: a **retry policy** with full jitter, clamped inside the lease and off by default;
+**reserve-then-settle budgets** where an attempt nobody heard back from stays charged forever, which
+is what makes the journaled spend an upper bound on the bill; `UnknownOutcome` and `Rejected`, so the
+step engine routes on the *effect class* rather than the status code; a `tool_timeout` armed **at the
+receiver**, so the effect really lands and the answer really never comes; and `crashproof compare`,
+which counts safety, estimates liveness, and says *too noisy to claim* out loud.
+
+## Phase 3: the matrix
 
 Phase 1 built the spine, phase 2 built the referee. Phase 3 points a saboteur at the runtime and
 publishes what the referee saw.
@@ -170,6 +216,10 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/unit/test_world.py` | the receipt ordering, dedup semantics, the oracle |
 | `tests/unit/test_faults.py` | one (spec_hash, seed) is one schedule; firing state survives a kill |
 | `tests/unit/test_verifier.py` | judged against claims, N/A where an input is missing, never a proportion |
+| `tests/unit/test_shim.py` | the shim fires the same three instants, in order, in every arm |
+| `tests/unit/test_retry_budget.py` | a retryable failure is retried and an ambiguity is not; the reservation of an attempt with no outcome is never released |
+| `tests/unit/test_compare.py` | pairing, McNemar over discordant pairs only, and the detection-bound tag |
+| `tests/unit/test_matrix_spec.py` | matrix v0's arithmetic, which is a published claim |
 | `tests/unit/test_layering.py` | the architecture, as an assertion |
 | `tests/property/test_fold_props.py` | determinism, incremental == batch, prefix monotonicity, blobs |
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
@@ -204,7 +254,9 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-The LangGraph adapter is phase 3's remaining piece, and it is what turns a self-report into a
-comparison. Phase 4 adds retries, timeouts→ambiguity and budgets; phase 5 VERIFY, FORK and
-`model_reask_alternate`; phases 6–8 the hook boundaries, the Hypothesis state machine, statistics and
-the published artifact. §27 is the binding staging table; nothing here is ahead of it.
+Phase 5 adds VERIFY, FORK and `model_reask_alternate`; phases 6–8 the hook boundaries, the Hypothesis
+state machine, statistics and the published artifact. Inside phase 4 itself, three things are named
+rather than stubbed: `max_usd` and `max_wall_clock` (they need a pinned price table and a deadline
+every waiting kind respects); backoff longer than the lease (it needs `RUN_WAITING` and the signals
+inbox, both v1); and Holm–Bonferroni across families, which arrives with the rest of the statistics
+module. §27 is the binding staging table; nothing here is ahead of it.

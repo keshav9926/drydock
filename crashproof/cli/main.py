@@ -286,7 +286,7 @@ def report(
     if fmt != "md":
         err.print("[red]only --fmt md is built; html is v1 (§27.9)[/]")
         raise typer.Exit(2)
-    page = render(fold(rows), workload=rows[0]["workload"])
+    page = render(fold(rows), workload=rows[0]["workload"], title=results.name)
     target = out_path or results / "matrix.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf8")

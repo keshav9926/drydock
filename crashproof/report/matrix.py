@@ -53,8 +53,19 @@ class CellSummary:
 
 
 def fold(rows: list[dict[str, Any]]) -> dict[str, CellSummary]:
-    cells: dict[str, list[dict[str, Any]]] = {}
+    """One cell is one seed's trial, once.
+
+    The store is append-only, so a `(cell_id, seed)` can appear more than once — a void trial and
+    the `--resume` that re-took it, or two bench processes that overlapped. Last write wins, which
+    is the ordering resume already relies on: the retake is appended after the row it replaces.
+    Without this a re-taken seed is counted twice, and n is larger than the number of seeds that
+    ran — which is a published number, not an internal one.
+    """
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
     for row in rows:
+        latest[(row["cell_id"], row["seed"])] = row
+    cells: dict[str, list[dict[str, Any]]] = {}
+    for row in latest.values():
         cells.setdefault(row["cell_id"], []).append(row)
     return {cell_id: _summarise(cell_id, group) for cell_id, group in cells.items()}
 
