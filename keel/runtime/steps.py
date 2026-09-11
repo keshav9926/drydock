@@ -69,6 +69,26 @@ class Drain(Exception):
     the whole record (§5, drain). Draining is not a lifecycle state."""
 
 
+class StopReplay(Exception):
+    """VERIFY reached a point it is not allowed to pass (§10.9).
+
+    VERIFY is the memoization loop with `allow_live=False`, and there are exactly two places the
+    loop would otherwise start *doing* things: the first un-journaled step, and an open step that
+    the recovery table would re-attempt or resolve. Both are writes. VERIFY takes no lease and
+    appends nothing, so it stops at either and reports where it stopped — `live_from_step` for the
+    first, `in_flight_ambiguity` for the second.
+
+    Raised rather than returned because it has to unwind the *program's* stack, not the engine's:
+    the program is a coroutine in the middle of an `await ctx.tool(...)`, and there is no value to
+    hand it that would be true.
+    """
+
+    def __init__(self, reason: str, step_index: int) -> None:
+        super().__init__(f"{reason} at step {step_index}")
+        self.reason = reason
+        self.step_index = step_index
+
+
 class Suspended(Exception):
     """The run must stop and wait for a human: nondeterminism, or an ambiguity that escalated."""
 
@@ -94,6 +114,7 @@ class StepEngine:
         should_drain: Callable[[], bool] | None = None,
         retry: RetryPolicy = NO_RETRY,
         model_timeout_s: float = DEFAULT_MODEL_TIMEOUT_S,
+        allow_live: bool = True,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -105,6 +126,10 @@ class StepEngine:
         self.should_drain = should_drain
         self.retry = retry
         self.model_timeout_s = model_timeout_s
+        #: VERIFY (§10.9). One flag rather than a second loop: a separate replayer would drift from
+        #: this one, and the drift would be invisible — VERIFY would keep passing while the thing
+        #: it is supposed to be checking had changed underneath it.
+        self.allow_live = allow_live
         self.live_from_step: int | None = None
         self.replayed_steps = 0
         self.recovery_completed = False
@@ -136,6 +161,8 @@ class StepEngine:
         if self.recovery_completed:
             return
         self.live_from_step = step_index
+        if not self.allow_live:
+            raise StopReplay("live_from_step", step_index)
         await self._append_recovery_completed(step_index)
 
     async def _append_recovery_completed(self, live_from_step: int) -> None:
@@ -406,6 +433,11 @@ class StepEngine:
     # --- the journal-state recovery table (§8.3) -----------------------------
     async def _recover_open(self, intent: StepIntent, journaled: Any) -> Any:
         self.replayed_steps += 1
+        if not self.allow_live:
+            # Every branch below this line either re-attempts or resolves, and both are writes.
+            # §10.9: VERIFY stops and reports rather than resolving, because resolution is a
+            # decision about the world and a read-only pass has no standing to make one.
+            raise StopReplay("in_flight_" + journaled.state.lower(), intent.step_index)
         cls = intent.effect_class
         state = journaled.state
         if state == INTENDED:
