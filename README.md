@@ -289,7 +289,9 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/unit/test_verifier.py` | judged against claims, N/A where an input is missing, never a proportion |
 | `tests/unit/test_shim.py` | the shim fires the same three instants, in order, in every arm |
 | `tests/unit/test_retry_budget.py` | a retryable failure is retried and an ambiguity is not; the reservation of an attempt with no outcome is never released |
-| `tests/unit/test_compare.py` | pairing, McNemar over discordant pairs only, and the detection-bound tag |
+| `tests/unit/test_compare.py` | pairing, one comparison per `(location, fault)` cell, Holm within a metric family, and the detection-bound tag |
+| `tests/unit/test_stats.py` | the exact test on the hand-checkable splits; Holm monotone; the MDD refusing where nothing is detectable |
+| `tests/unit/test_views.py` | facts survive the trip to a file; placement names the open attempt; the ledger judges each effect by its own class |
 | `tests/unit/test_verify.py` | VERIFY writes nothing; a recovered run hashes like a clean one; a reordered program fails with the step named |
 | `tests/unit/test_journal_fixtures.py` | every recorded journal in `tests/journals/` still agrees with the program |
 | `tests/unit/test_reask_alternate.py` | the modifier is refused alone; the provider has no ask counter; identities separate "twice" from "something else" |
@@ -298,11 +300,19 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_fold_props.py` | determinism, incremental == batch, prefix monotonicity, blobs |
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
+| `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
+| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 36 `(boundary, fault, class)` cells, 12 N/A with reasons |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
 
 The property files drive the *real* runtime over `MemoryJournal` + `FakeClock` and take its journal — random
 event lists would be rejected by the fold and would prove nothing. The crash is a `CancelledError` raised
 inside the tool after the effect has landed, which is the exact shape of the window and needs no sleeps.
+
+`tests/conformance/` is the white-box half: faults fired at named boundaries *inside* Keel's write path,
+which the shim cannot reach because those windows are inside a single transaction. Each cell checks the
+window the fault left before checking the recovery, and the table it writes to `bench/keel_conformance/`
+is published beside the matrix and never unioned with it — a boundary only one runtime exposes is not a
+fair column. A fault this mode cannot deliver is `N/A` with the reason named, never skipped.
 
 ## Layout, and where it departs from §23.1
 
@@ -323,6 +333,7 @@ structure. Adding a file that only re-exports is worse than a documented merge:
 | `effects/{table,resolution}.py` | `journal/protocol.py` + `runtime/steps.py` | the effects row is written inside the fenced append transaction, so it belongs to the journal; the resolution *policy* travels on the `ToolSpec` (`resolution`, `probe`) because `runtime` may not import `effects` |
 | `world/services/{issues,kv}.py` | `world/services.py` | §11.1's own component table says `services.py`; the two services are one endpoint table and forty lines of semantics |
 | `crashproof compare a.jsonl b.jsonl --paired` (§25.2) | `crashproof compare <results-dir> --a <cell glob> --b <cell glob>` | a store is one append-only `results.jsonl`, not one file per cell, so a shell glob over filenames has nothing to match. The globs select cells instead, which is the same selection expressed against the thing that exists. `--paired` is not a flag because pairing is the only mode: an unpaired comparison of two runtimes is not a weaker claim, it is a different one |
+| `verifier/{invariants,metrics}.py` | plus `verifier/views.py` | §19.5's placement view and effect ledger are *views* over the same `TrialFacts` the verdicts are computed from, not verdicts. Putting them in `invariants.py` would mix "what is true" with "how to read it", and `crashproof verify --placement` needs them without needing a verdict |
 | §25.2 exit codes | same, now wired | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. A harness whose failure mode is red text in a log nobody reads is not a CI gate |
 
 One platform note: psycopg's async mode cannot run on Windows' default ProactorEventLoop, so every entry
@@ -330,9 +341,14 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-Phases 6–8 the hook boundaries, the Hypothesis
-state machine, statistics and the published artifact. Inside phase 4 itself, three things are named
-rather than stubbed: `max_usd` and `max_wall_clock` (they need a pinned price table and a deadline
-every waiting kind respects); backoff longer than the lease (it needs `RUN_WAITING` and the signals
-inbox, both v1); and Holm–Bonferroni across families, which arrives with the rest of the statistics
-module. §27 is the binding staging table; nothing here is ahead of it.
+Phases 7–8: the day-7 artifact — `crashproof demo`, the `keel watch` TUI, the report polish, the
+adapter docs and the upstream-report template. Inside phase 4, two things are still named rather
+than stubbed: `max_usd` and `max_wall_clock` (they need a pinned price table and a deadline every
+waiting kind respects), and backoff longer than the lease (it needs `RUN_WAITING` and the signals
+inbox, both v1).
+
+Seven of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
+refused rather than firing nothing: `before/after:signal_consume`, `during:approval_wait`,
+`before:child_spawn` and `during:child_wait` arrive with the inbox and delegation in week 2;
+`before:segment_write` and `during:stream(chunk=k)` in week 3. §29.2's *all seventeen* is the
+honest completion date. §27 is the binding staging table; nothing here is ahead of it.
