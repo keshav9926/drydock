@@ -296,11 +296,18 @@ def report(
     results: Annotated[Path, typer.Argument()] = Path("bench/results/latest"),
     fmt: Annotated[str, typer.Option("--fmt")] = "md",
     out_path: Annotated[Path | None, typer.Option("--out")] = None,
+    mdd: Annotated[bool, typer.Option("--mdd", help="also echo the MDD tables to stdout")] = False,
 ) -> None:
-    """Fold the rows into cells and render the matrix."""
+    """Fold the rows into cells and render the matrix.
+
+    `--mdd` echoes §15.7's tables to stdout. It does not gate them: they are in every rendered page
+    whatever the flag says (§15.11 rule 6), because "you only ran it thirty times" is an objection
+    a reader has while looking at the page.
+    """
     from crashproof.report.markdown import render
     from crashproof.report.matrix import fold
     from crashproof.runner.store import ResultStore
+    from crashproof.stats.ci import MDD_TABLES
 
     rows = list(ResultStore(results).rows())
     if not rows:
@@ -314,6 +321,8 @@ def report(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf8")
     err.print(f"wrote {target}  ({len(rows)} trials)")
+    if mdd:
+        out.print(MDD_TABLES)
 
 
 @app.command()
@@ -350,10 +359,7 @@ def compare(
     # an answer, not an error. A gate that wants to fail on it has to say so (§25.2). "Not
     # claimable" counts the same way here: a comparison that establishes nothing establishes
     # nothing, whether the reason was the sample size or the confound.
-    if strict and not any(
-        c.verdict for c in (*result.binary, *result.continuous)
-        if not c.verdict.startswith(("too noisy", "not claimable"))
-    ):
+    if strict and not any(r.claimed() for r in result.rows):
         raise typer.Exit(EXIT_TOO_NOISY)
 
 

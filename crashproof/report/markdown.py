@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from crashproof.report.matrix import CellSummary, wilson
+from crashproof.stats.ci import MDD_TABLES
 
 #: Claims are printed under every column, because a verdict without the claim it was judged
 #: against is a scoreboard with the rules left off.
@@ -166,5 +167,9 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
         "has not failed S1; the duplicate is in the table regardless. An arm that declares "
         "`effectively_once` and applies twice has failed, and the seed that did it is named.",
         "",
+        # §15.11 rule 6: unconditional, not behind `report --mdd`. The objection this answers —
+        # "you only ran it thirty times" — is one a reader has while looking at the page, and an
+        # answer that needs a second command to produce is an answer they will not find.
+        MDD_TABLES,
     ]
     return out

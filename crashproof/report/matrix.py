@@ -20,6 +20,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
+from crashproof.stats.ci import wilson
 from crashproof.verifier.invariants import CONSISTENCY_INVARIANTS, MVP_INVARIANTS
 
 
@@ -133,14 +134,4 @@ def _median(metrics: list[dict[str, Any]], key: str) -> float | None:
     return statistics.median(values) if values else None
 
 
-def wilson(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """A 95% interval for a proportion. Printed for liveness, never for safety: a safety cell is
-    PASS or FAIL with counterexamples, and an interval around it would suggest a tolerance that
-    does not exist (§15.4)."""
-    if n == 0:
-        return (0.0, 0.0)
-    p = successes / n
-    denom = 1 + z**2 / n
-    centre = (p + z**2 / (2 * n)) / denom
-    margin = z * ((p * (1 - p) / n + z**2 / (4 * n**2)) ** 0.5) / denom
-    return (max(0.0, centre - margin), min(1.0, centre + margin))
+__all__ = ["CellSummary", "fold", "wilson"]
