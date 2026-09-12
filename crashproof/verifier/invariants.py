@@ -85,6 +85,37 @@ class TrialFacts:
     #: The adapter's own replay check, or `None` where the runtime offers none. Computed by the
     #: collector, because this module is a pure function and replaying a journal is I/O.
     replay: dict[str, Any] | None = None
+    #: The runtime's effect ledger, where it keeps one. No verdict reads it — §19.5's per-effect
+    #: view does, and a view over a trial is a view over its facts.
+    sut_effects: list[dict[str, Any]] | None = None
+
+
+def dump(facts: TrialFacts) -> dict[str, Any]:
+    """The facts as JSON, so `crashproof verify <trial_dir>` has every input it needs in a file.
+
+    The verifier being pure over the trial directory is what makes a verdict re-checkable at all
+    (§3.5, §19.5) — and it is only true if the directory actually holds the facts rather than the
+    live objects they were read from. Sets and tuples are written sorted and as lists, because a
+    re-check that is byte-identical only when the iteration order happens to repeat is not a
+    re-check of anything.
+    """
+    from dataclasses import fields
+
+    out = {f.name: getattr(facts, f.name) for f in fields(facts)}
+    out["sut_committed"] = None if facts.sut_committed is None else sorted(facts.sut_committed)
+    out["required_effects"] = list(facts.required_effects)
+    return out
+
+
+def load(doc: dict[str, Any]) -> TrialFacts:
+    from dataclasses import fields
+
+    known = {f.name for f in fields(TrialFacts)}
+    kwargs = {k: v for k, v in doc.items() if k in known}
+    if kwargs.get("sut_committed") is not None:
+        kwargs["sut_committed"] = set(kwargs["sut_committed"])
+    kwargs["required_effects"] = tuple(kwargs.get("required_effects") or ())
+    return TrialFacts(**kwargs)
 
 
 def verify(facts: TrialFacts) -> Verdicts:
@@ -181,14 +212,14 @@ def _s4_no_unjournaled_effect(f: TrialFacts, v: Verdicts) -> None:
     if f.journal is None:
         v.add("S4", "N/A", "the runtime exposes no per-attempt STARTED with timestamps")
         return
-    starts = sorted(_iso(e["ts"]) for e in f.journal if e["type"] == "STEP_ATTEMPT_STARTED")
+    starts = sorted(iso(e["ts"]) for e in f.journal if e["type"] == "STEP_ATTEMPT_STARTED")
     if not f.world_receipts:
         v.add("S4", "PASS", "no receipts to cover")
         return
     earliest = starts[0] if starts else None
     unjournaled = [
         r for r in f.world_receipts
-        if earliest is None or _iso(r["ts"]) < earliest
+        if earliest is None or iso(r["ts"]) < earliest
     ]
     if unjournaled:
         v.add("S4", "FAIL", "a receipt with no attempt committed before it",
@@ -240,7 +271,7 @@ def _l2_bounded_recoveries(f: TrialFacts, v: Verdicts) -> None:
     v.add("L2", "PASS", f"{f.restarts}/{f.max_recoveries} restarts")
 
 
-def _iso(ts: Any) -> float:
+def iso(ts: Any) -> float:
     """World receipts carry unix seconds; journal events carry ISO strings. One scale here."""
     if isinstance(ts, (int, float)):
         return float(ts)

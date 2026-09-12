@@ -146,8 +146,14 @@ async def run_trial(
             timed_out=sup.timed_out,
             reached_terminal=sup.terminal,
             replay=replay,
+            sut_effects=_effects(result.export),
         )
         verdicts = invariants.verify(facts)
+        # The verifier's inputs, in the trial directory, before the verdict computed from them.
+        # `crashproof verify <trial_dir>` is only possible if the directory holds the facts and not
+        # the live objects they were read from, and `--recheck` is only meaningful if a second run
+        # reads exactly what the first one did.
+        (trial.path / "facts.json").write_text(_dumps(invariants.dump(facts)), encoding="utf8")
         # Model calls are counted at the wire, from the shim's own observation log, not from each
         # adapter's self-report. Measuring one runtime from inside its process and another from
         # outside it is how an economy metric becomes a statement about instrumentation (§14.3);
@@ -245,6 +251,16 @@ def _journal(export: Path | None) -> list[dict[str, Any]] | None:
     import json
 
     return json.loads(export.read_text(encoding="utf8")).get("events")
+
+
+def _effects(export: Path | None) -> list[dict[str, Any]] | None:
+    """The runtime's own effect ledger, where it keeps one. A runtime with no such table has none
+    to export, and §19.5's journal columns print empty for it rather than being invented."""
+    if export is None or not export.exists():
+        return None
+    import json
+
+    return json.loads(export.read_text(encoding="utf8")).get("effects")
 
 
 def _write_spec(path: Path, spec: FaultSpec) -> None:

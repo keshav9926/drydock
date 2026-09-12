@@ -4,6 +4,8 @@
     chaos    one cell: n seeds of one spec against one adapter
     bench    a matrix of cells, resumable
     report   the cells folded into a page
+    verify   the verifier re-run over facts already on disk — nothing executed
+    compare  two arms, paired per (location, fault)
     world    the World alone, for adapter development
 
 `--seed N --seeds K` means seeds N … N+K-1, one trial per seed, trial id `t-<seed>`. There is no
@@ -206,6 +208,10 @@ def _cell(
     )
     store = ResultStore(out_dir)
     rows: list[Any] = []
+    # `<results>/<slug(cell_id)>/<trial_id>` is a rule, not a convention: `crashproof verify` finds
+    # a published row's trial directory by applying it, and a second spelling here would mean it
+    # could find a bench row's directory and not a chaos row's.
+    cell_id = f"{adapter_name}.default.{variant}.{spec.name}"
 
     async def go() -> None:
         for seed in range(base_seed, base_seed + seeds):
@@ -215,8 +221,8 @@ def _cell(
                 variant=variant,
                 spec=spec,
                 seed=seed,
-                out_dir=out_dir / slug(f"{adapter_name}.{variant}.{spec.name}"),
-                cell_id=f"{adapter_name}.default.{variant}.{spec.name}",
+                out_dir=out_dir / slug(cell_id),
+                cell_id=cell_id,
                 keel_commit=_commit(),
             )
             store.append(row.as_dict())
@@ -323,6 +329,148 @@ def report(
     err.print(f"wrote {target}  ({len(rows)} trials)")
     if mdd:
         out.print(MDD_TABLES)
+
+
+@app.command()
+def verify(
+    target: Annotated[Path, typer.Argument(help="a trial directory, or a results.jsonl")],
+    recheck: Annotated[bool, typer.Option("--recheck", help="re-verify and diff against what was published")] = False,
+    placement: Annotated[bool, typer.Option("--placement", help="where each fault landed (§19.5)")] = False,
+    effects: Annotated[bool, typer.Option("--effects", help="the per-effect ledger (§19.5)")] = False,
+    invariant: Annotated[list[str], typer.Option("--invariant", help="restrict to these, repeatable")] = None,
+) -> None:
+    """Re-run the verifier over facts already on disk. Nothing is executed and nothing is measured.
+
+    The argument is a trial directory or a `results.jsonl`, never a results directory root: a root
+    holds many cells and "verify this" would have no single answer. `--recheck` is the publication
+    gate — it re-runs the verifier over every row's own trial directory and compares the result
+    both against a second run of itself and against the verdict that was published. The first
+    catches a verdict that is not a function of the logs; the second catches a results file that
+    has drifted from the directories it claims to summarise.
+    """
+    import json
+
+    from crashproof.runner.store import ResultStore, slug
+    from crashproof.verifier import invariants, views
+
+    def facts_of(trial_dir: Path):
+        path = trial_dir / "facts.json"
+        if not path.exists():
+            return None
+        return invariants.load(json.loads(path.read_text(encoding="utf8")))
+
+    def canonical(facts) -> str:
+        """What `--recheck` compares. Details and counterexamples are in it, not just the verdict
+        letters: a verdict that stayed PASS while its reason changed is still a verifier that is
+        not a pure function of its inputs."""
+        v = invariants.verify(facts)
+        return json.dumps(
+            {
+                "verdicts": v.as_dict(),
+                "details": {n: f.detail for n, f in sorted(v.findings.items())},
+                "counterexamples": v.counterexamples(),
+            },
+            sort_keys=True,
+            default=str,
+        )
+
+    def show(trial_dir: Path, facts) -> None:
+        v = invariants.verify(facts)
+        wanted = set(invariant or []) or set(v.findings)
+        table = Table(box=None, title=str(trial_dir))
+        for col in ("invariant", "verdict", "detail"):
+            table.add_column(col)
+        for name, finding in v.findings.items():
+            if name in wanted:
+                colour = {"PASS": "green", "FAIL": "red"}.get(finding.verdict, "yellow")
+                table.add_row(name, f"[{colour}]{finding.verdict}[/]", finding.detail)
+        out.print(table)
+        if placement:
+            rows = views.placement(facts)
+            p = Table(box=None, title="placement — where the schedule aimed, and where it landed")
+            for col in ("fault", "boundary", "landmark", "#", "rec", "ran", "last seq",
+                        "open step", "next seq", "recovery", "receipt before", "receipt after"):
+                p.add_column(col)
+            for r in rows:
+                p.add_row(
+                    r["type"], r["boundary"], r["landmark"], str(r["occurrence"]),
+                    str(r["recovery_index"]), "yes" if r["executed"] else "[red]no[/]",
+                    _n(r["last_seq_before"]), _n(r["open_step"]), _n(r["first_seq_after"]),
+                    _n(r["recovery_seq"]), _n(r["receipt_before"]), _n(r["receipt_after"]),
+                )
+            out.print(p)
+            if not rows:
+                err.print("[yellow]no faults fired in this trial[/]")
+        if effects:
+            e = Table(box=None, title="effect ledger — one row per logical effect")
+            for col in ("identity", "key", "class", "status", "started", "outcome",
+                        "receipts", "applied", "claim", "S1", "S2", "S3", "S4", "C3"):
+                e.add_column(col)
+            for r in views.effect_ledger(facts):
+                e.add_row(
+                    r["identity"], r["effect_key"] or "—", r["effect_class"] or "—", r["status"] or "—",
+                    _n(r["started_seq"]), _n(r["outcome_seq"]), str(r["world_receipts"]),
+                    str(r["world_applied"]), r["claim"],
+                    *(_verdict(r[k]) for k in ("S1", "S2", "S3", "S4", "C3")),
+                )
+            out.print(e)
+
+    if target.is_dir():
+        facts = facts_of(target)
+        if facts is None:
+            err.print(f"[red]{target} holds no facts.json; it is not a trial directory[/]")
+            raise typer.Exit(2)
+        show(target, facts)
+        if recheck and canonical(facts) != canonical(facts):
+            err.print("[red]the verifier is not a function of its inputs[/]")
+            raise typer.Exit(EXIT_INVARIANT_FAIL)
+        raise typer.Exit(EXIT_INVARIANT_FAIL if invariants.verify(facts).failed else 0)
+
+    if target.name != "results.jsonl":
+        err.print("[red]verify takes a trial directory or a results.jsonl, never a results root[/]")
+        raise typer.Exit(2)
+
+    root = target.parent
+    rows = list(ResultStore(root).rows())
+    missing, drifted, unstable, failed = [], [], [], []
+    for row in rows:
+        trial_dir = root / slug(row["cell_id"]) / row["trial_id"]
+        facts = facts_of(trial_dir)
+        if facts is None:
+            missing.append(f"{row['cell_id']}/{row['trial_id']}")
+            continue
+        first = canonical(facts)
+        if recheck and first != canonical(facts):
+            unstable.append(f"{row['cell_id']}/{row['trial_id']}")
+        fresh = invariants.verify(facts)
+        if fresh.as_dict() != row["verdicts"]:
+            drifted.append(f"{row['cell_id']}/{row['trial_id']}: {row['verdicts']} -> {fresh.as_dict()}")
+        if fresh.failed and row.get("valid", True):
+            failed.append(f"{row['cell_id']}/{row['trial_id']}: {fresh.failed}")
+
+    err.print(f"{len(rows) - len(missing)} of {len(rows)} rows re-verified from their trial directories")
+    for label, items, colour in (
+        ("no facts.json", missing, "yellow"),
+        ("verdict drifted from the published row", drifted, "red"),
+        ("verifier not a function of its inputs", unstable, "red"),
+        ("invariant FAIL", failed, "red"),
+    ):
+        for item in items[:10]:
+            err.print(f"[{colour}]{label}: {item}[/]")
+        if len(items) > 10:
+            err.print(f"[{colour}]{label}: ... and {len(items) - 10} more[/]")
+    # A missing facts.json is a trial from before the file existed, not a failure of this one.
+    # Drift and instability are what the publication gate is for, and either one is exit 7.
+    if drifted or unstable or failed:
+        raise typer.Exit(EXIT_INVARIANT_FAIL)
+
+
+def _n(value: Any) -> str:
+    return "—" if value is None else str(value)
+
+
+def _verdict(value: str) -> str:
+    return {"PASS": "[green]PASS[/]", "FAIL": "[red]FAIL[/]"}.get(value, "[yellow]N/A[/]")
 
 
 @app.command()
