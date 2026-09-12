@@ -27,6 +27,7 @@ from keel.events import (
     RunSuspended,
 )
 from keel.journal.protocol import JournalBackend, Lease
+from keel.core.errors import StoreUnavailable
 from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
 from keel.runtime.retry import NO_RETRY, RetryPolicy
@@ -189,9 +190,15 @@ class Worker:
             await self._release(lease, runnable_at=now, runnable_reason="DRAIN")
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="RELEASED")
             return
-        except Abandon:
+        except (Abandon, StoreUnavailable):
             # Append nothing, release nothing: the lease lapses and the successor disposes the open
             # step from journal state alone (§8.2). This is the one path that leaves a run held.
+            #
+            # `StoreUnavailable` shares it deliberately. The `except Exception` below is right
+            # about a *program* bug — that is a run failure and belongs in the journal — and wrong
+            # about an outage arriving through the same door: recording RUN_FAILED because the
+            # store blinked turns a transient problem into permanent loss, and orphans any effect
+            # that already landed. A worker that cannot write must not write a verdict.
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="CRASHED")
             return
         except Fenced:

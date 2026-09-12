@@ -37,6 +37,22 @@ class Fenced(KeelError):
     """The fence UPDATE matched 0 rows. This worker writes nothing more for this run (§2)."""
 
 
+class StoreUnavailable(KeelError):
+    """The journal itself could not be reached or written.
+
+    Distinct from every other error here because it is the one failure a worker must *not* record.
+    A program bug is a run failure and belongs in the journal; a store outage is a fact about the
+    infrastructure, and writing `RUN_FAILED` because the disk blinked converts a transient problem
+    into permanent data loss — with any effect that already landed now orphaned, since the journal
+    says the run failed and the world says otherwise.
+
+    The correct response is the one a crash gets: append nothing, release nothing, let the lease
+    lapse, and let a successor read the journal and dispose of the open step by its effect class.
+    Backends raise this in place of their driver's own error so a worker never has to know what a
+    connection failure looks like in psycopg.
+    """
+
+
 class LeaseTooShort(KeelError):
     """lease_ttl <= max registered tool.timeout; the pre-dispatch gate could never clear (§8.4)."""
 

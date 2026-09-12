@@ -28,8 +28,23 @@ SHIM_BOUNDARIES = (
     "before:model_call",
     "after:model_return",
 )
+#: The ten hook boundaries whose mechanisms exist today (§28.6). Inside the runtime's own write
+#: path, so only an arm that exposes them can run these cells — which is why their results live in
+#: their own table and are never unioned with a cross-runtime row.
+HOOK_BOUNDARIES = (
+    "before:intent_commit",
+    "after:intent_commit",
+    "before:attempt_commit",
+    "after:attempt_commit",
+    "before:effect_exec",
+    "after:effect_exec",
+    "before:outcome_commit",
+    "after:outcome_commit",
+    "before:lease_heartbeat",
+    "before:lease_release",
+)
 #: `supervisor` is the one boundary that is not in the SUT: the harness executes it from outside.
-BOUNDARIES = (*SHIM_BOUNDARIES, "supervisor")
+BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")
 
 #: Fault types that end the process, so the supervisor must have restarts left for them.
 RESTART_CAUSING = frozenset({"kill", "sigterm_grace_ok", "sigterm_grace_too_short", "pause_past_ttl"})
@@ -48,6 +63,9 @@ MODIFIERS = frozenset({"model_reask_alternate"})
 #: than producing a trial that quietly never fires. The rest of §11.5 arrives with its mode: the
 #: journal faults need `hook` (phase 6), and the duplicate-response and partition faults need the
 #: proxy, because a shim can neither deliver a response twice nor stop forwarding.
+#: Faults only the hook injector can fire, because only it is inside the write path.
+HOOK_FAULT_TYPES = frozenset({"journal_unavailable", "blob_write_fail"})
+
 SHIM_FAULT_TYPES = frozenset(
     {
         "kill",
@@ -147,15 +165,17 @@ class FaultSpec(Frozen):
     spec_hash: str = ""
 
     def model_post_init(self, _: Any) -> None:
-        if self.mode != "shim":
-            raise CrashproofSpecError(
-                f"mode {self.mode!r} is not built: `hook` is phase 6 and `proxy` is week 2 (§27.7)"
-            )
+        if self.mode not in ("shim", "hook"):
+            raise CrashproofSpecError(f"mode {self.mode!r} is not built: `proxy` is week 2 (§27.7)")
+        # A mode is a *vocabulary*, and mixing them silently is how a cell ends up firing nothing:
+        # a hook boundary named in a shim spec never matches, and the trial runs green.
+        allowed_types = SHIM_FAULT_TYPES | (HOOK_FAULT_TYPES if self.mode == "hook" else frozenset())
+        allowed_boundaries = HOOK_BOUNDARIES if self.mode == "hook" else SHIM_BOUNDARIES
         for f in self.faults:
-            if f.type not in SHIM_FAULT_TYPES:
+            if f.type not in allowed_types:
                 raise CrashproofSpecError(
-                    f"fault {f.id!r}: type {f.type!r} is not built; the shim fires "
-                    f"{sorted(SHIM_FAULT_TYPES)} (§27.7 stages the rest)"
+                    f"fault {f.id!r}: type {f.type!r} is not built in {self.mode!r} mode; "
+                    f"available: {sorted(allowed_types)} (§27.7 stages the rest)"
                 )
             allowed = FAULT_BOUNDARIES.get(f.type)
             if allowed and f.trigger.boundary not in allowed:
@@ -163,8 +183,11 @@ class FaultSpec(Frozen):
                     f"fault {f.id!r}: {f.type} is only meaningful at {sorted(allowed)}, "
                     f"not {f.trigger.boundary}"
                 )
-            if f.trigger.boundary not in SHIM_BOUNDARIES and f.trigger.boundary != "supervisor":
-                raise CrashproofSpecError(f"fault {f.id!r}: {f.trigger.boundary} is not a shim boundary")
+            if f.trigger.boundary not in allowed_boundaries and f.trigger.boundary != "supervisor":
+                raise CrashproofSpecError(
+                    f"fault {f.id!r}: {f.trigger.boundary} is not a {self.mode} boundary; "
+                    f"one of {sorted(allowed_boundaries)}"
+                )
         if any(f.type in MODIFIERS for f in self.faults) and not any(
             f.type in RESTART_CAUSING for f in self.faults
         ):

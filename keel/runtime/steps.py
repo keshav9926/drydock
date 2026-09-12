@@ -215,7 +215,7 @@ class StepEngine:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
             await self._refuse(intent, exc)
-        hooks.at("before:intent_commit", step_index=intent.step_index)
+        hooks.at("before:intent_commit", **_where(intent))
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent))
             now = await tx.now()
@@ -259,8 +259,8 @@ class StepEngine:
         # A crash *between* them is unreachable by construction, and that is exactly what the
         # INTENDED/RUNNING split in the recovery table relies on — the two names exist so a spec
         # can say which side of the commit it means, not because there is a gap between them.
-        hooks.at("after:intent_commit", step_index=intent.step_index)
-        hooks.at("after:attempt_commit", step_index=intent.step_index, attempt_no=1)
+        hooks.at("after:intent_commit", **_where(intent))
+        hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout)
@@ -284,7 +284,7 @@ class StepEngine:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
             await self._refuse(intent, exc)
-        hooks.at("before:attempt_commit", step_index=intent.step_index, attempt_no=attempt_no)
+        hooks.at("before:attempt_commit", attempt_no=attempt_no, **_where(intent))
         async with self.journal.append(self.lease) as tx:
             if close is not None:
                 await tx.append(close)
@@ -313,7 +313,7 @@ class StepEngine:
         # A re-attempt writes no INTENT — the step already has one — so only the attempt boundary
         # belongs here. Firing `after:intent_commit` again would let a spec aimed at "the intent"
         # fire on attempt three, which is a different window wearing the same name.
-        hooks.at("after:attempt_commit", step_index=intent.step_index, attempt_no=attempt_no)
+        hooks.at("after:attempt_commit", attempt_no=attempt_no, **_where(intent))
         self.state.charged.start(
             intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind)
         )
@@ -345,10 +345,10 @@ class StepEngine:
             remaining = _remaining(deadline, timeout, self.clock)
             # The write-ahead barrier is behind us: STARTED is durable, so a crash here is the
             # window the whole recovery table exists for.
-            hooks.at("before:effect_exec", step_index=intent.step_index, attempt_no=attempt_no)
+            hooks.at("before:effect_exec", attempt_no=attempt_no, **_where(intent))
             async with asyncio.timeout(remaining):
                 outcome: StepOutcome = await executor.execute(intent, sctx)
-            hooks.at("after:effect_exec", step_index=intent.step_index, attempt_no=attempt_no)
+            hooks.at("after:effect_exec", attempt_no=attempt_no, **_where(intent))
         except TimeoutError:
             # An EXTERNAL timeout is ambiguity, never failure: the request left the process and the
             # receiver's state is unknown — window W3 with the worker still alive (§8.5).
@@ -390,7 +390,7 @@ class StepEngine:
         is_tool = intent.kind is StepKind.TOOL
         key = intent.effect_key or ""
         try:
-            hooks.at("before:outcome_commit", step_index=intent.step_index, attempt_no=attempt_no)
+            hooks.at("before:outcome_commit", attempt_no=attempt_no, **_where(intent))
             async with self.journal.append(self.lease) as tx:
                 if isinstance(outcome, Completed):
                     seq = await tx.append(
@@ -437,7 +437,7 @@ class StepEngine:
             raise Abandon("fenced at outcome commit") from exc
         # Durable. A crash from here on loses nothing but the in-memory return trip, which is the
         # difference between this boundary and the one before it.
-        hooks.at("after:outcome_commit", step_index=intent.step_index, attempt_no=attempt_no)
+        hooks.at("after:outcome_commit", attempt_no=attempt_no, **_where(intent))
         if isinstance(outcome, Completed):
             self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
             return outcome.result
@@ -608,6 +608,21 @@ def _remaining(deadline: datetime | None, timeout: float, clock: Any = None) -> 
         return timeout
     now = clock.now() if clock is not None else datetime.now(UTC)
     return max(0.001, (deadline - now).total_seconds())
+
+
+def _where(intent: StepIntent) -> dict[str, Any]:
+    """What a hook is told about the step it fired inside.
+
+    The *name* travels beside the index on purpose. A step index is an ordinal in one runtime's
+    traffic, and a spec written in ordinals is the thing §11.3 forbids; carrying `kind` and `name`
+    lets a hook spec say `tool:create_issue` in exactly the vocabulary the shim already uses. The
+    index comes too, because a white-box table may legitimately want to address one occurrence.
+    """
+    return {
+        "step_index": intent.step_index,
+        "kind": str(intent.kind).lower(),
+        "name": intent.name,
+    }
 
 
 def _intended(intent: StepIntent) -> StepIntended:

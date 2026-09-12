@@ -27,7 +27,7 @@ from keel.core.ids import EffectKey, RunId
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
-from keel.core.errors import AmbiguousRunRef
+from keel.core.errors import AmbiguousRunRef, StoreUnavailable
 from keel.journal.blobs import externalise, internalise
 from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow
 
@@ -370,17 +370,26 @@ class PostgresJournal:
 
     @asynccontextmanager
     async def append(self, lease: Lease):
-        pool = await self._ready()
-        async with pool.connection() as conn:
-            tx = _PgAppendTx(self, lease, conn)
-            try:
-                async with conn.transaction():
-                    if not await self._fence(conn, lease):
-                        raise Fenced(f"run {lease.run_id} epoch {lease.epoch}")
-                    yield tx
-            except BaseException:
-                lease.next_seq = tx.start_seq  # the counter is rewound on rollback (§6.3)
-                raise
+        try:
+            pool = await self._ready()
+            async with pool.connection() as conn:
+                tx = _PgAppendTx(self, lease, conn)
+                try:
+                    async with conn.transaction():
+                        if not await self._fence(conn, lease):
+                            raise Fenced(f"run {lease.run_id} epoch {lease.epoch}")
+                        yield tx
+                except BaseException:
+                    lease.next_seq = tx.start_seq  # the counter is rewound on rollback (§6.3)
+                    raise
+        except psycopg.OperationalError as exc:
+            # The store is gone, not the program. Re-raised as `StoreUnavailable` so the worker
+            # takes the abandon path — append nothing, release nothing, let the lease lapse —
+            # rather than recording RUN_FAILED and turning an outage into permanent loss (§8.2).
+            # Only `OperationalError`: a constraint violation is a *bug*, and laundering one into
+            # "the store was unavailable" would hide the very thing the unique indexes exist to
+            # catch.
+            raise StoreUnavailable(str(exc)) from exc
 
     async def heartbeat(self, lease: Lease, ttl: timedelta | None = None) -> bool:
         pool = await self._ready()
