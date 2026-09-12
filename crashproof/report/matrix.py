@@ -20,7 +20,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
-from crashproof.verifier.invariants import MVP_INVARIANTS
+from crashproof.verifier.invariants import CONSISTENCY_INVARIANTS, MVP_INVARIANTS
 
 
 @dataclass(slots=True)
@@ -95,7 +95,7 @@ def _summarise(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:
         return s
 
     # --- safety: a single violation is a FAIL, and it names itself -----------
-    for name in MVP_INVARIANTS:
+    for name in (*MVP_INVARIANTS, *CONSISTENCY_INVARIANTS):
         seen = [r["verdicts"].get(name, "N/A") for r in valid]
         if all(v == "N/A" for v in seen):
             s.verdicts[name] = "N/A"

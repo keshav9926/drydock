@@ -80,7 +80,7 @@ def _cell(cell: CellSummary | None) -> str:
         return "—"
     safety = " ".join(
         f"{name}{'✓' if cell.verdicts.get(name) == 'PASS' else '✗' if cell.verdicts.get(name) == 'FAIL' else '·'}"
-        for name in ("S1", "S2", "S3", "S4", "S5")
+        for name in ("S1", "S2", "S3", "S4", "S5", "C1")
     )
     lo, hi = wilson(*cell.recovery_rate)
     live = f"L1 {cell.recovery_rate[0]}/{cell.recovery_rate[1]} [{lo:.2f}–{hi:.2f}]"

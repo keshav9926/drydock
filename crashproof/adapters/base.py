@@ -129,4 +129,17 @@ class RuntimeAdapter(Protocol):
 
     async def collect(self, handle: SutHandle) -> CanonicalResult: ...
 
+    async def replay_check(self, handle: SutHandle, result: CanonicalResult) -> dict[str, Any] | None:
+        """C1: does the runtime's own replay reproduce this journal? (§15, §10.9)
+
+        Optional, and its absence is the honest answer for most runtimes: a framework with no
+        journal and no replay mode has nothing to check, so C1 is **N/A** rather than PASS. Only a
+        runtime that claims to re-execute from a recorded past can be held to reproducing it.
+
+        Returns the verdict material — `{ok, diff, projection_matches, ...}` — computed here rather
+        than in the verifier, because the verifier is a pure function from facts to verdicts and
+        replaying a journal is I/O.
+        """
+        return None
+
     async def stop_dependency(self, handle: SutHandle) -> None: ...

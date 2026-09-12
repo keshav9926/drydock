@@ -29,6 +29,9 @@ Verdict = Literal["PASS", "FAIL", "N/A"]
 AT_MOST_ONE_APPLIED = frozenset({"effectively_once", "exactly_once", "at_most_once"})
 
 MVP_INVARIANTS = ("S1", "S2", "S3", "S4", "S5", "L1", "L2")
+#: C1 arrives with replay as a first-class mode (v1, day 5). Listed apart from the MVP set because
+#: a cell that never had it is not missing a column — it is a cell from before the column existed.
+CONSISTENCY_INVARIANTS = ("C1",)
 
 
 @dataclass(slots=True)
@@ -79,6 +82,9 @@ class TrialFacts:
     max_recoveries: int = 3
     timed_out: bool = False
     reached_terminal: bool = False
+    #: The adapter's own replay check, or `None` where the runtime offers none. Computed by the
+    #: collector, because this module is a pure function and replaying a journal is I/O.
+    replay: dict[str, Any] | None = None
 
 
 def verify(facts: TrialFacts) -> Verdicts:
@@ -90,7 +96,41 @@ def verify(facts: TrialFacts) -> Verdicts:
     _s5_monotonic_step_state(facts, v)
     _l1_recovery_completes(facts, v)
     _l2_bounded_recoveries(facts, v)
+    _c1_replay_determinism(facts, v)
     return v
+
+
+# --- consistency -------------------------------------------------------------
+def _c1_replay_determinism(f: TrialFacts, v: Verdicts) -> None:
+    """VERIFY reproduces the step sequence, and for a terminal run the projection hash (§15).
+
+    This is the invariant that makes "it recovered" mean something stronger than "it finished".
+    A run can end COMPLETED with the right world and still have taken a path its own journal does
+    not describe — and every other invariant here would pass it. C1 is the one that re-executes the
+    program against the recorded past and insists the two agree.
+
+    N/A where the runtime offers no replay: a framework that keeps no journal has nothing to
+    reproduce, and calling that a pass would let the arm with the weakest guarantee score the
+    cleanest column.
+    """
+    if f.replay is None:
+        v.add("C1", "N/A", "the runtime exposes no replay mode")
+        return
+    if not f.replay.get("ok"):
+        v.add(
+            "C1",
+            "FAIL",
+            f.replay.get("error") or "VERIFY did not reproduce the journal",
+            {"diff": f.replay.get("diff"), "projection": f.replay.get("projection_hash")},
+        )
+        return
+    if f.replay.get("projection_matches") is False:
+        v.add("C1", "FAIL", "terminal projection hash differs from the trial's",
+              {"projection": f.replay.get("projection_hash")})
+        return
+    stopped = f.replay.get("stopped")
+    v.add("C1", "PASS", f"replayed {f.replay.get('replayed_steps')} steps"
+          + (f"; stopped at {stopped}" if stopped else ""))
 
 
 # --- safety ------------------------------------------------------------------

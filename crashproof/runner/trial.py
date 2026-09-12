@@ -111,6 +111,15 @@ async def run_trial(
 
         # 3. collection: canonical result, the SUT's export, the World's word, the fault log
         result = await adapter.collect(handle)
+        # C1 runs here, not in the verifier: the verifier is a pure function from facts to
+        # verdicts, and replaying a journal is I/O. An adapter with no replay mode returns None,
+        # which the verifier reads as N/A — never as a pass for having nothing to check.
+        replay = None
+        if hasattr(adapter, "replay_check"):
+            try:
+                replay = await adapter.replay_check(handle, result)
+            except Exception as exc:  # noqa: BLE001 - a harness failure, not the runtime's
+                replay = {"ok": False, "error": f"replay_check: {type(exc).__name__}: {exc}"}
         executed = supervisor.executed_flags()
         fault_rows = [
             {**row.model_dump(), "executed": executed.get(row.fault_id, True)}
@@ -136,6 +145,7 @@ async def run_trial(
             max_recoveries=spec.max_recoveries,
             timed_out=sup.timed_out,
             reached_terminal=sup.terminal,
+            replay=replay,
         )
         verdicts = invariants.verify(facts)
         # Model calls are counted at the wire, from the shim's own observation log, not from each

@@ -352,6 +352,50 @@ class KeelAdapter:
             await journal.close()
         KeelAdapter._template_ready = True
 
+    async def replay_check(self, handle: SutHandle, result: Any) -> dict[str, Any] | None:
+        """C1 (§15, §10.9): re-execute the program against this trial's own journal.
+
+        The journal is read straight from the trial's database rather than from the export, so the
+        check runs against what the runtime actually wrote rather than against the harness's
+        rendering of it. VERIFY takes no lease and appends nothing, so it is safe to run after the
+        trial is over and before the database is dropped.
+
+        This is the check that separates "it finished with the right world" from "it did what its
+        journal says it did". Every other invariant in the suite would pass a run that reached the
+        right answer by a path its own history does not describe.
+        """
+        from keel.agents.demo import tool_chain
+        from keel.replay.verify import verify as run_verify
+
+        run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()
+        app = self._client(handle)
+        out = await run_verify(
+            app.journal,
+            uuid.UUID(run_ref),
+            tool_chain.fn if hasattr(tool_chain, "fn") else tool_chain,
+            tools=self._verify_tools(handle),
+        )
+        return out.as_dict()
+
+    def _verify_tools(self, handle: SutHandle) -> Any:
+        """A registry with the *shapes* the program will ask for. VERIFY executes no tool, but it
+        cannot build a TOOL step's intent without the effect class and modifiers, which live on the
+        registration — so the tools are supplied as code, exactly as they would be on a redeploy."""
+        from keel.core.protocols import EffectClass, Idempotency, ProbeResult
+        from keel.effects.registry import ToolCtx, ToolRegistry, tool
+
+        from crashproof.world.client import WorldClient
+
+        world = WorldClient(handle.world_url)
+        decls = self.workload.tools_for(self.variant)
+        key_source = self.workload.variant(self.variant).key_source
+        return ToolRegistry(
+            [
+                _build_tool(d, key_source, world, None, tool, ToolCtx, EffectClass, Idempotency, ProbeResult)
+                for d in decls
+            ]
+        )
+
     async def stop_dependency(self, handle: SutHandle) -> None:
         from crashproof.runner import database
 
