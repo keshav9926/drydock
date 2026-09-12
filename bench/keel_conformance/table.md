@@ -78,7 +78,7 @@ invariant's inputs.
 
 ## Provenance
 
-Generated 2026-09-12T13:24:11+00:00. 36 cells run, 12 N/A, 0 failed.
+36 cells run, 12 N/A, 0 failed. Regenerate with `uv run pytest tests/conformance -q`.
 
 The seven remaining boundaries — `before/after:signal_consume`, `during:approval_wait`,
 `before:child_spawn`, `during:child_wait`, `before:segment_write` and

@@ -393,8 +393,6 @@ def teardown_module(module: Any) -> None:
 
 
 def render() -> str:
-    from datetime import UTC, datetime
-
     lines = [
         "# Keel conformance (`hook` mode, deterministic, pass/fail)",
         "",
@@ -445,8 +443,11 @@ def render() -> str:
         "",
         "## Provenance",
         "",
-        f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}. "
-        f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed.",
+        # No timestamp. These cells are deterministic, so the table is a function of the code
+        # that produced it — and a generated file that changes on every test run is a file whose
+        # diff nobody reads. The commit that changed it is the date.
+        f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed. "
+        f"Regenerate with `uv run pytest tests/conformance -q`.",
         "",
         "The seven remaining boundaries — `before/after:signal_consume`, `during:approval_wait`,",
         "`before:child_spawn`, `during:child_wait`, `before:segment_write` and",
