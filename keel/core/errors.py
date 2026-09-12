@@ -48,6 +48,17 @@ class DuplicateEffectKey(KeelError): ...
 class UnknownTool(KeelError): ...
 
 
+class AmbiguousRunRef(KeelError):
+    """A prefix that matches more than one run. Distinct from "no such run" because the two ask
+    the user for opposite things, and UUIDv7 makes this common: runs started seconds apart share a
+    long leading prefix, so the obvious eight characters are often not enough."""
+
+    def __init__(self, prefix: str, matches: int) -> None:
+        super().__init__(f"{prefix!r} matches {matches} runs; use a longer prefix")
+        self.prefix = prefix
+        self.matches = matches
+
+
 class ToolRegistrationError(KeelError): ...
 
 

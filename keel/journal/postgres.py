@@ -27,6 +27,7 @@ from keel.core.ids import EffectKey, RunId
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
+from keel.core.errors import AmbiguousRunRef
 from keel.journal.blobs import externalise, internalise
 from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow
 
@@ -595,7 +596,9 @@ class PostgresJournal:
                 "SELECT run_id FROM runs WHERE run_id::text LIKE %s LIMIT 2", (prefix + "%",)
             )
             rows = await cur.fetchall()
-        return rows[0][0] if len(rows) == 1 else None
+        if len(rows) > 1:
+            raise AmbiguousRunRef(prefix, len(rows))
+        return rows[0][0] if rows else None
 
 
 def _run_row(r: Mapping[str, Any]) -> RunRow:

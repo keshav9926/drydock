@@ -7,8 +7,10 @@ result would be an artefact of the fake model instead of a property of the runti
 The MVP fingerprint is the ordered list of tool results already in the request. That is content,
 it is stable across restarts, and it is enough to drive `tool_chain_1_effect`.
 
-# ponytail: fingerprint = the tool-result chain only. Day 5's `model_reask_alternate` needs
-# per-node fingerprints with declared `alternate` decisions (§11); widen `_fingerprint` then.
+# ponytail: fingerprint = the tool-result chain only, and day 5 did not widen it. The benchmark's
+# `model_reask_alternate` lives in the harness's own provider (`crashproof/adapters/keel.py`),
+# which is what every arm shares — putting it here would have made the fault a property of Keel's
+# provider rather than of the workload, and a fault only one arm can feel is not a comparison.
 """
 
 from __future__ import annotations

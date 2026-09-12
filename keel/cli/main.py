@@ -68,7 +68,13 @@ def _run(coro: Any) -> Any:
 
 
 async def _resolve(keel: Keel, run_ref: str) -> Any:
-    run_id = await keel.journal.resolve_run_id(run_ref)
+    from keel.core.errors import AmbiguousRunRef
+
+    try:
+        run_id = await keel.journal.resolve_run_id(run_ref)
+    except AmbiguousRunRef as exc:
+        err.print(f"[red]{exc}[/]")
+        raise typer.Exit(EXIT_USAGE) from exc
     if run_id is None:
         err.print(f"[red]no run matches {run_ref!r}[/]")
         raise typer.Exit(EXIT_ERROR)

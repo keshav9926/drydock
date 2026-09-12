@@ -121,3 +121,30 @@ async def test_acquire_waits_for_the_attempt_deadline() -> None:
     journal.clock.advance(10)
     assert await journal.reap() == [run_id]
     assert await journal.claim("w2", TTL) is not None
+
+
+async def test_an_ambiguous_prefix_says_so_rather_than_denying_the_runs_exist() -> None:
+    """UUIDv7 makes this common: two runs started seconds apart share a long leading prefix, so
+    the obvious eight characters often match both. Reporting that as "no run matches" sends the
+    reader to check an id that was fine, when what they needed was a longer one."""
+    from keel.core.errors import AmbiguousRunRef
+
+    journal = MemoryJournal(clock=FakeClock())
+    first = await _one_run(journal)
+    second = await _one_run(journal)
+    shared = _common_prefix(str(first), str(second))
+    assert shared, "the two ids share no prefix; this test proves nothing"
+
+    assert await journal.resolve_run_id("deadbeef") is None
+    assert await journal.resolve_run_id(str(first)) == first
+    with pytest.raises(AmbiguousRunRef, match="matches 2 runs"):
+        await journal.resolve_run_id(shared)
+
+
+def _common_prefix(a: str, b: str) -> str:
+    out = []
+    for x, y in zip(a, b, strict=False):
+        if x != y:
+            break
+        out.append(x)
+    return "".join(out)

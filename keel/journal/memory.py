@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from keel.core.clock import Clock, SystemClock
-from keel.core.errors import DuplicateEffectKey, Fenced, IllegalTransition
+from keel.core.errors import AmbiguousRunRef, DuplicateEffectKey, Fenced, IllegalTransition
 from keel.core.ids import EffectKey, RunId
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
@@ -372,7 +372,9 @@ class MemoryJournal:
 
     async def resolve_run_id(self, prefix: str) -> RunId | None:
         matches = [r for r in self._runs if str(r).startswith(prefix)]
-        return matches[0] if len(matches) == 1 else None
+        if len(matches) > 1:
+            raise AmbiguousRunRef(prefix, len(matches))
+        return matches[0] if matches else None
 
     async def close(self) -> None:
         return None
