@@ -38,6 +38,7 @@ from keel.events import (
 )
 from keel.journal.protocol import EffectRow, JournalBackend, Lease
 from keel.providers.protocol import ModelRequest
+from keel.runtime import hooks
 from keel.runtime.budget import BudgetExceeded, Reservation, admit, reserve_model, reserve_tool
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNING, RunState
@@ -214,6 +215,7 @@ class StepEngine:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
             await self._refuse(intent, exc)
+        hooks.at("before:intent_commit", step_index=intent.step_index)
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent))
             now = await tx.now()
@@ -253,6 +255,12 @@ class StepEngine:
                 )
             if deadline is not None:
                 await tx.set_run(attempt_deadline=deadline)
+        # INTENT and the first STARTED share one transaction, so both boundaries close together.
+        # A crash *between* them is unreachable by construction, and that is exactly what the
+        # INTENDED/RUNNING split in the recovery table relies on — the two names exist so a spec
+        # can say which side of the commit it means, not because there is a gap between them.
+        hooks.at("after:intent_commit", step_index=intent.step_index)
+        hooks.at("after:attempt_commit", step_index=intent.step_index, attempt_no=1)
         self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout)
@@ -276,6 +284,7 @@ class StepEngine:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
             await self._refuse(intent, exc)
+        hooks.at("before:attempt_commit", step_index=intent.step_index, attempt_no=attempt_no)
         async with self.journal.append(self.lease) as tx:
             if close is not None:
                 await tx.append(close)
@@ -301,6 +310,10 @@ class StepEngine:
                 )
             if deadline is not None:
                 await tx.set_run(attempt_deadline=deadline)
+        # A re-attempt writes no INTENT — the step already has one — so only the attempt boundary
+        # belongs here. Firing `after:intent_commit` again would let a spec aimed at "the intent"
+        # fire on attempt three, which is a different window wearing the same name.
+        hooks.at("after:attempt_commit", step_index=intent.step_index, attempt_no=attempt_no)
         self.state.charged.start(
             intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind)
         )
@@ -330,8 +343,12 @@ class StepEngine:
         executor = EXECUTORS[intent.kind]
         try:
             remaining = _remaining(deadline, timeout, self.clock)
+            # The write-ahead barrier is behind us: STARTED is durable, so a crash here is the
+            # window the whole recovery table exists for.
+            hooks.at("before:effect_exec", step_index=intent.step_index, attempt_no=attempt_no)
             async with asyncio.timeout(remaining):
                 outcome: StepOutcome = await executor.execute(intent, sctx)
+            hooks.at("after:effect_exec", step_index=intent.step_index, attempt_no=attempt_no)
         except TimeoutError:
             # An EXTERNAL timeout is ambiguity, never failure: the request left the process and the
             # receiver's state is unknown — window W3 with the worker still alive (§8.5).
@@ -373,6 +390,7 @@ class StepEngine:
         is_tool = intent.kind is StepKind.TOOL
         key = intent.effect_key or ""
         try:
+            hooks.at("before:outcome_commit", step_index=intent.step_index, attempt_no=attempt_no)
             async with self.journal.append(self.lease) as tx:
                 if isinstance(outcome, Completed):
                     seq = await tx.append(
@@ -417,6 +435,9 @@ class StepEngine:
         except Fenced as exc:
             # The zombie's outcome append is rejected: the journal never records that effect (§8.4).
             raise Abandon("fenced at outcome commit") from exc
+        # Durable. A crash from here on loses nothing but the in-memory return trip, which is the
+        # difference between this boundary and the one before it.
+        hooks.at("after:outcome_commit", step_index=intent.step_index, attempt_no=attempt_no)
         if isinstance(outcome, Completed):
             self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
             return outcome.result

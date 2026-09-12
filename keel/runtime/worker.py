@@ -27,6 +27,7 @@ from keel.events import (
     RunSuspended,
 )
 from keel.journal.protocol import JournalBackend, Lease
+from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, StepEngine, Suspended
@@ -121,7 +122,7 @@ class Worker:
         events = await journal.read(lease.run_id)
         state = fold(events)
         if state.terminal:
-            await journal.release(lease, phase=state.phase)
+            await self._release(lease, phase=state.phase)
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="TERMINAL")
             return
 
@@ -185,7 +186,7 @@ class Worker:
             # appended — `runnable_at = now()` and a NULL lease are the entire handover, and the
             # successor's RECOVERY_STARTED{cause=DRAIN} records that it happened (§5).
             now = self.clock.now() if self.clock is not None else datetime.now(UTC)
-            await journal.release(lease, runnable_at=now, runnable_reason="DRAIN")
+            await self._release(lease, runnable_at=now, runnable_reason="DRAIN")
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="RELEASED")
             return
         except Abandon:
@@ -223,10 +224,20 @@ class Worker:
         except (Fenced, Abandon):
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="FENCED")
             return
-        await journal.release(lease, phase=phase)
+        await self._release(lease, phase=phase)
         await journal.set_recovery(
             lease.run_id, lease.epoch, outcome="SUSPENDED" if phase == "SUSPENDED" else "TERMINAL"
         )
+
+    async def _release(self, lease: Lease, **fields: Any) -> None:
+        """Every voluntary release, so `before:lease_release` is one boundary rather than four.
+
+        A crash here leaves a lease nobody holds and nobody has released — indistinguishable from a
+        crash to every observer, which is the point: a graceful shutdown that dies mid-release must
+        degrade to the ordinary orphan path rather than to a stuck run.
+        """
+        hooks.at("before:lease_release", run_id=str(lease.run_id), epoch=lease.epoch)
+        await self.journal.release(lease, **fields)
 
     async def _heartbeat(self, lease: Lease) -> None:
         """The fence statement alone, on a timer. A fenced heartbeat means someone else owns the
@@ -234,6 +245,10 @@ class Worker:
         period = max(0.05, self.lease_ttl / HEARTBEAT_DIVISOR)
         while True:
             await asyncio.sleep(period)
+            # A kill here is how a *live* worker becomes a zombie: the lease is still valid for up
+            # to one TTL, and the run is not reclaimable until it lapses. The reaper predicate is
+            # what bounds that window, and this is where a fault gets to test the bound.
+            hooks.at("before:lease_heartbeat", run_id=str(lease.run_id), epoch=lease.epoch)
             if not await self.journal.heartbeat(lease, timedelta(seconds=self.lease_ttl)):
                 return
 
