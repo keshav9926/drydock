@@ -112,6 +112,27 @@ class Workload(Frozen):
         return [e.model_dump() for e in self.world.endpoints]
 
     @staticmethod
+    def decision_of(node: "ScriptNode | None", *, alternate: bool = False) -> dict[str, Any]:
+        """What the scripted provider answers for this node (§13.3).
+
+        `alternate` is the node's *second declared decision*, served when the trial's
+        `alternate_armed` flag is set. The provider therefore stays a pure function of
+        (request content, flag) — no per-fingerprint ask counter, no per-trial counter — which is
+        what keeps a re-asked question the *same* question rather than the nth one, and keeps every
+        arm answering from one script.
+
+        A memoizing runtime never reaches a second ask, so it never sees this. That is the finding,
+        not a gap: `model_reask_alternate` is the only way to make replay divergence visible in
+        black-box mode, and a runtime that persisted its first answer is invisible to it by being
+        correct.
+        """
+        if node is None:
+            return {"final": "(script exhausted)"}
+        if alternate and node.alternate is not None:
+            return dict(node.alternate)
+        return dict(node.decision)
+
+    @staticmethod
     def node_key(tool_names: "Sequence[str]") -> tuple[tuple[str, int], ...]:
         """The ordered (tool, occurrence) pairs answered so far — the only thing about a decision
         node that is stable across a restart, and therefore the only sound way to select one."""

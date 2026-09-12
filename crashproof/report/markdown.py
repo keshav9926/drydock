@@ -92,6 +92,11 @@ def _cell(cell: CellSummary | None) -> str:
         extra.append(f"lat {cell.recovery_latency_ms / 1000:.1f}s")
     if cell.extra_model_calls is not None:
         extra.append(f"+calls {cell.extra_model_calls:g}")
+    if cell.replay_divergence[1]:
+        # Printed whenever it is measurable, including the zero — "this runtime never diverged"
+        # is the finding in half these cells, and a column that only appears when something went
+        # wrong cannot report it.
+        extra.append(f"diverged {cell.replay_divergence[0]}/{cell.replay_divergence[1]}")
     if cell.void:
         extra.append(f"void {cell.void}")
     return "<br>".join([safety, live, raw] + ([" · ".join(extra)] if extra else []))

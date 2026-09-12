@@ -1,0 +1,40 @@
+# The replay-divergence cell (§28.5).
+#
+# `model_reask_alternate` is a *modifier*, not a cell of its own: it fires only when a later
+# incarnation re-asks a question, so it is composed with the kill that causes that incarnation.
+# A runtime that persisted its first decision never re-asks and never sees the alternate — it is
+# invisible to this fault by being correct, and that is the finding the column reports.
+#
+# The kill lands at `after:tool_effect`, *after* the earlier decisions were journaled. That is what
+# makes the cell discriminate. A kill at `after:model_return` would not: at that instant the answer
+# is in the runtime's hands and in nobody's journal, so every arm re-asks and every arm diverges —
+# a true finding, and a useless column (§8.3's MODEL row says so in as many words).
+#
+# Here, on recovery: a memoizing runtime returns the journaled decisions and never re-asks, so the
+# armed flag is never consulted and divergence is 0 — it is invisible to this fault by being
+# correct. A runtime whose checkpoint did not survive re-runs the model nodes, is served the node's
+# declared `alternate`, files a *different* issue, and diverges.
+workload: tool_chain_1_effect
+mode: shim
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, L1, L2]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+
+triggers:
+  - kill@after:tool_effect+model_reask_alternate@before:model_call
+
+adapters:
+  - name: keel
+    key_source: framework
+    configs:
+      - {id: default}
+  - name: langgraph
+    key_source: none
+    configs:
+      - {id: sync, durability: sync}
+      - {id: async, durability: async}

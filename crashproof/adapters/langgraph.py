@@ -83,7 +83,9 @@ def build_graph(workload: Workload, variant: str, world: WorldClient, shim: Tool
         node_id = "-".join(f"{n}{i}" for n, i in key) or "start"
 
         def decide() -> dict[str, Any]:
-            decision = dict(node.decision) if node is not None else {"final": "(script exhausted)"}
+            decision = Workload.decision_of(
+                node, alternate=shim is not None and shim.alternate_armed
+            )
             results = state.get("results") or {}
             calls = decision.get("tool_calls") or []
             if not calls:

@@ -117,6 +117,7 @@ class TrialDir:
         _truncate(self.receipts_path)
         for stale in self.path.glob("thawed-*"):
             _truncate(stale)
+        _truncate(self.alternate_marker())
         for leftover in (self.path / "sut").glob("*"):
             _truncate(leftover)
 
@@ -145,6 +146,24 @@ class TrialDir:
         """Written by the supervisor after it resumes a frozen worker, and polled by the worker.
         A frozen process cannot poll, so the first successful read is necessarily after the thaw."""
         return self.path / f"thawed-{fault_id}"
+
+    def alternate_marker(self) -> Path:
+        """`model_reask_alternate`: the trial-owned flag the scripted provider consults (§13.3).
+
+        Trial-owned rather than worker-owned, and a file rather than an environment variable,
+        because the successor is a *different process* that must see the arming its predecessor's
+        fault performed — the same reason the fault log is a file. The provider stays a pure
+        function of (request content, flag): no per-fingerprint ask counter, no per-trial counter.
+        """
+        return self.path / "alternate-armed"
+
+    @property
+    def alternate_armed(self) -> bool:
+        """Non-empty, not merely present. `_clear` can only *empty* a file Windows still holds
+        open, so existence alone would leave a reused trial directory permanently armed — the
+        same class of bug as the reused schedule that made every entry read as already spent."""
+        marker = self.alternate_marker()
+        return marker.exists() and marker.stat().st_size > 0
 
     @classmethod
     def from_env(cls) -> "TrialDir":

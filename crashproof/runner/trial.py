@@ -166,6 +166,7 @@ async def run_trial(
             detect_ms=result.detect_ms,
             verdicts=verdicts.as_dict(),
             world_probes=list(world.probes),
+            applied_identities=world.applied_identities(),
             valid=valid,
             baseline=baseline,
         )

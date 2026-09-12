@@ -120,7 +120,7 @@ def compare(
             sum(p.b["metrics"][name] or 0 for p in pairs),
         )
 
-    for name in ("recovery_rate", "logical_correctness"):
+    for name in ("recovery_rate", "logical_correctness", "replay_divergence"):
         out.binary.append(_mcnemar(name, pairs))
 
     rng = random.Random(seed)
@@ -146,8 +146,8 @@ def compare(
 def _mcnemar(metric: str, pairs: list[Pairing]) -> BinaryComparison:
     """Only discordant pairs carry information: a trial both arms passed says nothing about which
     is better, and counting it would dilute the very thing being measured."""
-    a_only = sum(1 for p in pairs if p.a["metrics"][metric] and not p.b["metrics"][metric])
-    b_only = sum(1 for p in pairs if p.b["metrics"][metric] and not p.a["metrics"][metric])
+    a_only = sum(1 for p in pairs if p.a["metrics"].get(metric) and not p.b["metrics"].get(metric))
+    b_only = sum(1 for p in pairs if p.b["metrics"].get(metric) and not p.a["metrics"].get(metric))
     c = BinaryComparison(metric=metric, n=len(pairs), a_only=a_only, b_only=b_only)
     discordant = a_only + b_only
     if discordant < MIN_EVENTS:

@@ -183,7 +183,9 @@ class WorkloadProvider:
         from keel.providers.protocol import Message, ModelResponse, ToolCall, Usage
 
         self.calls += 1
-        decision = dict(node.decision) if node is not None else {"final": "(script exhausted)"}
+        decision = Workload.decision_of(
+            node, alternate=self.shim is not None and self.shim.alternate_armed
+        )
         results = _results_by_tool(req)
         calls = [
             ToolCall(id=f"tu_{i}", name=c["name"], args=_resolve(c.get("args", {}), results))

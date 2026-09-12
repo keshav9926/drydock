@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from crashproof.faults.spec import FaultSpec, from_doc
+from crashproof.faults.spec import MODIFIERS, FaultSpec, from_doc
 from crashproof.runner.store import ResultStore, slug
 from crashproof.runner.trial import TrialRow, run_trial
 from crashproof.verifier.metrics import Metrics
@@ -104,17 +104,25 @@ class Matrix:
         }
         if trigger == BASELINE_TRIGGER:
             return from_doc(base)
-        fault_type, _, boundary = trigger.rpartition("@")
-        boundary = boundary or trigger
-        landmark = self.model_landmark if "model" in boundary else self.landmark
+        # `a@b+c@d` composes faults into one cell. A modifier like `model_reask_alternate` has no
+        # cell of its own — it only fires when a later incarnation re-asks — so the syntax that
+        # expresses it is the syntax for "this fault, plus that one" (§14.2).
         base["faults"] = [
-            {
-                "id": "f1",
-                "type": fault_type or "kill",
-                "trigger": {"boundary": boundary, "landmark": landmark, "occurrence": 1},
-            }
+            self._fault(f"f{i + 1}", part) for i, part in enumerate(trigger.split("+"))
         ]
         return from_doc(base)
+
+    def _fault(self, fault_id: str, part: str) -> dict[str, Any]:
+        fault_type, _, boundary = part.rpartition("@")
+        boundary = boundary or part
+        fault_type = fault_type or "kill"
+        landmark = self.model_landmark if "model" in boundary else self.landmark
+        trigger: dict[str, Any] = {"boundary": boundary, "landmark": landmark, "occurrence": 1}
+        if fault_type in MODIFIERS:
+            # The whole point of a modifier: it addresses a *later incarnation*, so it is exempt
+            # from the reachability bound and invisible to a runtime that never produces one.
+            trigger["recovery_index"] = 1
+        return {"id": fault_id, "type": fault_type, "trigger": trigger}
 
 
 async def run_matrix(

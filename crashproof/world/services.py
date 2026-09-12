@@ -224,6 +224,26 @@ class World:
         """`{logical_identity: times actually applied}` — what S1 and `duplicate_effects` read."""
         return {label: entry.count for label, entry in self._applied.items()}
 
+    def applied_identities(self) -> list[list[Any]]:
+        """`[[endpoint, identity, count], ...]` in allocation order — what `replay_divergence` reads.
+
+        Not the same thing as `applied_counts`, and the difference is the point. A label is an
+        *ordinal*: `issues.create#1` is whatever arrived first, so a run that filed a different
+        issue instead of the right one still shows `issues.create#1` and reads as identical.
+        The identity is the content the endpoint declares as identifying, which is what actually
+        changed. Labels answer "did this happen twice"; identities answer "did something else
+        happen" — S1 needs the first, divergence needs the second (§15).
+        """
+        by_label = {
+            label: (ep_id, identity)
+            for (ep_id, identity), label in self._labels.items()
+        }
+        out: list[list[Any]] = []
+        for label, entry in self._applied.items():
+            ep_id, identity = by_label.get(label, ("", label))
+            out.append([ep_id, identity, entry.count])
+        return out
+
     def receipt_counts(self) -> dict[str, int]:
         """`{logical_identity: times received}` — `duplicate_receipts`. Always ≥ applied_counts."""
         counts: dict[str, int] = {}

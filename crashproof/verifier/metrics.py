@@ -38,6 +38,9 @@ class Metrics:
     storage_overhead: int | None = None
     wall_clock_overhead_ms: float | None = None
     void_rate: int = 0
+    #: Did this trial end up doing something different from its own fault-free twin? Binary, and
+    #: `None` without a baseline — "did it diverge" has no answer without something to diverge from.
+    replay_divergence: int | None = None
     restart_latency_ms: float | None = None  # harness-owned; printed, never compared across arms
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +70,7 @@ def compute(
     detect_ms: float | None,
     verdicts: dict[str, str],
     world_probes: list[dict[str, Any]] | None = None,
+    applied_identities: list[list[Any]] | None = None,
     valid: bool = True,
     baseline: "Metrics | None" = None,
 ) -> Metrics:
@@ -104,7 +108,16 @@ def compute(
             m.time_to_first_live_step_ms = (t_live - t_restarts[-1]) * 1000
     m.recovery_detect_ms = detect_ms
 
+    # The ordered logical identities the World applied, with their counts. *Identities*, not the
+    # `endpoint#n` labels: a label is an ordinal, so a run that filed a different issue instead of
+    # the right one still shows `issues.create#1` and would read as identical. The counts are here
+    # too, so a run that filed the same issue twice is divergent as well as duplicating.
+    applied_order = list(applied_identities or [[k, v] for k, v in world_applied.items()])
+
     if baseline is not None:
+        base_order = baseline.raw.get("applied_order")
+        if base_order is not None:
+            m.replay_divergence = int(applied_order != base_order)
         m.extra_model_calls = _delta(model_calls, baseline.raw.get("model_calls"))
         m.extra_tokens = _delta(tokens, baseline.raw.get("tokens"))
         m.storage_overhead = _delta(storage_bytes, baseline.raw.get("storage_bytes"))
@@ -113,6 +126,7 @@ def compute(
     m.raw = {
         "world_applied": dict(world_applied),
         "world_receipts": receipts_by_label,
+        "applied_order": applied_order,
         "receipts_total": len(world_receipts),
         "sut_committed": sorted(sut_committed) if sut_committed is not None else None,
         "model_calls": model_calls,

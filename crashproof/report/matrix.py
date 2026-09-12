@@ -39,6 +39,9 @@ class CellSummary:
     counterexamples: list[dict[str, Any]] = field(default_factory=list)
     recovery_rate: tuple[int, int] = (0, 0)
     logical_correctness: tuple[int, int] = (0, 0)
+    #: `(diverged, measurable)`. Measurable only where a paired baseline exists, so the denominator
+    #: is not `n` — a cell with no baseline has nothing to have diverged *from*.
+    replay_divergence: tuple[int, int] = (0, 0)
     duplicate_effects: int = 0
     duplicate_receipts: int = 0
     lost_effects: int | None = None
@@ -110,6 +113,8 @@ def _summarise(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:
     m = [r["metrics"] for r in valid]
     s.recovery_rate = (sum(x["recovery_rate"] for x in m), len(m))
     s.logical_correctness = (sum(x["logical_correctness"] for x in m), len(m))
+    rd = [x["replay_divergence"] for x in m if x.get("replay_divergence") is not None]
+    s.replay_divergence = (sum(rd), len(rd))
     s.duplicate_effects = sum(x["duplicate_effects"] for x in m)
     s.duplicate_receipts = sum(x["duplicate_receipts"] for x in m)
     s.missing_required = sum(x["missing_required"] for x in m)

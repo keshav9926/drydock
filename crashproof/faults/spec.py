@@ -34,7 +34,15 @@ BOUNDARIES = (*SHIM_BOUNDARIES, "supervisor")
 #: Fault types that end the process, so the supervisor must have restarts left for them.
 RESTART_CAUSING = frozenset({"kill", "sigterm_grace_ok", "sigterm_grace_too_short", "pause_past_ttl"})
 #: Types the supervisor must not treat as a restart request: the worker is still alive.
-NON_FATAL = frozenset({"tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500"})
+NON_FATAL = frozenset(
+    {"tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500", "model_reask_alternate"}
+)
+
+#: A modifier, not a cell of its own (§14.2). It only fires when a *later* incarnation re-asks a
+#: question, so a spec that carries it without something to cause that incarnation describes a
+#: trigger that can never be reached — and, worse, a trial that scores as though nothing went
+#: wrong because nothing did.
+MODIFIERS = frozenset({"model_reask_alternate"})
 
 #: What the shim can actually do. A spec naming anything else is refused at load, loudly, rather
 #: than producing a trial that quietly never fires. The rest of §11.5 arrives with its mode: the
@@ -51,6 +59,7 @@ SHIM_FAULT_TYPES = frozenset(
         "model_500",
         "sigterm_grace_ok",
         "sigterm_grace_too_short",
+        "model_reask_alternate",
     }
 )
 
@@ -62,6 +71,7 @@ FAULT_BOUNDARIES = {
     "tool_delay": {"before:tool_call", "after:tool_effect"},
     "model_timeout": {"before:model_call"},
     "model_500": {"before:model_call"},
+    "model_reask_alternate": {"before:model_call"},
 }
 
 
@@ -155,6 +165,14 @@ class FaultSpec(Frozen):
                 )
             if f.trigger.boundary not in SHIM_BOUNDARIES and f.trigger.boundary != "supervisor":
                 raise CrashproofSpecError(f"fault {f.id!r}: {f.trigger.boundary} is not a shim boundary")
+        if any(f.type in MODIFIERS for f in self.faults) and not any(
+            f.type in RESTART_CAUSING for f in self.faults
+        ):
+            raise CrashproofSpecError(
+                "model_reask_alternate is a modifier composed with a restart-causing fault "
+                "(§14.2), not a cell of its own: it fires only when a later incarnation re-asks, "
+                "and with nothing to cause that incarnation the trigger is unreachable"
+            )
 
     @property
     def is_baseline(self) -> bool:

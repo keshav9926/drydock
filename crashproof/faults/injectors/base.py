@@ -132,6 +132,12 @@ class Injector:
             )
         )
 
+    @property
+    def alternate_armed(self) -> bool:
+        """Read fresh every ask, never cached: the flag may have been armed by a *predecessor*
+        process, and a value read once at startup would miss it."""
+        return self.trial.alternate_armed
+
     def _execute(self, entry: Entry) -> None:
         if entry.delay_ms:
             # The one time-shaped input, and it is applied *after* a history-defined observation.
@@ -152,6 +158,11 @@ class Injector:
             raise FaultResponse(entry.type, entry.params.get("status", 500))
         elif entry.type == "tool_timeout":
             pass  # armed at the World by the shim, which knows which endpoint (§11.5)
+        elif entry.type == "model_reask_alternate":
+            # Arms a trial-owned flag and returns. The provider is what changes its answer, and it
+            # stays a pure function of (request content, flag) — no ask counter anywhere, which is
+            # what keeps a re-asked fingerprint the *same* question rather than the nth one.
+            self.trial.alternate_marker().write_text(entry.fault_id, encoding="utf8")
         else:  # pragma: no cover - refused at spec load (§11.3)
             raise NotImplementedError(f"fault type {entry.type!r} is not built")
 
