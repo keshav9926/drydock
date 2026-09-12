@@ -13,7 +13,55 @@ The specification is [`docs/KEEL-ARCHITECTURE.md`](docs/KEEL-ARCHITECTURE.md). I
 constitution)** binds every decision here; where a section and the constitution disagree, the constitution
 wins.
 
-## Status — phase 4 of 8: ambiguity
+## Status — phase 5 of 8: replay as a first-class mode
+
+Every phase so far asked whether a runtime reached the right answer. This one asks whether it got
+there the way its own history says it did — and builds the fault that makes the difference visible
+from outside the runtime.
+
+```bash
+uv run keel replay $RUN --verify              # no lease, no tokens, no effects
+uv run keel diff $RUN_A $RUN_B                # where two runs stop agreeing, step by step
+uv run keel events $RUN --json > tests/journals/name.jsonl   # capture a regression test
+uv run crashproof bench --matrix bench/specs/reask_alternate.yaml
+```
+
+**[`bench/reports/reask_alternate.md`](bench/reports/reask_alternate.md)** — 6 cells, 30 seeds,
+**180 trials**, none void. One fault: `kill @ after:tool_effect` composed with
+`model_reask_alternate @ before:model_call`.
+
+| arm | diverged | dup_eff | +calls | C1 |
+|---|---|---|---|---|
+| `keel.default` | **0/30** | 0 | 0 | PASS |
+| `langgraph.async` | **30/30** | **0** | 2 | N/A |
+| `langgraph.sync` | **30/30** | 30 | 0 | N/A |
+
+Read the middle row slowly. `langgraph.async` has **zero duplicate effects** and zero missing
+required effects — every safety invariant published in matrix v0 and tier1a scores it clean. It also
+filed a *different issue*, in all thirty trials: the checkpoint did not survive the kill, the model
+nodes re-ran, the re-asked question returned the node's declared `alternate`, and the runtime created
+"CI flake (rephrased)" alongside the issue its first incarnation had already created. Two issues,
+neither applied twice, so nothing that counts duplicates can see it.
+
+`duplicate_effects` answers "did this effect happen more than once". It cannot answer "did a
+different effect happen instead", and after a crash those are both ways of being wrong.
+
+Keel diverged in none of the thirty — not because the fault was weaker against it, but because it
+never re-asked a question it had already answered, so the armed alternate was never served at a node
+that declares one. **A runtime that memoizes is invisible to this fault by being correct.**
+
+The pieces: **VERIFY** as the memoization loop with `allow_live=False` — the same loop, one flag, not
+a second replayer that would drift from it silently; the **logical projection hash** of §10.5, which
+normalises `RESOLVED_COMPLETED` to `COMPLETED` so a run that crashed four times and probed its way to
+the answer hashes equal to one that never crashed; the **`replays` row**, because VERIFY appends
+nothing and without it a pass is a log line; **journal fixtures** that replay a recorded run against
+current code in under 5 ms with no database and no provider key; and **C1**, which is N/A rather than
+PASS for a runtime with no journal — a framework with nothing to reproduce must not score the
+cleanest column.
+
+FORK is cut, by §28.5's own cut line rather than by choice.
+
+## Phase 4: ambiguity
 
 A crash is the easy fault. Phase 4 is the one where the process stays alive and the *answer* goes
 missing — the request left, the receiver applied it, and nothing came back. Retrying is how correct
@@ -242,6 +290,9 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/unit/test_shim.py` | the shim fires the same three instants, in order, in every arm |
 | `tests/unit/test_retry_budget.py` | a retryable failure is retried and an ambiguity is not; the reservation of an attempt with no outcome is never released |
 | `tests/unit/test_compare.py` | pairing, McNemar over discordant pairs only, and the detection-bound tag |
+| `tests/unit/test_verify.py` | VERIFY writes nothing; a recovered run hashes like a clean one; a reordered program fails with the step named |
+| `tests/unit/test_journal_fixtures.py` | every recorded journal in `tests/journals/` still agrees with the program |
+| `tests/unit/test_reask_alternate.py` | the modifier is refused alone; the provider has no ask counter; identities separate "twice" from "something else" |
 | `tests/unit/test_matrix_spec.py` | matrix v0's arithmetic, which is a published claim |
 | `tests/unit/test_layering.py` | the architecture, as an assertion |
 | `tests/property/test_fold_props.py` | determinism, incremental == batch, prefix monotonicity, blobs |
@@ -279,7 +330,7 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-Phase 5 adds VERIFY, FORK and `model_reask_alternate`; phases 6–8 the hook boundaries, the Hypothesis
+Phases 6–8 the hook boundaries, the Hypothesis
 state machine, statistics and the published artifact. Inside phase 4 itself, three things are named
 rather than stubbed: `max_usd` and `max_wall_clock` (they need a pinned price table and a deadline
 every waiting kind respects); backoff longer than the lease (it needs `RUN_WAITING` and the signals
