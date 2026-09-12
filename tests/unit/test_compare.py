@@ -56,6 +56,23 @@ def test_a_clean_split_is_significant_and_a_tie_is_not() -> None:
     assert "too noisy" in tied.verdict
 
 
+def test_a_defect_metric_does_not_award_the_win_to_the_arm_with_more_of_it() -> None:
+    """`recovery_rate` counts good outcomes; `replay_divergence` counts a run that took a path its
+    own journal does not describe. Reading the polarity off the count alone reports the arm that
+    diverged in every trial as the better one — the opposite claim, on a published page."""
+    a = [row("keel.d.EXTERNAL.kill", s, replay_divergence=0) for s in range(30)]
+    b = [row("lg.async.EXTERNAL.kill", s, replay_divergence=1) for s in range(30)]
+    c = compare(a, b)
+    diverged = only(c, "replay_divergence")
+    assert (diverged.a_only, diverged.b_only) == (0, 30), "B diverged in every paired trial"
+    assert "A better" in diverged.verdict, diverged.verdict
+
+    # The same shape on a metric where 1 is a success still favours the arm that has more of it.
+    recovered = only(compare(a, [row("lg.async.EXTERNAL.kill", s, recovery_rate=0) for s in range(30)]),
+                     "recovery_rate")
+    assert "A better" in recovered.verdict
+
+
 def test_too_few_discordant_pairs_is_a_property_of_the_test_not_the_sample() -> None:
     """§15.8 rule 3: below six discordant pairs the exact two-sided p cannot reach 0.05 at any n,
     so the floor is named as the test's, not as "not enough trials"."""

@@ -54,6 +54,12 @@ TOO_NOISY = "too noisy to claim"
 DETECTION_BOUND = frozenset({"recovery_latency_ms", "wall_clock_overhead_ms"})
 
 BINARY_METRICS = ("recovery_rate", "logical_correctness", "replay_divergence")
+#: Binary metrics where a 1 is a *defect* rather than a success. `recovery_rate` and
+#: `logical_correctness` count good outcomes; `replay_divergence` counts a run that took a path its
+#: own journal does not describe. Without this the verdict reads the polarity off the count and
+#: reports the arm that diverged in every trial as the better one — which is not a rounding error
+#: in a published table, it is the opposite claim.
+DEFECT_METRICS = frozenset({"replay_divergence"})
 CONTINUOUS_METRICS = ("recovery_latency_ms", "extra_model_calls", "extra_tokens", "wall_clock_overhead_ms")
 SAFETY_METRICS = ("duplicate_effects", "duplicate_receipts", "missing_required")
 
@@ -246,7 +252,9 @@ def _mcnemar(metric: str, pairs: list[Pairing], cell: str) -> Row:
         r.verdict = f"{TOO_NOISY} (δ={r.difference:+.2f} below MDD {r.mdd:.2f} at n={n})"
         r.rule = "4 · below MDD"
     elif r.p_value < 0.05:
-        r.verdict = f"{'A' if a_only > b_only else 'B'} better (p={r.p_value:.4f})"
+        more = "A" if a_only > b_only else "B"
+        winner = {"A": "B", "B": "A"}[more] if metric in DEFECT_METRICS else more
+        r.verdict = f"{winner} better (p={r.p_value:.4f})"
     else:
         r.verdict = f"{TOO_NOISY} (p={r.p_value:.3f})"
         r.rule = "1 · p ≥ 0.05"
