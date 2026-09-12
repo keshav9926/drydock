@@ -41,6 +41,9 @@ out = Console()
 err = Console(stderr=True)
 
 EXIT_ERROR, EXIT_USAGE, EXIT_FAILED, EXIT_NEEDS_HUMAN = 1, 2, 3, 4
+#: §25.2: a VERIFY mismatch has its own code, because CI branches on it and a run that failed is a
+#: different thing from a program that no longer agrees with its journal.
+EXIT_VERIFY_MISMATCH = 6
 _NEEDS_HUMAN = {"WAITING_APPROVAL", "WAITING_RESOLUTION", "SUSPENDED"}
 
 
@@ -376,6 +379,116 @@ def resume(
         run_id = await _resolve(keel, run_ref)
         ok = await keel.resume(run_id)
         out.print("runnable" if ok else "[yellow]already terminal[/]")
+
+    _run(go())
+
+
+# --- replay ------------------------------------------------------------------
+@app.command()
+def replay(
+    run_ref: str,
+    verify_only: Annotated[bool, typer.Option("--verify", help="VERIFY: prove the program still agrees")] = True,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+    strict: Annotated[bool, typer.Option("--strict", help="a changed prompt is a failure too")] = False,
+    json_out: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """VERIFY: does the current program, given this journal, issue the same steps? (§10.9)
+
+    No lease, no tokens, no effects. On a terminal run the logical projection hash is computed too,
+    which is the thing C1 compares. A `replays` row records the pass, because VERIFY appends nothing
+    to the journal and without the row the result would be a log line.
+    """
+    from keel.replay.verify import raise_for_drift, verify as run_verify
+
+    if not verify_only:
+        err.print("[red]RECOVER from the CLI is what `keel resume` and a worker do; only --verify here[/]")
+        raise typer.Exit(EXIT_USAGE)
+    keel = _load_app(app_ref, dsn)
+
+    async def go() -> None:
+        run_id = await _resolve(keel, run_ref)
+        row = await keel.journal.run_row(run_id)
+        result = await run_verify(
+            keel.journal,
+            run_id,
+            keel.resolve(row.program).fn,
+            tools=keel.tools,
+            requested_by="cli",
+        )
+        if json_out:
+            out.print(_dump(result.as_dict()))
+        else:
+            colour = "green" if result.ok else "red"
+            out.print(f"[{colour}]{result.status}[/]  run {run_id}  replayed {result.replayed_steps} steps")
+            if result.live_from_step is not None:
+                out.print(f"  live_from_step={result.live_from_step}")
+            if result.projection_hash:
+                out.print(f"  projection {result.projection_hash[:16]}")
+            for d in result.drift:
+                out.print(f"  [yellow]drift[/] step {d.step_index}: {d.journaled} -> {d.issued}")
+            if result.diff:
+                out.print(
+                    f"  [red]step {result.diff['step_index']}[/]: journal {result.diff['journaled']} "
+                    f"!= program {result.diff['issued']}"
+                )
+        if not result.ok:
+            raise typer.Exit(EXIT_VERIFY_MISMATCH)
+        if strict:
+            try:
+                raise_for_drift(result)
+            except Exception as exc:  # noqa: BLE001 - --strict asked for this
+                err.print(f"[red]{exc}[/]")
+                raise typer.Exit(EXIT_VERIFY_MISMATCH) from exc
+
+    _run(go())
+
+
+@app.command()
+def diff(
+    run_a: str,
+    run_b: str,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+    json_out: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Where two runs stop agreeing, step by step.
+
+    Compares the *logical* projections (§10.5), so a run that crashed four times and probed its way
+    to the answer reads as identical to one that never crashed — which is the only way the output
+    is useful for the question people actually ask it: did the change I deployed change anything?
+    """
+    from keel.replay.determinism import logical_projection_hash
+    from keel.replay.verify import diff_projections
+
+    keel = _load_app(app_ref, dsn)
+
+    async def go() -> None:
+        a_id, b_id = await _resolve(keel, run_a), await _resolve(keel, run_b)
+        a, b = fold(await keel.events(a_id)), fold(await keel.events(b_id))
+        rows = diff_projections(a, b)
+        if json_out:
+            out.print(_dump({"a": str(a_id), "b": str(b_id), "same": not rows, "diff": rows}))
+            return
+        ha, hb = logical_projection_hash(a), logical_projection_hash(b)
+        out.print(f"A {a_id}  {ha[:16]}")
+        out.print(f"B {b_id}  {hb[:16]}")
+        if not rows:
+            out.print("[green]identical[/] logical projection")
+            return
+        table = Table(box=None)
+        for col in ("at", "field", "A", "B"):
+            table.add_column(col)
+        for r in rows:
+            if r["at"] == "phase":
+                table.add_row("phase", "phase", str(r["a"]), str(r["b"]))
+                continue
+            for k in ("kind", "name", "args_hash", "state", "result_hash"):
+                av = (r["a"] or {}).get(k)
+                bv = (r["b"] or {}).get(k)
+                if av != bv:
+                    table.add_row(str(r["at"]), k, _short(av, 24), _short(bv, 24))
+        out.print(table)
 
     _run(go())
 

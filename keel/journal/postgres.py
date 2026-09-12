@@ -28,7 +28,7 @@ from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
 from keel.journal.blobs import externalise, internalise
-from keel.journal.protocol import EffectRow, Lease, RecoveryRow, RunRow
+from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow
 
 SQL_DIR = Path(__file__).parent / "sql"
 
@@ -553,6 +553,40 @@ class PostgresJournal:
                 f"UPDATE recoveries SET {cols} WHERE run_id = %s AND lease_epoch = %s",
                 (*fields.values(), run_id, lease_epoch),
             )
+
+    async def record_replay(self, row: ReplayRow) -> None:
+        """One row, written once, at the end of a pass. VERIFY appends no events, so this is the
+        entire durable trace of it (§5.7)."""
+        pool = await self._ready()
+        async with pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO replays (replay_id, run_id, mode, requested_by, program_version, "
+                "base_seq, fork_run_id, result, replayed_steps, elapsed_ms, projection_hash, "
+                "diff_blob_id, finished_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())",
+                (
+                    row.replay_id,
+                    row.run_id,
+                    row.mode,
+                    row.requested_by,
+                    row.program_version,
+                    row.base_seq,
+                    row.fork_run_id,
+                    row.result,
+                    row.replayed_steps,
+                    row.elapsed_ms,
+                    row.projection_hash,
+                    row.diff_blob_id,
+                ),
+            )
+
+    async def replays(self, run_id: RunId) -> list[ReplayRow]:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM replays WHERE run_id = %s ORDER BY started_at", (run_id,)
+            )
+            return [ReplayRow(**r) for r in await cur.fetchall()]
 
     async def resolve_run_id(self, prefix: str) -> RunId | None:
         pool = await self._ready()

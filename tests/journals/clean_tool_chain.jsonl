@@ -1,0 +1,645 @@
+[
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 1,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 0,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "RUN_CREATED",
+   "program": "tool_chain",
+   "program_version": "1.0+be0715",
+   "args": {
+    "task": "file an issue"
+   },
+   "budget": {
+    "max_tokens": 50000,
+    "max_usd": null,
+    "max_model_calls": null,
+    "max_tool_calls": null,
+    "deadline_at": null,
+    "on_exceed": "fail"
+   },
+   "model_config_": {
+    "provider": "scripted"
+   },
+   "parent_run_id": null,
+   "delegation_id": null,
+   "fork_of": null
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 2,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "RECOVERY_STARTED",
+   "lease_epoch": 1,
+   "cause": "START",
+   "from_seq": 1,
+   "from_segment": 0
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 3,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "RECOVERY_COMPLETED",
+   "live_from_step": 0,
+   "replayed_steps": 0,
+   "elapsed_ms": 0
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 4,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_INTENDED",
+   "step_index": 0,
+   "kind": "MODEL",
+   "name": "decide",
+   "args_hash": "f2752db48d79b957c3de0511d0092e4efbded73328873eb18dfd44f1a381a320",
+   "args": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "file an issue"
+     }
+    ],
+    "system": null,
+    "tools": [],
+    "max_tokens": 1024,
+    "sampling": {}
+   },
+   "request_hash": "f2752db48d79b957c3de0511d0092e4efbded73328873eb18dfd44f1a381a320",
+   "effect_key": null,
+   "effect_class": null,
+   "modifiers": [],
+   "policy_verdict": "allow",
+   "program_version": "1.0+be0715"
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 5,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 4,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_ATTEMPT_STARTED",
+   "step_index": 0,
+   "attempt_no": 1,
+   "lease_epoch": 1,
+   "started_at": "2026-01-01T00:00:00Z",
+   "attempt_deadline": null,
+   "reservation": 1052
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 6,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 5,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_COMPLETED",
+   "step_index": 0,
+   "attempt_no": 1,
+   "result": {
+    "text": "searching",
+    "tool_calls": [
+     {
+      "id": "tu_0",
+      "name": "search",
+      "args": {
+       "q": "flaky test in ci"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+     "input_tokens": 28,
+     "output_tokens": 17
+    },
+    "message": {
+     "role": "assistant",
+     "content": "searching"
+    },
+    "provider_meta": {
+     "provider": "scripted",
+     "model": "scripted-1",
+     "model_version": "1"
+    }
+   },
+   "usage": {
+    "input_tokens": 28,
+    "output_tokens": 17
+   },
+   "provider_meta": {
+    "provider": "scripted",
+    "model": "scripted-1",
+    "model_version": "1"
+   },
+   "synthetic": false
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 7,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_INTENDED",
+   "step_index": 1,
+   "kind": "TOOL",
+   "name": "search",
+   "args_hash": "ee28f2622ab44f47a564ec1f25a67534691f6491f3f191a9bdd6f54d4dee7e81",
+   "args": {
+    "q": "flaky test in ci"
+   },
+   "request_hash": null,
+   "effect_key": "bc0dfaed9dac5bee1a16a387b1f28588",
+   "effect_class": "PURE",
+   "modifiers": [],
+   "policy_verdict": "allow",
+   "program_version": "1.0+be0715"
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 8,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 7,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_ATTEMPT_STARTED",
+   "step_index": 1,
+   "attempt_no": 1,
+   "lease_epoch": 1,
+   "started_at": "2026-01-01T00:00:00Z",
+   "attempt_deadline": null,
+   "reservation": null
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 9,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 8,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_COMPLETED",
+   "step_index": 1,
+   "attempt_no": 1,
+   "result": {
+    "hits": [
+     "flaky test in ci #1",
+     "flaky test in ci #2",
+     "flaky test in ci #3"
+    ],
+    "logical_identity": "kv.search#1"
+   },
+   "usage": null,
+   "provider_meta": null,
+   "synthetic": false
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 10,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_INTENDED",
+   "step_index": 2,
+   "kind": "MODEL",
+   "name": "decide",
+   "args_hash": "f982299c926501f3697f91f8b2fac0ff6b523d837b2f74ed50d356a203884da7",
+   "args": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "file an issue"
+     },
+     {
+      "role": "assistant",
+      "content": "searching"
+     },
+     {
+      "role": "tool_result",
+      "content": {
+       "tool": "search",
+       "result": {
+        "hits": [
+         "flaky test in ci #1",
+         "flaky test in ci #2",
+         "flaky test in ci #3"
+        ],
+        "logical_identity": "kv.search#1"
+       }
+      }
+     }
+    ],
+    "system": null,
+    "tools": [],
+    "max_tokens": 1024,
+    "sampling": {}
+   },
+   "request_hash": "f982299c926501f3697f91f8b2fac0ff6b523d837b2f74ed50d356a203884da7",
+   "effect_key": null,
+   "effect_class": null,
+   "modifiers": [],
+   "policy_verdict": "allow",
+   "program_version": "1.0+be0715"
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 11,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 10,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_ATTEMPT_STARTED",
+   "step_index": 2,
+   "attempt_no": 1,
+   "lease_epoch": 1,
+   "started_at": "2026-01-01T00:00:00Z",
+   "attempt_deadline": null,
+   "reservation": 1105
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 12,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 11,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_COMPLETED",
+   "step_index": 2,
+   "attempt_no": 1,
+   "result": {
+    "text": "filing",
+    "tool_calls": [
+     {
+      "id": "tu_1",
+      "name": "create_issue",
+      "args": {
+       "title": "CI flake: test_retry",
+       "body": "see search hits"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+     "input_tokens": 81,
+     "output_tokens": 26
+    },
+    "message": {
+     "role": "assistant",
+     "content": "filing"
+    },
+    "provider_meta": {
+     "provider": "scripted",
+     "model": "scripted-1",
+     "model_version": "1"
+    }
+   },
+   "usage": {
+    "input_tokens": 81,
+    "output_tokens": 26
+   },
+   "provider_meta": {
+    "provider": "scripted",
+    "model": "scripted-1",
+    "model_version": "1"
+   },
+   "synthetic": false
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 13,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_INTENDED",
+   "step_index": 3,
+   "kind": "TOOL",
+   "name": "create_issue",
+   "args_hash": "0900e2aa1f02164e2bda20c29ff4b6a6d403a7de2bfa6a3cfcb3403083cb65a6",
+   "args": {
+    "title": "CI flake: test_retry",
+    "body": "see search hits"
+   },
+   "request_hash": null,
+   "effect_key": "3a58c4d51c9efbb4226b43e60750a34e",
+   "effect_class": "EXTERNAL",
+   "modifiers": [],
+   "policy_verdict": "allow",
+   "program_version": "1.0+be0715"
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 14,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 13,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_ATTEMPT_STARTED",
+   "step_index": 3,
+   "attempt_no": 1,
+   "lease_epoch": 1,
+   "started_at": "2026-01-01T00:00:00Z",
+   "attempt_deadline": "2026-01-01T00:00:01Z",
+   "reservation": null
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 15,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 14,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_COMPLETED",
+   "step_index": 3,
+   "attempt_no": 1,
+   "result": {
+    "id": "6d9c0ecf83bb",
+    "number": 1,
+    "title": "CI flake: test_retry",
+    "url": "world://issues.create/1",
+    "external_ref": "issues.create#1",
+    "logical_identity": "issues.create#1"
+   },
+   "usage": null,
+   "provider_meta": null,
+   "synthetic": false
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 16,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_INTENDED",
+   "step_index": 4,
+   "kind": "MODEL",
+   "name": "decide",
+   "args_hash": "f236bbdd9b06728a50cd3e64de82079ba356409f5dab923c2368930e85e996e9",
+   "args": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "file an issue"
+     },
+     {
+      "role": "assistant",
+      "content": "searching"
+     },
+     {
+      "role": "tool_result",
+      "content": {
+       "tool": "search",
+       "result": {
+        "hits": [
+         "flaky test in ci #1",
+         "flaky test in ci #2",
+         "flaky test in ci #3"
+        ],
+        "logical_identity": "kv.search#1"
+       }
+      }
+     },
+     {
+      "role": "assistant",
+      "content": "filing"
+     },
+     {
+      "role": "tool_result",
+      "content": {
+       "tool": "create_issue",
+       "result": {
+        "id": "6d9c0ecf83bb",
+        "number": 1,
+        "title": "CI flake: test_retry",
+        "url": "world://issues.create/1",
+        "external_ref": "issues.create#1",
+        "logical_identity": "issues.create#1"
+       }
+      }
+     }
+    ],
+    "system": null,
+    "tools": [],
+    "max_tokens": 1024,
+    "sampling": {}
+   },
+   "request_hash": "f236bbdd9b06728a50cd3e64de82079ba356409f5dab923c2368930e85e996e9",
+   "effect_key": null,
+   "effect_class": null,
+   "modifiers": [],
+   "policy_verdict": "allow",
+   "program_version": "1.0+be0715"
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 17,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 16,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_ATTEMPT_STARTED",
+   "step_index": 4,
+   "attempt_no": 1,
+   "lease_epoch": 1,
+   "started_at": "2026-01-01T00:00:00Z",
+   "attempt_deadline": null,
+   "reservation": 1173
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 18,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": 17,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "STEP_COMPLETED",
+   "step_index": 4,
+   "attempt_no": 1,
+   "result": {
+    "text": "filed the issue",
+    "tool_calls": [],
+    "stop_reason": "end_turn",
+    "usage": {
+     "input_tokens": 149,
+     "output_tokens": 12
+    },
+    "message": {
+     "role": "assistant",
+     "content": "filed the issue"
+    },
+    "provider_meta": {
+     "provider": "scripted",
+     "model": "scripted-1",
+     "model_version": "1"
+    }
+   },
+   "usage": {
+    "input_tokens": 149,
+    "output_tokens": 12
+   },
+   "provider_meta": {
+    "provider": "scripted",
+    "model": "scripted-1",
+    "model_version": "1"
+   },
+   "synthetic": false
+  }
+ },
+ {
+  "env": {
+   "run_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "seq": 19,
+   "ts": "2026-01-01T00:00:00Z",
+   "schema_version": 1,
+   "lease_epoch": 1,
+   "program_version": "1.0+be0715",
+   "trace_id": "01a09343-6953-7c08-be7a-365c8e3770e5",
+   "causation_seq": null,
+   "blob_ids": []
+  },
+  "body": {
+   "type": "RUN_COMPLETED",
+   "result": {
+    "answer": "filed the issue"
+   }
+  }
+ }
+]

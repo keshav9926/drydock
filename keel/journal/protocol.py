@@ -118,6 +118,40 @@ class RecoveryRow:
     released_at: datetime | None = None
 
 
+#: What a `replays` row may say happened. FORK's `SPAWNED` is here because the column is the
+#: schema's, not this phase's — the mode is refused at the call, not by omission from the enum.
+REPLAY_RESULTS = frozenset(
+    {"PASS", "NONDETERMINISM", "PROMPT_DRIFT", "STATE_SCHEMA_MISMATCH", "ERROR", "SPAWNED"}
+)
+
+
+@dataclass(slots=True)
+class ReplayRow:
+    """The durable record of a pass that wrote nothing else (§5.7).
+
+    VERIFY appends no events by definition, so without this row a verify pass is a log line. CI,
+    C1 and `keel replay --verify` all need to be able to ask later what the answer was, and a
+    `PROMPT_DRIFT` diff needs somewhere to live that is *not* the journal — drift is a property of
+    the pair (journal, reading code), not of the run, and journaling it would make a run's history
+    depend on who read it (§6.6).
+    """
+
+    replay_id: UUID
+    run_id: RunId
+    mode: str
+    requested_by: str
+    program_version: str
+    base_seq: int
+    result: str | None = None
+    fork_run_id: RunId | None = None
+    replayed_steps: int | None = None
+    elapsed_ms: int | None = None
+    projection_hash: str | None = None
+    diff_blob_id: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class AppendTx(Protocol):
     """One fenced append transaction: the fence UPDATE has already run as its first statement."""
 
@@ -198,6 +232,10 @@ class JournalBackend(Protocol):
         """MVP `keel resume`: a direct conditional UPDATE of runs.runnable_at. An explicitly
         temporary second control path, *replaced* by the signals inbox at v1 (§27.2, 4.10)."""
         ...
+
+    async def record_replay(self, row: ReplayRow) -> None: ...
+
+    async def replays(self, run_id: RunId) -> list[ReplayRow]: ...
 
     async def resolve_run_id(self, prefix: str) -> RunId | None: ...
 

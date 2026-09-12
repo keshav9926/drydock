@@ -23,10 +23,14 @@ Crashproof's C1 without three different notions of what "verified" means.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from keel.core.errors import NondeterminismDetected, PromptDrift
+from keel.core.hashing import canonical_json
+from keel.journal.protocol import ReplayRow
 from keel.replay.determinism import logical_projection, logical_projection_hash
 from keel.runtime.ctx import Ctx
 from keel.runtime.steps import StepEngine, StopReplay, Suspended
@@ -55,6 +59,8 @@ class VerifyResult:
     stopped: str | None = None
     #: Populated only on failure: the step that disagreed, and both identities.
     diff: dict[str, Any] | None = None
+    #: What the program raised, if it did. Benign only when the run it replays is itself FAILED.
+    error: str | None = None
     drift: list[Drift] = field(default_factory=list)
     #: Compared only for a terminal run — a run still in flight has no final projection to compare.
     projection_hash: str | None = None
@@ -64,6 +70,8 @@ class VerifyResult:
     def status(self) -> str:
         if not self.ok:
             return "FAIL"
+        if self.error:
+            return "PASS (program raised, as the journal records)"
         return "PASS" if self.stopped is None else f"PASS ({self.stopped})"
 
     def as_dict(self) -> dict[str, Any]:
@@ -75,6 +83,7 @@ class VerifyResult:
             "replayed_steps": self.replayed_steps,
             "stopped": self.stopped,
             "diff": self.diff,
+            "error": self.error,
             "drift": [{"step_index": d.step_index, "journaled": d.journaled, "issued": d.issued}
                       for d in self.drift],
             "projection_hash": self.projection_hash,
@@ -108,8 +117,14 @@ async def verify(
     *,
     tools: Any = None,
     expected_projection_hash: str | None = None,
+    requested_by: str | None = None,
 ) -> VerifyResult:
-    """One VERIFY pass. `program` is the *current* code; `journal` is the recorded past."""
+    """One VERIFY pass. `program` is the *current* code; `journal` is the recorded past.
+
+    `requested_by` records the pass in `replays` — cli, ci, crashproof, worker:shadow. Omit it and
+    nothing is written, which is what an in-process CI fixture over a `MemoryJournal` wants.
+    """
+    started = time.monotonic()
     events = await journal.read(run_id)
     state = fold(events)
     row = await journal.run_row(run_id)
@@ -147,11 +162,16 @@ async def verify(
         }
     except Suspended as exc:  # a journal state VERIFY cannot read past; not a program disagreement
         out.stopped = str(exc)
-    except Exception:
-        # The program itself raised. On a terminal FAILED run that is the recorded outcome being
-        # reproduced faithfully, which is a pass; on any other run it is a real disagreement and
-        # the projection comparison below will say so.
-        pass
+    except Exception as exc:  # noqa: BLE001 - the program raised, and which run it was decides
+        # A program that raises is only benign in one case: it is reproducing a run the journal
+        # already records as FAILED. Anywhere else it is a failure of the pass, and saying
+        # otherwise would be the worst bug this module could have — a VERIFY that reports PASS
+        # because the program blew up before it could disagree with anything.
+        if state.phase == "FAILED":
+            out.error = f"{type(exc).__name__}: {exc}"
+        else:
+            out.ok = False
+            out.error = f"{type(exc).__name__}: {exc}"
 
     out.replayed_steps = engine.replayed_steps
     out.drift = _drift(state, ctx.issued_requests)
@@ -161,7 +181,47 @@ async def verify(
         if expected_projection_hash is not None:
             out.projection_matches = out.projection_hash == expected_projection_hash
             out.ok = out.ok and out.projection_matches
+
+    if requested_by is not None:
+        await _record(journal, run_id, state, out, requested_by, started)
     return out
+
+
+def _result_code(out: VerifyResult) -> str:
+    """The `replays.result` enum. Drift is `PROMPT_DRIFT` even on a pass, because the row is what a
+    later reader consults and "passed, but the prompt moved" is a different fact from "passed"."""
+    if out.diff is not None:
+        return "NONDETERMINISM"
+    if not out.ok:
+        return "ERROR"
+    return "PROMPT_DRIFT" if out.drift else "PASS"
+
+
+async def _record(
+    journal: Any, run_id: Any, state: RunState, out: VerifyResult, requested_by: str, started: float
+) -> None:
+    diff_blob_id = None
+    payload = out.diff or ([d.__dict__ for d in out.drift] if out.drift else None)
+    if payload is not None and hasattr(journal, "blobs"):
+        # The diff lives in a blob, never in the journal: drift is a property of the pair
+        # (journal, reading code), and journaling it would make a run's history depend on who
+        # read it (§6.6).
+        diff_blob_id = await journal.blobs.put(canonical_json(payload).encode())
+    await journal.record_replay(
+        ReplayRow(
+            replay_id=uuid4(),
+            run_id=run_id,
+            mode="VERIFY",
+            requested_by=requested_by,
+            program_version=state.program_version,
+            base_seq=state.last_seq,
+            result=_result_code(out),
+            replayed_steps=out.replayed_steps,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            projection_hash=out.projection_hash,
+            diff_blob_id=diff_blob_id,
+        )
+    )
 
 
 def _drift(state: RunState, issued: dict[int, str | None]) -> list[Drift]:

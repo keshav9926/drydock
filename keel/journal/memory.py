@@ -21,7 +21,14 @@ from keel.core.ids import EffectKey, RunId
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.journal.blobs import MemoryBlobStore, externalise, internalise
-from keel.journal.protocol import EffectRow, Lease, RecoveryRow, RunRow
+from keel.journal.protocol import (
+    REPLAY_RESULTS,
+    EffectRow,
+    Lease,
+    RecoveryRow,
+    ReplayRow,
+    RunRow,
+)
 
 _TERMINAL = {"RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"}
 # The `recoveries.outcome` CHECK, mirrored. Postgres and this backend can disagree in exactly two
@@ -108,6 +115,7 @@ class MemoryJournal:
         self._events: dict[RunId, list[Event]] = {}
         self._effects: dict[EffectKey, EffectRow] = {}
         self._recoveries: dict[tuple[RunId, int], RecoveryRow] = {}
+        self._replays: list[ReplayRow] = []
         self._programs: dict[tuple[str, str], dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -353,6 +361,14 @@ class MemoryJournal:
             return
         for k, v in fields.items():
             setattr(row, k, v)
+
+    async def record_replay(self, row: ReplayRow) -> None:
+        if row.result is not None and row.result not in REPLAY_RESULTS:
+            raise IllegalTransition(f"unknown replay result {row.result!r}")
+        self._replays.append(row)
+
+    async def replays(self, run_id: RunId) -> list[ReplayRow]:
+        return [r for r in self._replays if r.run_id == run_id]
 
     async def resolve_run_id(self, prefix: str) -> RunId | None:
         matches = [r for r in self._runs if str(r).startswith(prefix)]
