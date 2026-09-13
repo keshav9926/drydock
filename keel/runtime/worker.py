@@ -17,11 +17,12 @@ from datetime import UTC, datetime, timedelta
 from collections.abc import Callable
 from typing import Any
 
-from keel.core.errors import Fenced, NondeterminismDetected, StepFailed
+from keel.core.errors import Cancelled, Fenced, NondeterminismDetected, StepFailed
 from keel.core.ids import RunId
 from keel.events import (
     RecoveryCompleted,
     RecoveryStarted,
+    RunCancelled,
     RunCompleted,
     RunFailed,
     RunSuspended,
@@ -31,7 +32,7 @@ from keel.core.errors import StoreUnavailable
 from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
 from keel.runtime.retry import NO_RETRY, RetryPolicy
-from keel.runtime.steps import Abandon, Drain, StepEngine, Suspended
+from keel.runtime.steps import Abandon, Drain, Paused, StepEngine, Suspended
 from keel.state.fold import fold
 
 DEFAULT_LEASE_TTL = 30.0
@@ -181,6 +182,19 @@ class Worker:
             return
         except StepFailed as exc:
             await self._finish(engine, lease, RunFailed(error=exc.error, step_index=exc.step_index), "FAILED")
+            return
+        except Cancelled as exc:
+            # CANCEL_ACKNOWLEDGED is already durable — the drain committed it before raising, so a
+            # crash between the two leaves a run that a successor will acknowledge at the same
+            # index rather than one that forgot it was asked to stop.
+            await self._finish(engine, lease, RunCancelled(reason=str(exc)), "CANCELLED")
+            return
+        except Paused:
+            # RUN_PAUSED is committed. Release with `runnable_at = NULL` so nothing polls it: a
+            # paused run costs zero compute and zero ticks until a `resume` signal arrives, which
+            # is the same park the approval wait uses and the reason both are worth having.
+            await self._release(lease, runnable_at=None, phase="PAUSED")
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome="SUSPENDED")
             return
         except Drain:
             # SIGTERM: hand the run back rather than hold it until the lease lapses. Nothing is

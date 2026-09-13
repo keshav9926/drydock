@@ -210,10 +210,39 @@ class Keel:
             **kwargs,
         )
 
+    async def signal(
+        self,
+        run_id: RunId,
+        type_: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        client_key: str | None = None,
+        source: str = "api",
+    ) -> bool:
+        """Put one row in the inbox. The only way anything that is not the lease holder influences
+        a run (§4.10), and therefore the only thing `resume`, `cancel` and `pause` are."""
+        from keel.core.ids import uuid7
+        from keel.journal.protocol import SignalRow
+
+        return await self.journal.insert_signal(
+            SignalRow(
+                signal_id=uuid7(),
+                run_id=run_id,
+                type=type_,
+                payload=payload or {},
+                client_key=client_key,
+                source=source,
+            )
+        )
+
     async def resume(self, run_id: RunId) -> bool:
-        """MVP: a direct conditional UPDATE of runs.runnable_at — an explicitly temporary second
-        control path, replaced (not supplemented) by the signals inbox at v1 (§27.2, 4.10)."""
-        return await self.journal.mark_runnable(run_id, "RESUME")
+        """One `resume` row in the inbox.
+
+        The MVP's direct conditional UPDATE of `runs.runnable_at` is gone rather than kept beside
+        this: it was marked temporary when it was written, and a second way to influence a run is
+        one the fence cannot defend — the holder never learns that it happened (§27.2, §4.10).
+        """
+        return await self.signal(run_id, "resume")
 
     # --- reads ---------------------------------------------------------------
     async def get(self, run_id: RunId) -> RunView:

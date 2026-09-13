@@ -27,6 +27,17 @@ RESOLVED_UNKNOWN = "RESOLVED_UNKNOWN"
 
 _SETTLED = frozenset({COMPLETED, FAILED, CANCELLED, RESOLVED_COMPLETED, RESOLVED_FAILED})
 
+#: §7.2's waiting phases. A park is one event with a reason, and the phase is that reason spelled
+#: the way the run projection spells it — the two are not allowed to drift, so the mapping is here
+#: and nowhere else.
+_WAITING_PHASE = {
+    "approval": "WAITING_APPROVAL",
+    "children": "WAITING_CHILDREN",
+    "sleep": "SLEEPING",
+    "signal": "WAITING_SIGNAL",
+    "resolution": "WAITING_RESOLUTION",
+}
+
 
 @dataclass(slots=True)
 class StepState:
@@ -106,6 +117,13 @@ class RunState:
     error: str | None = None
     suspended_reason: str | None = None
     suspended_detail: Any = None
+    waiting_reason: str | None = None
+    wake_at: Any = None
+    forced_by: str | None = None
+    #: The step index the program was told a cancel at. `None` means no cancel has been
+    #: acknowledged, which is not the same as no cancel having been *requested*.
+    cancel_acknowledged_at: int | None = None
+    signals_drained: int = 0
     last_seq: int = 0
     steps: dict[int, StepState] = field(default_factory=dict)
     epochs: list[int] = field(default_factory=list)
@@ -213,6 +231,28 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.phase = "SUSPENDED"
         st.suspended_reason = b.reason
         st.suspended_detail = b.detail
+    elif t == "RUN_CANCELLED":
+        st.phase = "CANCELLED"
+        st.error = b.reason or st.error
+        st.forced_by = b.forced_by
+    elif t == "RUN_WAITING":
+        st.phase = _WAITING_PHASE[b.reason]
+        st.waiting_reason = b.reason
+        st.wake_at = b.wake_at
+    elif t == "RUN_PAUSED":
+        st.phase = "PAUSED"
+    elif t == "RUN_PAUSE_LIFTED":
+        st.phase = "RUNNING"
+    elif t in ("SIGNAL_RECEIVED", "SIGNAL_IGNORED"):
+        # Inert by design (§6.2). A signal arriving changes nothing; what the run *did* about it is
+        # a separate event in the same transaction, and that one carries the state change. Folding
+        # the arrival too would make the inbox a second, competing source of truth.
+        st.signals_drained += 1
+    elif t == "CANCEL_ACKNOWLEDGED":
+        # The index the program was told at. Re-execution reads exactly this and raises `Cancelled`
+        # there — without it a replay would run further or less far than the original did, and a
+        # cancelled run would not be reproducible (§4.10).
+        st.cancel_acknowledged_at = b.step_index
     elif t == "STEP_INTENDED":
         st.steps[b.step_index] = StepState(
             step_index=b.step_index,

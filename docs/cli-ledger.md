@@ -27,7 +27,17 @@ This file is the flag-level detail.
 | `keel worker --concurrency N` | §25.2 | v1. One lease per worker is the MVP model; the matrix's `worker_count` is separate **processes**, which is what the `pause_past_ttl` cell actually needs. |
 | `keel events --raw` | §25.2 | Built as `--json`, which is the spelling §28.5's own fixture-capture line uses (`keel events $RUN --json > tests/journals/<name>.jsonl`). One flag, one name. |
 | `keel watch` | §25.2 (v1, day 7) | **Cut**, per §28.7's own cut line — not pending. `keel events --follow` shows the same BEFORE CRASH / AFTER RESTART split, in the event stream where it already lives. |
-| `keel approve`/`reject`/`cancel`/`pause`/`signal`/`rebind`/`fork` | §25.2 (v1) | All need the signals inbox or FORK. Week 2 and week 3 respectively; §27 is the binding staging table. |
+| `keel approve`/`reject` | §25.2 (v1) | Need the approval subsystem — `ctx.approve`, `APPROVAL_*`, `binds_effect_key`, S7 — which is the second half of week 2. The inbox they will ride on is built. |
+| `keel rebind` | §25.2 (v1) | Needs `MODEL_BINDING_CHANGED` and a live MODEL step to affect. Week 2. |
+| `keel fork` | §25.2 (v1) | Cut from phase 5 by §28.5's own cut line; week 3 with the counterfactual story. |
+
+### Built since this file was written
+
+`keel cancel`, `keel pause` and `keel signal` are declared in §25.2 and now exist, each as one row
+in the signals inbox and nothing else. `keel resume` moved onto the same path: the MVP's direct
+conditional UPDATE of `runs.runnable_at` was **deleted**, not kept beside it — §27.2 said *replaced*,
+and two ways to influence a run is one more than the fence can defend. `JournalBackend.mark_runnable`
+went with it.
 
 ## Built, not declared
 

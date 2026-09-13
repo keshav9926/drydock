@@ -28,6 +28,7 @@ from keel.journal.protocol import (
     RecoveryRow,
     ReplayRow,
     RunRow,
+    SignalRow,
 )
 
 _TERMINAL = {"RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"}
@@ -47,6 +48,7 @@ class _MemoryAppendTx:
         self._effects: list[EffectRow] = []
         self._effect_updates: list[tuple[EffectKey, dict[str, Any]]] = []
         self._run_fields: dict[str, Any] = {}
+        self._consumed: list[tuple[Any, int]] = []
         self._start_seq = lease.next_seq
 
     async def now(self) -> datetime:
@@ -82,6 +84,9 @@ class _MemoryAppendTx:
     async def set_run(self, **fields: Any) -> None:
         self._run_fields.update(fields)
 
+    async def consume_signal(self, signal_id: Any, seq: int) -> None:
+        self._consumed.append((signal_id, seq))
+
     # --- commit / rollback ---------------------------------------------------
     def _commit(self) -> None:
         j = self._j
@@ -100,6 +105,13 @@ class _MemoryAppendTx:
             row = j._effects[key]
             for k, v in fields.items():
                 setattr(row, k, v)
+        for signal_id, seq in self._consumed:
+            row = j._signals.get(signal_id)
+            # `WHERE consumed_seq IS NULL`, in the same transaction as the event that says what was
+            # done about it. A second drainer finding it already consumed does nothing, which is
+            # the inbox's at-least-once contract holding rather than failing.
+            if row is not None and row.consumed_seq is None:
+                row.consumed_seq = seq
         for k, v in self._run_fields.items():
             setattr(run, k, v)
 
@@ -117,6 +129,7 @@ class MemoryJournal:
         self._recoveries: dict[tuple[RunId, int], RecoveryRow] = {}
         self._replays: list[ReplayRow] = []
         self._programs: dict[tuple[str, str], dict[str, Any]] = {}
+        self._signals: dict[Any, SignalRow] = {}
         self._lock = asyncio.Lock()
 
     # --- guards mirroring the partial unique indexes of §5.3 -----------------
@@ -307,14 +320,34 @@ class MemoryJournal:
                 orphaned.append(run.run_id)
             return orphaned
 
-    async def mark_runnable(self, run_id: RunId, reason: str = "RESUME") -> bool:
+    # --- inbox (§5.6) --------------------------------------------------------
+    async def insert_signal(self, row: SignalRow) -> bool:
         async with self._lock:
-            run = self._runs.get(run_id)
+            run = self._runs.get(row.run_id)
             if run is None or run.terminal_at is not None:
+                # §5.6: a signal addressed to a terminal run is refused before the insert — there
+                # is no future holder to drain it, so the row would sit unconsumed for ever.
                 return False
-            run.runnable_at = self.clock.now()
-            run.runnable_reason = reason
+            if row.client_key is not None and any(
+                r.run_id == row.run_id and r.client_key == row.client_key
+                for r in self._signals.values()
+            ):
+                return False  # `signals_client_key`: the caller's retry, deduplicated
+            row.created_at = row.created_at or self.clock.now()
+            self._signals[row.signal_id] = row
+            # The insert is also the wake: an unconsumed signal makes the run claimable, which is
+            # what turns a parked run back into a runnable one without anybody polling it.
+            run.runnable_at = run.runnable_at or self.clock.now()
+            run.runnable_reason = run.runnable_reason or "WAKE"
             return True
+
+    async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
+        async with self._lock:
+            rows = [
+                r for r in self._signals.values()
+                if r.run_id == run_id and r.consumed_seq is None
+            ]
+        return sorted(rows, key=lambda r: (r.created_at or datetime.min, str(r.signal_id)))
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:

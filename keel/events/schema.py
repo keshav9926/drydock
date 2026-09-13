@@ -73,6 +73,68 @@ class RunSuspended(Body):
     detail: Any = None
 
 
+class RunCancelled(Body):
+    """Appended after CANCEL_ACKNOWLEDGED, by the holder that acknowledged it or by a takeover."""
+
+    type: Literal["RUN_CANCELLED"] = "RUN_CANCELLED"
+    reason: str = ""
+    forced_by: str | None = None
+
+
+class RunWaiting(Body):
+    """A park. Appended in the same transaction as the release, which is what makes the wait cost
+    zero compute *and* zero ticks: `lease_expires_at` and `runnable_at` both go NULL, so no worker
+    holds it and no scheduler polls it — only a signal or `wake_at` brings it back (§4.2)."""
+
+    type: Literal["RUN_WAITING"] = "RUN_WAITING"
+    reason: Literal["approval", "children", "sleep", "signal", "resolution"]
+    wake_at: AwareDatetime | None = None
+    step_index: int | None = None
+
+
+class RunPaused(Body):
+    type: Literal["RUN_PAUSED"] = "RUN_PAUSED"
+    step_index: int | None = None
+
+
+class RunPauseLifted(Body):
+    type: Literal["RUN_PAUSE_LIFTED"] = "RUN_PAUSE_LIFTED"
+
+
+# --- the inbox (§4.10, §5.6) --------------------------------------------------
+class SignalReceived(Body):
+    """Written at the drain, in the same fenced transaction that sets `signals.consumed_seq`.
+
+    Inert in the fold by itself: a signal *received* changes nothing. What it causes — an approval
+    decided, a cancel acknowledged, a pause — is a separate event in the same transaction, so the
+    journal records both that the signal arrived and what the run did about it.
+    """
+
+    type: Literal["SIGNAL_RECEIVED"] = "SIGNAL_RECEIVED"
+    signal_id: UUID
+    signal_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SignalIgnored(Body):
+    """Consumed and deliberately not applied — a second approve for an approval already decided, a
+    resume for a run that is not paused. The inbox is at-least-once, so this is the ordinary case
+    rather than an error, and it is journaled because "nothing happened" is an audit answer."""
+
+    type: Literal["SIGNAL_IGNORED"] = "SIGNAL_IGNORED"
+    signal_id: UUID
+    signal_type: str
+    reason: str
+
+
+class CancelAcknowledged(Body):
+    """The step index at which the program was told. Recorded because re-execution has to raise
+    `Cancelled` at *exactly* this index or a replay would take a different path (§4.10)."""
+
+    type: Literal["CANCEL_ACKNOWLEDGED"] = "CANCEL_ACKNOWLEDGED"
+    step_index: int
+
+
 # --- step core ---------------------------------------------------------------
 class StepIntended(Body):
     type: Literal["STEP_INTENDED"] = "STEP_INTENDED"
@@ -147,6 +209,13 @@ EventBody = Annotated[
     | RunCompleted
     | RunFailed
     | RunSuspended
+    | RunCancelled
+    | RunWaiting
+    | RunPaused
+    | RunPauseLifted
+    | SignalReceived
+    | SignalIgnored
+    | CancelAcknowledged
     | StepIntended
     | StepAttemptStarted
     | StepCompleted

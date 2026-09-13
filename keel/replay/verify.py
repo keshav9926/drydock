@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from keel.core.errors import NondeterminismDetected, PromptDrift
+from keel.core.errors import Cancelled, NondeterminismDetected, PromptDrift
 from keel.core.hashing import canonical_json
 from keel.journal.protocol import ReplayRow
 from keel.replay.determinism import logical_projection, logical_projection_hash
@@ -162,6 +162,16 @@ async def verify(
         }
     except Suspended as exc:  # a journal state VERIFY cannot read past; not a program disagreement
         out.stopped = str(exc)
+    except Cancelled as exc:
+        # A cancelled run reproduces *by* raising, at exactly the index CANCEL_ACKNOWLEDGED records
+        # — that is the point of journaling the index at all. So this is the run being reproduced
+        # correctly rather than the program disagreeing, but only when the journal says the run was
+        # cancelled: a `Cancelled` raised while replaying anything else is still a failed pass.
+        if state.phase == "CANCELLED":
+            out.stopped = str(exc)
+        else:
+            out.ok = False
+            out.error = f"{type(exc).__name__}: {exc}"
     except Exception as exc:  # noqa: BLE001 - the program raised, and which run it was decides
         # A program that raises is only benign in one case: it is reproducing a run the journal
         # already records as FAILED. Anywhere else it is a failure of the pass, and saying

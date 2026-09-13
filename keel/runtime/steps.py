@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from keel.core.errors import Fenced, StepFailed, Rejected, UnknownOutcome
+from keel.core.errors import Cancelled, Fenced, StepFailed, Rejected, UnknownOutcome
 from keel.core.errors import NondeterminismDetected
 from keel.core.protocols import (
     Ambiguous,
@@ -28,7 +28,11 @@ from keel.core.protocols import (
     StepOutcome,
 )
 from keel.events import (
+    CancelAcknowledged,
     RecoveryCompleted,
+    RunPaused,
+    SignalIgnored,
+    SignalReceived,
     StepAmbiguous,
     StepAttemptStarted,
     StepCompleted,
@@ -68,6 +72,11 @@ class Drain(Exception):
     """SIGTERM arrived and the next step would be live work. Stop at the step boundary, release the
     lease voluntarily, append nothing special: the next holder's RECOVERY_STARTED{cause=DRAIN} is
     the whole record (§5, drain). Draining is not a lifecycle state."""
+
+
+class Paused(Exception):
+    """A `pause` signal was drained. RUN_PAUSED is already committed; the worker releases the lease
+    with `runnable_at = NULL`, so the run costs nothing until a `resume` signal wakes it (§4.10)."""
 
 
 class StopReplay(Exception):
@@ -137,6 +146,12 @@ class StepEngine:
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
+        # A cancel acknowledged at this index is raised here on every pass, live or replay. On the
+        # original pass the drain below has just appended CANCEL_ACKNOWLEDGED; on every later one
+        # the journal says where it landed, and raising at exactly that index is what makes a
+        # cancelled run reproducible rather than a run that stopped somewhere near there (§4.10).
+        if self.state.cancel_acknowledged_at == intent.step_index:
+            raise Cancelled(f"cancelled at step {intent.step_index}")
         journaled = self.state.step(intent.step_index)
         if journaled is not None:
             if journaled.identity() != intent.identity():
@@ -154,8 +169,86 @@ class StepEngine:
         # `asyncio.timeout(tool.timeout)`, which is what `shutdown_grace` must exceed.
         if self.should_drain is not None and self.should_drain():
             raise Drain(f"draining at step {intent.step_index}")
+        await self._drain_inbox(intent.step_index)
         await self._reach_live(intent.step_index)
         return await self._live(intent)
+
+    # --- the inbox drain (§4.3, §4.10) ---------------------------------------
+    async def _drain_inbox(self, step_index: int) -> None:
+        """Apply every unconsumed signal, at the boundary before the step they precede.
+
+        At *every* step boundary, not only at acquisition. Without that, a cancel sent to a held
+        run in the middle of a forty-step loop would not be seen until the run parked or ended,
+        "acknowledged at the next step boundary" would be false, and a busy child could not honour
+        its parent's `cancel_grace`. The cost is one indexed read of
+        `signals(run_id) WHERE consumed_seq IS NULL`.
+
+        Only on the live path. A memoized step re-reads a decision already journaled, and draining
+        there would let a signal that arrived *after* the original pass change what a replay does —
+        the journal would stop being the whole history of the run.
+        """
+        if not self.allow_live or not hasattr(self.journal, "pending_signals"):
+            return
+        pending = await self.journal.pending_signals(self.lease.run_id)
+        if not pending:
+            return
+
+        cancel = pause = False
+        async with self.journal.append(self.lease) as tx:
+            for row in pending:
+                seq = await tx.append(
+                    SignalReceived(signal_id=row.signal_id, signal_type=row.type, payload=row.payload)
+                )
+                # Consumed in the same transaction as the event that records it, always — including
+                # for a signal this run declines to act on. An ignored signal that stayed unconsumed
+                # would be re-read at every boundary for the life of the run.
+                await tx.consume_signal(row.signal_id, seq)
+                applied = await self._apply_signal(tx, row, seq, step_index)
+                cancel = cancel or applied == "cancel"
+                pause = pause or applied == "pause"
+        # Cancel outranks pause: a run that has been told to stop for good does not first stop for
+        # a while. Both are raised after the commit, so the journal is already durable when the
+        # program is told.
+        if cancel:
+            raise Cancelled(f"cancelled at step {step_index}")
+        if pause:
+            raise Paused(f"paused at step {step_index}")
+
+    async def _apply_signal(self, tx: Any, row: Any, seq: int, step_index: int) -> str | None:
+        """What the run does about one signal, judged from its state *now* rather than at insert.
+
+        This is the half that makes an at-least-once inbox safe: a second `cancel` for a run already
+        cancelling, or a `resume` for a run that is not paused, is consumed and journaled as
+        SIGNAL_IGNORED with the reason. Nothing is refused at the API; everything is decided here.
+        """
+        kind = row.type
+        if kind == "cancel":
+            if self.state.cancel_acknowledged_at is not None:
+                await tx.append(
+                    SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="already_cancelling"),
+                    causation_seq=seq,
+                )
+                return None
+            await tx.append(CancelAcknowledged(step_index=step_index), causation_seq=seq)
+            self.state.cancel_acknowledged_at = step_index
+            return "cancel"
+        if kind == "pause":
+            await tx.append(RunPaused(step_index=step_index), causation_seq=seq)
+            await tx.set_run(phase="PAUSED")
+            return "pause"
+        if kind == "resume":
+            # A resume for a run that is already running is the ordinary shape of a retried click,
+            # not an error: the signal is what woke the worker, and the worker is already here.
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="not_paused"),
+                causation_seq=seq,
+            )
+            return None
+        await tx.append(
+            SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="no_handler"),
+            causation_seq=seq,
+        )
+        return None
 
     async def _reach_live(self, step_index: int) -> None:
         """RECOVERY_COMPLETED is appended on reaching the first un-journaled step (§5.5)."""

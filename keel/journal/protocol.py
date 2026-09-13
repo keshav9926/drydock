@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-from keel.core.ids import EffectKey, RunId
+from keel.core.ids import EffectKey, RunId, SignalId
 from keel.events import Event
 
 RecoveryCause = Literal["START", "WAKE", "ORPHANED", "RESUME", "DRAIN"]
@@ -152,6 +152,26 @@ class ReplayRow:
     finished_at: datetime | None = None
 
 
+@dataclass(slots=True)
+class SignalRow:
+    """One row of the inbox (§5.6): the only path by which anything that is not the lease holder
+    influences a run.
+
+    `client_key` is the caller's dedup handle and is UNIQUE per run. The API is at-least-once by
+    design — a retried `approve` inserts twice unless the client sets one — and the run's state
+    machine, not the insert, is what makes the second one harmless.
+    """
+
+    signal_id: SignalId
+    run_id: RunId
+    type: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    client_key: str | None = None
+    source: str = "api:cli"
+    created_at: datetime | None = None
+    consumed_seq: int | None = None
+
+
 class AppendTx(Protocol):
     """One fenced append transaction: the fence UPDATE has already run as its first statement."""
 
@@ -166,6 +186,16 @@ class AppendTx(Protocol):
     async def update_effect(self, effect_key: EffectKey, **fields: Any) -> None: ...
 
     async def set_run(self, **fields: Any) -> None: ...
+
+    async def consume_signal(self, signal_id: SignalId, seq: int) -> None:
+        """`UPDATE signals SET consumed_seq = $seq WHERE signal_id = $s AND consumed_seq IS NULL`.
+
+        In *this* transaction, with the event that records what was done about it. That co-commit
+        is the whole guarantee of the inbox: a signal cannot be applied without being consumed, and
+        cannot be consumed without the journal saying so. It is the same same-database-transaction
+        argument that gives TRANSACTIONAL tools theirs (§5.6).
+        """
+        ...
 
 
 class BlobStore(Protocol):
@@ -228,9 +258,19 @@ class JournalBackend(Protocol):
 
     async def reap(self) -> list[RunId]: ...
 
-    async def mark_runnable(self, run_id: RunId, reason: str = "RESUME") -> bool:
-        """MVP `keel resume`: a direct conditional UPDATE of runs.runnable_at. An explicitly
-        temporary second control path, *replaced* by the signals inbox at v1 (§27.2, 4.10)."""
+    async def insert_signal(self, row: SignalRow) -> bool:
+        """Put a signal in the inbox and make the run claimable. False when `client_key` already
+        exists for this run — the caller's retry, deduplicated by the one index that can do it.
+
+        Never writes `events`: the inbox is how a non-holder influences a run precisely because it
+        does not need the lease (§4.10). What the signal *means* is decided at the drain, by the
+        holder, from the run's state at that moment — an approval inserted against a run that
+        terminates first is simply never drained.
+        """
+        ...
+
+    async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
+        """Unconsumed rows, in application order `(created_at, signal_id)` (§4.10)."""
         ...
 
     async def record_replay(self, row: ReplayRow) -> None: ...

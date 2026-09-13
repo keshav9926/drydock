@@ -29,7 +29,7 @@ from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
 from keel.core.errors import AmbiguousRunRef, StoreUnavailable
 from keel.journal.blobs import externalise, internalise
-from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow
+from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow, SignalRow
 
 SQL_DIR = Path(__file__).parent / "sql"
 
@@ -143,6 +143,15 @@ class _PgAppendTx:
         await self._conn.execute(
             f"UPDATE effects SET {cols}, updated_at = now() WHERE effect_key = %s",
             (*fields.values(), effect_key),
+        )
+
+    async def consume_signal(self, signal_id: Any, seq: int) -> None:
+        """The co-commit that is the inbox's whole guarantee (§5.6). `WHERE consumed_seq IS NULL`
+        so a racing drainer's UPDATE affects nothing rather than overwriting the first one's seq;
+        the row is already this transaction's by virtue of the fence."""
+        await self._conn.execute(
+            "UPDATE signals SET consumed_seq = %s WHERE signal_id = %s AND consumed_seq IS NULL",
+            (seq, signal_id),
         )
 
     async def set_run(self, **fields: Any) -> None:
@@ -436,16 +445,42 @@ class PostgresJournal:
             )
             return [r[0] for r in await cur.fetchall()]
 
-    async def mark_runnable(self, run_id: RunId, reason: str = "RESUME") -> bool:
-        """MVP `keel resume` (§27.2, 4.10). Replaced by the signals inbox at v1."""
+    # --- inbox (§5.6) --------------------------------------------------------
+    async def insert_signal(self, row: SignalRow) -> bool:
         pool = await self._ready()
         async with pool.connection() as conn:
+            # Refused before the insert, not after: a signal addressed to a terminal run has no
+            # future holder to drain it and would sit unconsumed for ever (§5.6).
             cur = await conn.execute(
-                "UPDATE runs SET runnable_at = now(), runnable_reason = %s, updated_at = now()"
-                " WHERE run_id = %s AND terminal_at IS NULL",
-                (reason, run_id),
+                "INSERT INTO signals (signal_id, run_id, type, payload, client_key, source)"
+                " SELECT %s, %s, %s, %s, %s, %s"
+                " WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = %s AND terminal_at IS NULL)"
+                " ON CONFLICT DO NOTHING",
+                (row.signal_id, row.run_id, row.type, Jsonb(row.payload), row.client_key,
+                 row.source, row.run_id),
             )
-            return cur.rowcount > 0
+            if cur.rowcount == 0:
+                return False
+            # The insert is also the wake. `runnable_at` is set only when it is NULL, so a signal
+            # arriving at a run that is already runnable does not move it ahead of its queue.
+            await conn.execute(
+                "UPDATE runs SET runnable_at = COALESCE(runnable_at, now()),"
+                " runnable_reason = COALESCE(runnable_reason, 'WAKE'), updated_at = now()"
+                " WHERE run_id = %s AND terminal_at IS NULL",
+                (row.run_id,),
+            )
+            await conn.execute("SELECT pg_notify('keel_signals', %s)", (str(row.run_id),))
+            return True
+
+    async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM signals WHERE run_id = %s AND consumed_seq IS NULL"
+                " ORDER BY created_at, signal_id",
+                (run_id,),
+            )
+            return [SignalRow(**r) for r in await cur.fetchall()]
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:

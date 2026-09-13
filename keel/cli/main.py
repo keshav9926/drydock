@@ -404,20 +404,83 @@ def state(
     _run(go())
 
 
+async def _send(keel: Keel, run_ref: str, type_: str, payload: dict[str, Any], client_key: str | None) -> None:
+    """Every control command is one row in the inbox and nothing else (§4.10).
+
+    Not a conditional UPDATE, not a direct write: the CLI does not hold the lease and therefore may
+    not decide anything. It states what it wants; the holder decides at the next step boundary, from
+    the run's state at that moment. That is why a cancel sent to a finished run is refused here and
+    a cancel sent twice is merely ignored there.
+    """
+    from keel.core.ids import uuid7
+    from keel.journal.protocol import SignalRow
+
+    run_id = await _resolve(keel, run_ref)
+    ok = await keel.journal.insert_signal(
+        SignalRow(
+            signal_id=uuid7(),
+            run_id=run_id,
+            type=type_,
+            payload=payload,
+            client_key=client_key,
+            source="api:cli",
+        )
+    )
+    if not ok:
+        err.print(f"[yellow]not sent: the run is terminal, or {client_key!r} was already used[/]")
+        raise typer.Exit(EXIT_ERROR)
+    out.print(f"{type_} queued for {run_id}")
+
+
 @app.command()
-def resume(
+def cancel(
     run_ref: str,
+    reason: Annotated[str, typer.Option("--reason")] = "",
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
     app_ref: Annotated[str | None, typer.Option("--app")] = None,
     dsn: Annotated[str | None, typer.Option("--dsn")] = None,
 ) -> None:
-    """Mark a run runnable again. MVP: a direct conditional UPDATE — an explicitly temporary second
-    control path, replaced by the signals inbox at v1 (§27.2)."""
-    keel = _load_app(app_ref, dsn)
+    """Ask a run to stop. Acknowledged at the next step boundary, never mid-step."""
+    _run(_send(_load_app(app_ref, dsn), run_ref, "cancel", {"reason": reason}, client_key))
 
-    async def go() -> None:
-        run_id = await _resolve(keel, run_ref)
-        ok = await keel.resume(run_id)
-        out.print("runnable" if ok else "[yellow]already terminal[/]")
+
+@app.command()
+def pause(
+    run_ref: str,
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """Park a run at the next step boundary. Zero compute until `keel resume`."""
+    _run(_send(_load_app(app_ref, dsn), run_ref, "pause", {}, client_key))
+
+
+@app.command()
+def signal(
+    run_ref: str,
+    type_: Annotated[str, typer.Option("--type", help="custom | timer | child_result | …")] = "custom",
+    payload: Annotated[str, typer.Option("--payload", help="JSON object")] = "{}",
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """One raw row in the inbox. A type with no handler is consumed as SIGNAL_IGNORED, journaled."""
+    _run(_send(_load_app(app_ref, dsn), run_ref, type_, json.loads(payload), client_key))
+
+
+@app.command()
+def resume(
+    run_ref: str,
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """Wake a paused or suspended run — one `resume` row in the inbox (§24.1).
+
+    The MVP's direct `runnable_at` UPDATE is gone. It was a second control path, marked temporary
+    when it was written, and two ways to influence a run is one more than the fence can defend.
+    """
+    _run(_send(_load_app(app_ref, dsn), run_ref, "resume", {}, client_key))
 
     _run(go())
 
