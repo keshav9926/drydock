@@ -166,8 +166,7 @@ def _before(
             if done
             else "[5]  epoch 1: no step completed before the fault"
         )
-        lines.append("     [week 2] §26.3's APPROVAL at #3, RUN_WAITING{WAITING_APPROVAL}, `keel approve`")
-        lines.append("              and RECOVERY_STARTED{cause=WAKE} need the signals inbox.")
+        lines += _approval_lines(events)
         intent = _last(events, "STEP_INTENDED")
         started = _last(events, "STEP_ATTEMPT_STARTED")
         if intent and started:
@@ -198,6 +197,44 @@ def _before(
         f" · World's last receipt {_n(fault.get('receipt_before'))}",
     ]
     return lines
+
+
+def _approval_lines(events: list[dict[str, Any]]) -> list[str]:
+    """§26.3's approval half, printed only when the workload actually has one.
+
+    The other half of the demo's argument, and the cheaper half to miss: three lease acquisitions,
+    and only one of them is the initial start. The approval wake and the crash recovery are the
+    *same* memoized re-execution — recovery is not a special path, and `cause` is the only thing
+    that distinguishes them. An audience sees that here, before the run has crashed at all.
+    """
+    requested = _first(events, "APPROVAL_REQUESTED")
+    if requested is None:
+        return ["     (this workload gates nothing; §26.3's approval half needs a gated tool call)"]
+    body = requested["body"]
+    decided = _first(events, "APPROVAL_DECIDED")
+    wake = next(
+        (e for e in events if e["type"] == "RECOVERY_STARTED" and e["body"].get("cause") == "WAKE"),
+        None,
+    )
+    out = [
+        f"     approval #{body['step_index']} requested seq {requested['seq']}"
+        f"  binds {str(body.get('binds_effect_key') or '—')[:12]}"
+        "   — the effect it authorises, named before anyone decides",
+        "     RUN_WAITING{approval} · lease released · runnable_at NULL"
+        "   — zero compute *and* zero ticks: nothing polls it",
+    ]
+    if wake is not None:
+        out.append(
+            f"     `keel approve` → signal row → claim → RECOVERY_STARTED{{cause=WAKE}} seq {wake['seq']}"
+            "   — the same re-execution a crash gets"
+        )
+    if decided is not None:
+        out.append(
+            f"     APPROVAL_DECIDED{{{decided['body']['decision']}"
+            f"{', by ' + decided['body']['by'] if decided['body'].get('by') else ''}}}"
+            f" seq {decided['seq']}   — journaled by the holder at the drain, never by the CLI"
+        )
+    return out
 
 
 # --- after --------------------------------------------------------------------

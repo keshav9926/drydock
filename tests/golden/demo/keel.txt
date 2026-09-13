@@ -10,8 +10,7 @@ BEFORE CRASH
 [3]  worker: lease_ttl 2.0 s > create_issue timeout 1.0 s   — the pre-dispatch check refuses an EXTERNAL effect otherwise (§8)
 [4]  RUN_CREATED seq 1 at lease_epoch 0   — the one append with no lease to fence against
 [5]  epoch 1 runs 3 steps clean: #0 · #1 · #2   (seq 6–12)
-     [week 2] §26.3's APPROVAL at #3, RUN_WAITING{WAITING_APPROVAL}, `keel approve`
-              and RECOVERY_STARTED{cause=WAKE} need the signals inbox.
+     (this workload gates nothing; §26.3's approval half needs a gated tool call)
 [6]  #3 TOOL create_issue [EXTERNAL]  STEP_INTENDED seq 13  key=<hash>
 [7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
 [8]  World receipt issues.create#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
