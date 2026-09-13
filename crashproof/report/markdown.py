@@ -171,5 +171,40 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
         # "you only ran it thirty times" — is one a reader has while looking at the page, and an
         # answer that needs a second command to produce is an answer they will not find.
         MDD_TABLES,
+        "",
+        FAQ,
     ]
     return out
+
+
+#: §15.9, printed in every report for the same reason as the MDD tables. The objection has five
+#: answers and they are different answers — two of them concede the point and say what the numbers
+#: therefore cannot be used for, which is why the section is a fixture of the page rather than a
+#: rebuttal kept in reserve.
+FAQ = """### "You only ran this thirty times" (§15.9)
+
+**1. For safety rows the objection points the wrong way.** Thirty passing trials are not a claim of
+safety, and this report never makes that claim. One *failing* trial is a proof of a bug with a
+reproducible `(spec_hash, seed)`; thirty of them would add nothing. Jepsen finds consensus bugs in a
+handful of runs because the faults are aimed at the mechanism rather than sampled from production,
+and every trial here is aimed at a named window — `after:tool_effect` with the response held — that
+a random production crash would reach rarely.
+
+**2. For estimate rows the printed interval is the answer.** `28/30 [0.79, 0.98]` says exactly what
+thirty trials can and cannot exclude, and the MDD table above says what gap would have been visible
+at all. Neither is hidden behind a flag.
+
+**3. Confirmation is automatic where it matters.** Every non-unanimous cell and every cell under a
+claimed difference goes to n = 300 on fresh seeds, together with the arm it is compared against.
+Unanimous cells that no claim depends on stay at thirty, because three hundred more of the same
+outcome tighten an interval nothing rests on.
+
+**4. The variance being sampled is the right one.** Schedules are seeded and shared between arms, so
+the residual variance is the SUT's own internal timing — which is precisely the quantity a
+durability claim is about. Thirty samples of "does the reaper beat the zombie" are thirty draws from
+the distribution a user would experience.
+
+**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit, adapter_commit,
+framework_versions)`, and `crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over
+each trial's own facts and fails if a verdict moved. Disagreement is settled by running it.
+"""

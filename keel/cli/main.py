@@ -25,6 +25,7 @@ from rich.table import Table
 from keel.client import Budget, Keel
 from keel.core import aio
 from keel.core.errors import KeelError
+from keel.events.schema import TERMINAL_TYPES
 from keel.state.fold import fold
 
 # Windows consoles and pipes default to a legacy code page; the help text and the journal both
@@ -213,6 +214,7 @@ def events(
     dsn: Annotated[str | None, typer.Option("--dsn")] = None,
     from_seq: Annotated[int, typer.Option("--from")] = 0,
     epoch: Annotated[str | None, typer.Option("--epoch", help="E or 'all'")] = None,
+    follow: Annotated[bool, typer.Option("--follow", help="keep printing as the journal grows")] = False,
     json_out: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """The journal, with `memo | recovered | live` origin markers (§25.4)."""
@@ -246,8 +248,39 @@ def events(
                 "" if si is None else state.origin(si, against),
             )
         out.print(table)
+        if follow and state.phase in ("COMPLETED", "FAILED", "CANCELLED"):
+            # The tail polls, so following a run that has already ended waits forever for an event
+            # nobody will ever append. Say so instead.
+            out.print(f"[dim]— {state.phase}; nothing further will be appended —[/]")
+        elif follow:
+            await _follow(keel, run_id, from_seq=evs[-1].seq if evs else from_seq)
 
     _run(go())
+
+
+async def _follow(keel: Any, run_id: Any, *, from_seq: int) -> None:
+    """`--follow`: the journal as it is written, until the run reaches a terminal state.
+
+    This is §28.7's stated substitute for the `keel watch` TUI, and it is a substitute rather than
+    a consolation. What the TUI was for is the BEFORE CRASH / AFTER RESTART split, and that split
+    is *in the event stream*: RECOVERY_STARTED is the line where a different process took over, and
+    `origin` marks every step it replayed rather than re-ran. A tail shows both without a second
+    rendering of the same projection to keep in step with the first.
+
+    The poll is the journal's (1 s; LISTEN/NOTIFY is v1), so a follower never sees an event the
+    store has not committed.
+    """
+    out.print("[dim]— following; ctrl-c to stop —[/]")
+    with contextlib.suppress(KeyboardInterrupt, asyncio.CancelledError):
+        async for e in keel.journal.tail(run_id, from_seq=from_seq):
+            si = e.step_index
+            out.print(
+                f"{e.seq:>4} {e.lease_epoch:>3}  {e.type:<24}"
+                f" {'-' if si is None else si:>3}  {_detail(e)}"
+            )
+            if e.type in TERMINAL_TYPES:
+                out.print(f"[dim]— {e.type}; nothing further will be appended —[/]")
+                return
 
 
 def _detail(e: Any) -> str:
