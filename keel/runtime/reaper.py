@@ -28,9 +28,16 @@ class Reaper:
     async def sweep(self) -> list[RunId]:
         return await self.journal.reap()
 
+    async def timers(self) -> int:
+        """The other half of the zero-tick park: a run with `runnable_at IS NULL` is polled by
+        nothing, so something has to notice that its `wake_at` has passed. Idempotent by
+        `client_key`, so every worker can run it and two firing at once produce one row (§5.6)."""
+        return await self.journal.sweep_timers()
+
     async def run_forever(self) -> None:
         while not self._stop:
             await self.sweep()
+            await self.timers()
             await asyncio.sleep(self.period)
 
     def stop(self) -> None:

@@ -17,7 +17,7 @@ from uuid import UUID
 
 from keel.core.clock import Clock, SystemClock
 from keel.core.errors import AmbiguousRunRef, DuplicateEffectKey, Fenced, IllegalTransition
-from keel.core.ids import EffectKey, RunId
+from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.journal.blobs import MemoryBlobStore, externalise, internalise
@@ -333,7 +333,18 @@ class MemoryJournal:
                 for r in self._signals.values()
             ):
                 return False  # `signals_client_key`: the caller's retry, deduplicated
-            row.created_at = row.created_at or self.clock.now()
+            # Postgres stamps `created_at` with `now()`, which is the *transaction* timestamp, so
+            # two separate inserts always differ. A `FakeClock` does not move between them, and the
+            # application order `(created_at, signal_id)` would then be decided by the random half
+            # of a uuid7 minted in the same millisecond — two approvals racing in a test in an
+            # order no real store would produce. Nudging past the last row models `now()`'s
+            # resolution, for the same reason `_check_guards` mirrors the unique indexes: a
+            # permissive memory backend makes every fast test a lie.
+            now = self.clock.now()
+            latest = max((r.created_at for r in self._signals.values() if r.created_at), default=None)
+            if latest is not None and now <= latest:
+                now = latest + timedelta(microseconds=1)
+            row.created_at = row.created_at or now
             self._signals[row.signal_id] = row
             # The insert is also the wake: an unconsumed signal makes the run claimable, which is
             # what turns a parked run back into a runnable one without anybody polling it.
@@ -348,6 +359,28 @@ class MemoryJournal:
                 if r.run_id == run_id and r.consumed_seq is None
             ]
         return sorted(rows, key=lambda r: (r.created_at or datetime.min, str(r.signal_id)))
+
+    async def sweep_timers(self) -> int:
+        due = []
+        async with self._lock:
+            now = self.clock.now()
+            for run in self._runs.values():
+                if run.terminal_at is None and run.wake_at is not None and run.wake_at <= now:
+                    due.append((run.run_id, run.wake_at))
+        fired = 0
+        for run_id, wake_at in due:
+            if await self.insert_signal(
+                SignalRow(
+                    signal_id=uuid7(),
+                    run_id=run_id,
+                    type="timer",
+                    payload={"wake_at": str(wake_at)},
+                    client_key=f"timer:{wake_at.isoformat()}",
+                    source="scheduler:timer",
+                )
+            ):
+                fired += 1
+        return fired
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:

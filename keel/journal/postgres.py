@@ -23,7 +23,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from keel.core.errors import DuplicateEffectKey, Fenced
-from keel.core.ids import EffectKey, RunId
+from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
@@ -481,6 +481,29 @@ class PostgresJournal:
                 (run_id,),
             )
             return [SignalRow(**r) for r in await cur.fetchall()]
+
+    async def sweep_timers(self) -> int:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT run_id, wake_at FROM runs"
+                " WHERE wake_at IS NOT NULL AND wake_at <= now() AND terminal_at IS NULL"
+            )
+            due = await cur.fetchall()
+        fired = 0
+        for r in due:
+            if await self.insert_signal(
+                SignalRow(
+                    signal_id=uuid7(),
+                    run_id=r["run_id"],
+                    type="timer",
+                    payload={"wake_at": str(r["wake_at"])},
+                    client_key=f"timer:{r['wake_at'].isoformat()}",
+                    source="scheduler:timer",
+                )
+            ):
+                fired += 1
+        return fired
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:

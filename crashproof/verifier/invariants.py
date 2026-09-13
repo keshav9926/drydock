@@ -29,6 +29,10 @@ Verdict = Literal["PASS", "FAIL", "N/A"]
 AT_MOST_ONE_APPLIED = frozenset({"effectively_once", "exactly_once", "at_most_once"})
 
 MVP_INVARIANTS = ("S1", "S2", "S3", "S4", "S5", "L1", "L2")
+#: S7 arrives with approvals (v1, week 2). Listed apart from the MVP set for the same reason C1 is:
+#: a cell that ran before the column existed is not missing it, and a workload with no approvals in
+#: it prints N/A rather than a free PASS.
+APPROVAL_INVARIANTS = ("S7",)
 #: C1 arrives with replay as a first-class mode (v1, day 5). Listed apart from the MVP set because
 #: a cell that never had it is not missing a column — it is a cell from before the column existed.
 CONSISTENCY_INVARIANTS = ("C1",)
@@ -127,6 +131,7 @@ def verify(facts: TrialFacts) -> Verdicts:
     _s5_monotonic_step_state(facts, v)
     _l1_recovery_completes(facts, v)
     _l2_bounded_recoveries(facts, v)
+    _s7_approval_binding(facts, v)
     _c1_replay_determinism(facts, v)
     return v
 
@@ -162,6 +167,62 @@ def _c1_replay_determinism(f: TrialFacts, v: Verdicts) -> None:
     stopped = f.replay.get("stopped")
     v.add("C1", "PASS", f"replayed {f.replay.get('replayed_steps')} steps"
           + (f"; stopped at {stopped}" if stopped else ""))
+
+
+def _s7_approval_binding(f: TrialFacts, v: Verdicts) -> None:
+    """Per `approval_id`: exactly one APPROVAL_DECIDED, and at most one applied effect bound to it.
+
+    The second half is the one worth having. A runtime can decide an approval correctly and still
+    apply the gated effect twice — a crash between the grant and the effect, re-executed without the
+    binding — and every other safety invariant here would score that clean, because there is no
+    duplicate *key*: the second application is a different effect that nobody approved.
+
+    `assume_failed` on a gated tool fails for the same reason: it re-fires under one approval, so an
+    EXTERNAL bound tool may only resolve by probe or escalate (§9.4).
+    """
+    if f.journal is None:
+        v.add("S7", "N/A", "the runtime exposes no journal, so nothing to bind against")
+        return
+    requested = [e for e in f.journal if e["type"] == "APPROVAL_REQUESTED"]
+    if not requested:
+        v.add("S7", "N/A", "this workload gates nothing")
+        return
+
+    decided: dict[str, int] = {}
+    for e in f.journal:
+        if e["type"] == "APPROVAL_DECIDED":
+            aid = str(e["body"]["approval_id"])
+            decided[aid] = decided.get(aid, 0) + 1
+    twice = {aid: n for aid, n in decided.items() if n > 1}
+    if twice:
+        v.add("S7", "FAIL", "an approval was decided more than once", {"approval_id": twice})
+        return
+
+    gated = {e["body"]["step_index"] + 1 for e in requested if e["body"].get("binds_effect_key")}
+    for e in f.journal:
+        if (
+            e["type"] == "STEP_RESOLVED"
+            and e.get("step_index") in gated
+            and e["body"].get("method") == "assume_failed"
+        ):
+            v.add("S7", "FAIL", "a gated tool resolved by assume_failed, which re-fires under one "
+                  "approval", {"step_index": e["step_index"]})
+            return
+
+    # At most one applied effect per grant. The World counts under the bound key, so this is the
+    # same number S1 reads — asked per approval rather than per effect.
+    over = {}
+    for e in requested:
+        key = e["body"].get("binds_effect_key")
+        if not key:
+            continue
+        applied = sum(n for label, n in f.world_applied.items() if key in str(label))
+        if applied > 1:
+            over[str(e["body"]["approval_id"])] = applied
+    if over:
+        v.add("S7", "FAIL", "more than one applied effect under one approval", {"approval_id": over})
+        return
+    v.add("S7", "PASS", f"{len(requested)} approval(s), each decided once and applied at most once")
 
 
 # --- safety ------------------------------------------------------------------

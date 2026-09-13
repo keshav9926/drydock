@@ -131,6 +131,25 @@ async def tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {"answer": "step limit reached"}
 
 
+@program(name="gated_tool_chain", version="1.0")
+async def gated_tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """W5's shape, smallest form: a human gates the one dangerous call (§29.1).
+
+    The approval and the tool call are adjacent by construction — `gates=` computes the bound key
+    from index `i+1`, so the call it authorises is the program's very next step and nothing can be
+    slipped between them. The run parks at `ctx.approve` for as long as the human takes, holding no
+    lease and costing no ticks.
+    """
+    issue = {"title": args.get("title", "CI flake: test_retry"), "body": "see search hits"}
+    decision = await ctx.approve({"what": "file an issue", "issue": issue},
+                                 expires_in=args.get("expires_in"),
+                                 gates=("create_issue", issue))
+    if decision["decision"] != "granted":
+        return {"answer": f"not filed: {decision['decision']}", "decision": decision}
+    result = await ctx.tool("create_issue", **issue)
+    return {"answer": f"filed {result.get('id')}", "decision": decision}
+
+
 SCRIPT = [
     Decision(text="searching", tool="search", args={"q": "flaky test in ci"}),
     Decision(

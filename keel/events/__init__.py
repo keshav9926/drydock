@@ -1,6 +1,8 @@
 from keel.events.envelope import Envelope, Event
 from keel.events.registry import CURRENT, EVENT_TYPES, body_from_payload, payload_of
 from keel.events.schema import (
+    ApprovalDecided,
+    ApprovalRequested,
     CancelAcknowledged,
     EventBody,
     RecoveryCompleted,
@@ -29,6 +31,8 @@ __all__ = [
     "Envelope",
     "Event",
     "EventBody",
+    "ApprovalDecided",
+    "ApprovalRequested",
     "CancelAcknowledged",
     "RecoveryCompleted",
     "RecoveryStarted",

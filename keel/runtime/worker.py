@@ -32,7 +32,7 @@ from keel.core.errors import StoreUnavailable
 from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
 from keel.runtime.retry import NO_RETRY, RetryPolicy
-from keel.runtime.steps import Abandon, Drain, Paused, StepEngine, Suspended
+from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended
 from keel.state.fold import fold
 
 DEFAULT_LEASE_TTL = 30.0
@@ -188,6 +188,13 @@ class Worker:
             # crash between the two leaves a run that a successor will acknowledge at the same
             # index rather than one that forgot it was asked to stop.
             await self._finish(engine, lease, RunCancelled(reason=str(exc)), "CANCELLED")
+            return
+        except Parked as parked:
+            # RUN_WAITING is committed. Release with *both* NULLs — no lease and no `runnable_at` —
+            # keeping only `wake_at`. That pair is the zero-compute wait: nothing holds the run and
+            # nothing polls it, so a week of waiting costs one row and one timer sweep (§4.2).
+            await self._release(lease, runnable_at=None, wake_at=parked.wake_at)
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome="WAITING")
             return
         except Paused:
             # RUN_PAUSED is committed. Release with `runnable_at = NULL` so nothing polls it: a

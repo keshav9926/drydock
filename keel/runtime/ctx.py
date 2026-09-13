@@ -94,6 +94,46 @@ class Ctx:
         )
         return ModelResponse.model_validate(await self._run(intent))
 
+    async def approve(
+        self,
+        payload: dict[str, Any] | None = None,
+        *,
+        name: str = "approve",
+        expires_in: float | None = None,
+        gates: tuple[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """APPROVAL step: a durable wait for a human, costing no compute and no ticks.
+
+        `gates=(tool, args)` makes it a *bound* approval, and binding is the point. The runtime owns
+        the step counter, so it can compute `effect_key(run_root_id, i+1, tool, args)` before anyone
+        decides and record it as `binds_effect_key` — the approval then names the exact effect it
+        authorises rather than authorising whatever happens next. The gated call must therefore be
+        the program's very next step; anything else fails with `ApprovalBindingError` rather than
+        executing an effect nobody approved (§7.5).
+
+        Returns `{decision, by, decided_at}` for `granted`, `rejected` and `expired` alike. What a
+        rejection means is the program's business; a bound tool call is refused separately.
+        """
+        index = self._open()
+        args: dict[str, Any] = {"payload": dict(payload or {})}
+        if expires_in is not None:
+            args["expires_in"] = expires_in
+        if gates is not None:
+            tool_name, tool_args = gates
+            args["binds_effect_key"] = _effect_key(self.run_root_id, index + 1, tool_name, tool_args)
+        intent = StepIntent(
+            step_index=index,
+            kind=StepKind.APPROVAL,
+            name=name,
+            args=args,
+            # Identity excludes `expires_in` and the bound key: an operator extending a deadline on
+            # a parked run must not turn it into a different step on replay. What the approval *is*
+            # is its name and its payload.
+            args_hash=_args_hash(args["payload"]),
+            program_version=self.program_version,
+        )
+        return await self._run(intent)
+
     async def tool(self, name: str, /, **args: Any) -> Any:
         """TOOL step; identity = (TOOL, name, canonical-args hash)."""
         index = self._open()

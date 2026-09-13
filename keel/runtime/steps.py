@@ -28,9 +28,12 @@ from keel.core.protocols import (
     StepOutcome,
 )
 from keel.events import (
+    ApprovalDecided,
+    ApprovalRequested,
     CancelAcknowledged,
     RecoveryCompleted,
     RunPaused,
+    RunWaiting,
     SignalIgnored,
     SignalReceived,
     StepAmbiguous,
@@ -45,7 +48,16 @@ from keel.providers.protocol import ModelRequest
 from keel.runtime import hooks
 from keel.runtime.budget import BudgetExceeded, Reservation, admit, reserve_model, reserve_tool
 from keel.runtime.retry import NO_RETRY, RetryPolicy
-from keel.state.fold import AMBIGUOUS, FAILED, INTENDED, RESOLVED_UNKNOWN, RUNNING, RunState
+from keel.state.fold import (
+    AMBIGUOUS,
+    COMPLETED,
+    FAILED,
+    INTENDED,
+    RESOLVED_UNKNOWN,
+    RUNNING,
+    WAITING_KINDS,
+    RunState,
+)
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
 
@@ -77,6 +89,21 @@ class Drain(Exception):
 class Paused(Exception):
     """A `pause` signal was drained. RUN_PAUSED is already committed; the worker releases the lease
     with `runnable_at = NULL`, so the run costs nothing until a `resume` signal wakes it (§4.10)."""
+
+
+class Parked(Exception):
+    """The run is waiting on something that is not compute, and RUN_WAITING is already committed.
+
+    The worker releases the lease with `lease_expires_at = NULL` *and* `runnable_at = NULL`, keeping
+    only `wake_at`. Both NULLs matter: the first is what makes the wait cost no compute, the second
+    is what makes it cost no *ticks* — no worker holds the run and no scheduler polls it. Days pass
+    for the price of one row (§4.2).
+    """
+
+    def __init__(self, reason: str, wake_at: Any = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.wake_at = wake_at
 
 
 class StopReplay(Exception):
@@ -174,7 +201,7 @@ class StepEngine:
         return await self._live(intent)
 
     # --- the inbox drain (§4.3, §4.10) ---------------------------------------
-    async def _drain_inbox(self, step_index: int) -> None:
+    async def _drain_inbox(self, step_index: int, waiting: Any = None) -> None:
         """Apply every unconsumed signal, at the boundary before the step they precede.
 
         At *every* step boundary, not only at acquisition. Without that, a cancel sent to a held
@@ -195,6 +222,10 @@ class StepEngine:
 
         cancel = pause = False
         async with self.journal.append(self.lease) as tx:
+            # One `now()` for the whole drain: expiry is judged by the store's clock at drain time,
+            # never by the worker's, and two signals in one transaction must be judged against the
+            # same instant or the order they happen to be read in could change the answer (§7.5).
+            now = await tx.now()
             for row in pending:
                 seq = await tx.append(
                     SignalReceived(signal_id=row.signal_id, signal_type=row.type, payload=row.payload)
@@ -203,7 +234,7 @@ class StepEngine:
                 # for a signal this run declines to act on. An ignored signal that stayed unconsumed
                 # would be re-read at every boundary for the life of the run.
                 await tx.consume_signal(row.signal_id, seq)
-                applied = await self._apply_signal(tx, row, seq, step_index)
+                applied = await self._apply_signal(tx, row, seq, step_index, waiting, now)
                 cancel = cancel or applied == "cancel"
                 pause = pause or applied == "pause"
         # Cancel outranks pause: a run that has been told to stop for good does not first stop for
@@ -214,7 +245,101 @@ class StepEngine:
         if pause:
             raise Paused(f"paused at step {step_index}")
 
-    async def _apply_signal(self, tx: Any, row: Any, seq: int, step_index: int) -> str | None:
+    async def _decide_approval(self, tx: Any, row: Any, seq: int, waiting: Any, now: Any) -> None:
+        """`approve` / `reject` / `timer`, against the open approval. §7.5's rules, in order.
+
+        The ordering rule is the subtle one, and it is deliberately not "first row wins". Expiry is
+        judged by the store's clock at drain time and **outranks seq order**: an `approve` drained
+        after `expires_at` is ignored and the approval expires, whether or not the timer row has
+        arrived. Otherwise a decision made in time but drained late — a worker that died and took
+        four seconds to be replaced — would be honoured on the wrong side of a deadline somebody
+        else is relying on.
+        """
+        approval = self.state.approval_at(waiting.step_index) if waiting is not None else None
+        if approval is None:
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="unknown_approval"),
+                causation_seq=seq,
+            )
+            return None
+        if approval.terminal:
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="approval_terminal"),
+                causation_seq=seq,
+            )
+            return None
+
+        expired = approval.expires_at is not None and now is not None and now >= approval.expires_at
+        if row.type == "timer" and not expired:
+            # A timer that fired early, or one that raced a decision. Consumed, not acted on.
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="not_yet_expired"),
+                causation_seq=seq,
+            )
+            return None
+        if expired and row.type != "timer":
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="expired"),
+                causation_seq=seq,
+            )
+        decision = "expired" if expired else ("granted" if row.type == "approve" else "rejected")
+        by = str(row.payload.get("by", "")) if row.payload else ""
+        decided_seq = await tx.append(
+            ApprovalDecided(
+                step_index=approval.step_index,
+                approval_id=approval.approval_id,
+                decision=decision,
+                by=by,
+                signal_id=row.signal_id,
+            ),
+            causation_seq=seq,
+        )
+        # The decision reaches the program only as its own step's outcome — that is how "the program
+        # observes a signal only through its own step" is implemented without a second channel
+        # (§4.10). The APPROVAL step completes for all three decisions; what a rejection *means* is
+        # the program's business, and a bound tool call is refused separately.
+        await tx.append(
+            StepCompleted(
+                step_index=approval.step_index,
+                attempt_no=1,
+                result={"decision": decision, "by": by, "decided_at": str(now) if now else None},
+            ),
+            causation_seq=decided_seq,
+        )
+        await tx.set_run(phase="RUNNING", wake_at=None)
+        # The engine's own fold is advanced in place: the rest of this drain, and the step that
+        # follows it, read `state` rather than re-reading the journal.
+        approval.state = {"granted": "GRANTED", "rejected": "REJECTED", "expired": "EXPIRED"}[decision]
+        approval.by = by
+        step = self.state.steps.get(approval.step_index)
+        if step is not None:
+            step.state = COMPLETED
+            step.result = {"decision": decision, "by": by}
+        return None
+
+    async def _settle_waiting(self, intent: StepIntent, journaled: Any) -> Any:
+        """A parked step, woken. Drain; if a decision arrived the step is settled and its value is
+        returned, and if not the run parks again for the price of one row."""
+        await self._drain_inbox(intent.step_index, waiting=journaled)
+        settled = self.state.step(intent.step_index)
+        if settled is not None and settled.settled:
+            return _value_of(settled)
+        approval = self.state.approval_at(intent.step_index)
+        wake_at = approval.expires_at if approval else None
+        # Park *again*, with its own RUN_WAITING. The acquisition already appended
+        # RECOVERY_STARTED, which moves the run to RUNNING — so without this the fold would report
+        # a parked run as running for ever after its first spurious wake, and `keel runs` would
+        # show a queue of work nobody is doing. A re-park is a real transition and is journaled.
+        async with self.journal.append(self.lease) as tx:
+            await tx.append(
+                RunWaiting(reason="approval", wake_at=wake_at, step_index=intent.step_index)
+            )
+            await tx.set_run(phase="WAITING_APPROVAL", wake_at=wake_at)
+        raise Parked("approval", wake_at=wake_at)
+
+    async def _apply_signal(
+        self, tx: Any, row: Any, seq: int, step_index: int, waiting: Any = None, now: Any = None
+    ) -> str | None:
         """What the run does about one signal, judged from its state *now* rather than at insert.
 
         This is the half that makes an at-least-once inbox safe: a second `cancel` for a run already
@@ -222,6 +347,8 @@ class StepEngine:
         SIGNAL_IGNORED with the reason. Nothing is refused at the API; everything is decided here.
         """
         kind = row.type
+        if kind in ("approve", "reject", "timer"):
+            return await self._decide_approval(tx, row, seq, waiting, now)
         if kind == "cancel":
             if self.state.cancel_acknowledged_at is not None:
                 await tx.append(
@@ -299,7 +426,96 @@ class StepEngine:
         raise StepFailed(intent.step_index, str(exc), retryable=False)
 
     # --- live path (§5.10 transaction shapes) --------------------------------
+    async def _park_for_approval(self, intent: StepIntent) -> Any:
+        """One transaction, then days of nothing.
+
+        INTENT, STARTED, APPROVAL_REQUESTED and RUN_WAITING commit together, and the same
+        transaction NULLs both `lease_expires_at` and `runnable_at`. A crash anywhere in here
+        leaves either no step at all or a parked one — never a half-requested approval, and never
+        a second `approval_id` for one gate (§7.3.1, §7.5).
+        """
+        from uuid import uuid4
+
+        payload = dict(intent.args or {})
+        expires_in = payload.pop("expires_in", None)
+        binds = payload.pop("binds_effect_key", None)
+        approval_id = uuid4()
+        hooks.at("before:intent_commit", **_where(intent))
+        async with self.journal.append(self.lease) as tx:
+            now = await tx.now()
+            expires_at = now + timedelta(seconds=float(expires_in)) if expires_in else None
+            intent_seq = await tx.append(_intended(intent))
+            hooks.at("after:intent_commit", **_where(intent))
+            await tx.append(
+                StepAttemptStarted(
+                    step_index=intent.step_index,
+                    attempt_no=1,
+                    lease_epoch=self.lease.epoch,
+                    started_at=now,
+                ),
+                causation_seq=intent_seq,
+            )
+            hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+            await tx.append(
+                ApprovalRequested(
+                    step_index=intent.step_index,
+                    approval_id=approval_id,
+                    payload=payload,
+                    expires_at=expires_at,
+                    binds_effect_key=binds,
+                ),
+                causation_seq=intent_seq,
+            )
+            await tx.append(
+                RunWaiting(reason="approval", wake_at=expires_at, step_index=intent.step_index),
+                causation_seq=intent_seq,
+            )
+            await tx.set_run(phase="WAITING_APPROVAL", wake_at=expires_at)
+        raise Parked("approval", wake_at=expires_at)
+
+    async def _gate(self, intent: StepIntent) -> None:
+        """S7, on the runtime side: a bound effect may only start under a GRANTED approval.
+
+        Read before `STARTED`, so a refusal costs no attempt and therefore no reachable effect —
+        `attempt_no=0` is the pre-dispatch marker that keeps the write-ahead rule exact. The effects
+        row goes `DENIED` in the same transaction, which is what stops a later pass treating the
+        step as never-tried and starting it (§7.5).
+        """
+        if intent.effect_key is None:
+            return
+        approval = self.state.approval_for(intent.effect_key)
+        if approval is None or approval.state == "GRANTED":
+            return
+        error = {"REJECTED": "ApprovalRejected", "EXPIRED": "ApprovalExpired"}.get(
+            approval.state, "ApprovalPending"
+        )
+        async with self.journal.append(self.lease) as tx:
+            intent_seq = await tx.append(_intended(intent))
+            await tx.write_effect(
+                EffectRow(
+                    effect_key=intent.effect_key,
+                    run_id=self.lease.run_id,
+                    run_root_id=self.run_root_id,
+                    step_index=intent.step_index,
+                    tool=intent.name,
+                    effect_class=str(intent.effect_class or ""),
+                    status="DENIED",
+                    intent_seq=intent_seq,
+                )
+            )
+            await tx.append(
+                StepFailedEvent(
+                    step_index=intent.step_index, attempt_no=0, error=error, retryable=False
+                ),
+                causation_seq=intent_seq,
+            )
+        raise StepFailed(intent.step_index, error, retryable=False)
+
     async def _live(self, intent: StepIntent) -> Any:
+        if intent.kind is StepKind.APPROVAL:
+            return await self._park_for_approval(intent)
+        if intent.kind is StepKind.TOOL:
+            await self._gate(intent)
         tool = self._tool_of(intent)
         timeout = self._timeout_of(intent, tool)
         eff_class = intent.effect_class
@@ -554,6 +770,13 @@ class StepEngine:
             raise StopReplay("in_flight_" + journaled.state.lower(), intent.step_index)
         cls = intent.effect_class
         state = journaled.state
+        if journaled.kind in WAITING_KINDS and state == RUNNING:
+            # A parked step, not an abandoned attempt. Its normal life *is* STARTED-without-outcome
+            # — for days — so re-attempting it would mint a second `approval_id` and break S7's
+            # "exactly one GRANTED approval per gated effect" (§7.3.1). The only thing that settles
+            # it is a decision arriving through the inbox, so: drain, and park again if nothing
+            # decided it.
+            return await self._settle_waiting(intent, journaled)
         if state == INTENDED:
             # INTENT present, no STARTED for the current attempt: the effect provably never began.
             return await self._start_attempt(intent, journaled.attempts + 1)

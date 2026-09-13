@@ -72,6 +72,30 @@ class StepState:
         return (self.kind, self.name, self.args_hash)
 
 
+#: Step kinds whose normal life is STARTED-without-outcome for days. A crash or a spurious wake
+#: while one is parked must not re-issue the request — a second APPROVAL_REQUESTED would mint a
+#: second `approval_id` and break S7's "exactly one GRANTED approval per gated effect" (§7.3.1).
+WAITING_KINDS = frozenset({"APPROVAL", "SLEEP", "SIGNAL_WAIT", "DELEGATE"})
+
+
+@dataclass(slots=True)
+class Approval:
+    """The approvals projection (§7.5). One per `approval_id`, folded from its two events."""
+
+    approval_id: Any
+    step_index: int
+    state: str = "REQUESTED"  # REQUESTED | GRANTED | REJECTED | EXPIRED
+    payload: dict[str, Any] = field(default_factory=dict)
+    expires_at: Any = None
+    binds_effect_key: str | None = None
+    by: str = ""
+
+    @property
+    def terminal(self) -> bool:
+        """Decided. The first non-expired decision is final; everything after it is ignored."""
+        return self.state != "REQUESTED"
+
+
 @dataclass(slots=True)
 class Charged:
     """The budget projection: a run-wide fold, never bounded by a segment boundary, or a run would
@@ -132,10 +156,27 @@ class RunState:
     recovery_open: bool = False
     budget: Mapping[str, Any] = field(default_factory=dict)
     charged: Charged = field(default_factory=Charged)
+    approvals: dict[Any, Approval] = field(default_factory=dict)
 
     # --- what re-execution asks -------------------------------------------
     def step(self, step_index: int) -> StepState | None:
         return self.steps.get(step_index)
+
+    def approval_at(self, step_index: int) -> Approval | None:
+        """The approval requested by this step, if any. One per APPROVAL step by construction: the
+        request is appended in the step's own transaction and is never re-issued."""
+        for a in self.approvals.values():
+            if a.step_index == step_index:
+                return a
+        return None
+
+    def approval_for(self, effect_key: str) -> Approval | None:
+        """The approval that binds this effect key — the read the TOOL executor makes before it
+        starts a gated attempt, and the whole of S7 on the runtime side."""
+        for a in self.approvals.values():
+            if a.binds_effect_key is not None and a.binds_effect_key == effect_key:
+                return a
+        return None
 
     @property
     def next_step_index(self) -> int:
@@ -248,6 +289,18 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         # a separate event in the same transaction, and that one carries the state change. Folding
         # the arrival too would make the inbox a second, competing source of truth.
         st.signals_drained += 1
+    elif t == "APPROVAL_REQUESTED":
+        st.approvals[b.approval_id] = Approval(
+            approval_id=b.approval_id,
+            step_index=b.step_index,
+            payload=b.payload,
+            expires_at=b.expires_at,
+            binds_effect_key=b.binds_effect_key,
+        )
+    elif t == "APPROVAL_DECIDED":
+        a = st.approvals[b.approval_id]
+        a.state = {"granted": "GRANTED", "rejected": "REJECTED", "expired": "EXPIRED"}[b.decision]
+        a.by = b.by
     elif t == "CANCEL_ACKNOWLEDGED":
         # The index the program was told at. Re-execution reads exactly this and raises `Cancelled`
         # there — without it a replay would run further or less far than the original did, and a

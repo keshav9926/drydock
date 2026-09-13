@@ -127,6 +127,36 @@ class SignalIgnored(Body):
     reason: str
 
 
+class ApprovalRequested(Body):
+    """Appended inside `ctx.approve`, in the same transaction as the INTENT, the STARTED and the
+    RUN_WAITING that parks the run.
+
+    `binds_effect_key` is the whole of S7. It is `effect_key(run_root_id, i+1, tool, args)` —
+    computable *before* anyone decides, because the runtime owns the step counter — so the approval
+    names the exact effect it authorises rather than authorising "the next thing that happens".
+    `None` for a bare `ctx.approve`, which is a plain durable wait and binds nothing.
+    """
+
+    type: Literal["APPROVAL_REQUESTED"] = "APPROVAL_REQUESTED"
+    step_index: int
+    approval_id: UUID
+    payload: dict[str, Any] = Field(default_factory=dict)
+    expires_at: AwareDatetime | None = None
+    binds_effect_key: str | None = None
+
+
+class ApprovalDecided(Body):
+    """The first drained *non-expired* decision. Terminal for the approval: any later approve,
+    reject or timer for the same id is `SIGNAL_IGNORED{approval_terminal}` and still consumed."""
+
+    type: Literal["APPROVAL_DECIDED"] = "APPROVAL_DECIDED"
+    step_index: int
+    approval_id: UUID
+    decision: Literal["granted", "rejected", "expired"]
+    by: str = ""
+    signal_id: UUID | None = None
+
+
 class CancelAcknowledged(Body):
     """The step index at which the program was told. Recorded because re-execution has to raise
     `Cancelled` at *exactly* this index or a replay would take a different path (§4.10)."""
@@ -213,6 +243,8 @@ EventBody = Annotated[
     | RunWaiting
     | RunPaused
     | RunPauseLifted
+    | ApprovalRequested
+    | ApprovalDecided
     | SignalReceived
     | SignalIgnored
     | CancelAcknowledged

@@ -273,6 +273,16 @@ class JournalBackend(Protocol):
         """Unconsumed rows, in application order `(created_at, signal_id)` (§4.10)."""
         ...
 
+    async def sweep_timers(self) -> int:
+        """Fire every due `wake_at`: insert one `timer` signal per run and make it runnable.
+
+        The other half of the zero-tick park. A parked run has `runnable_at IS NULL`, so nothing
+        polls it — this is what brings it back when its deadline passes rather than when someone
+        asks. `client_key = 'timer:<wake_at>'` so two schedulers firing the same deadline produce
+        one row (§5.6), which is also why this can run on every worker without coordination.
+        """
+        ...
+
     async def record_replay(self, row: ReplayRow) -> None: ...
 
     async def replays(self, run_id: RunId) -> list[ReplayRow]: ...

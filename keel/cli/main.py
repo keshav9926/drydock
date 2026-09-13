@@ -433,6 +433,36 @@ async def _send(keel: Keel, run_ref: str, type_: str, payload: dict[str, Any], c
 
 
 @app.command()
+def approve(
+    run_ref: str,
+    approval: Annotated[str | None, typer.Option("--approval", help="approval id; omit for the open one")] = None,
+    by: Annotated[str, typer.Option("--by")] = "",
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """Grant the open approval. The decision is journaled by the *holder* at the drain, not here."""
+    payload = {"by": by} | ({"approval_id": approval} if approval else {})
+    _run(_send(_load_app(app_ref, dsn), run_ref, "approve", payload, client_key))
+
+
+@app.command()
+def reject(
+    run_ref: str,
+    approval: Annotated[str | None, typer.Option("--approval")] = None,
+    by: Annotated[str, typer.Option("--by")] = "",
+    reason: Annotated[str, typer.Option("--reason")] = "",
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """Refuse the open approval. The APPROVAL step still completes — with `rejected` — and the
+    bound tool call is refused before it starts an attempt."""
+    payload = {"by": by, "reason": reason} | ({"approval_id": approval} if approval else {})
+    _run(_send(_load_app(app_ref, dsn), run_ref, "reject", payload, client_key))
+
+
+@app.command()
 def cancel(
     run_ref: str,
     reason: Annotated[str, typer.Option("--reason")] = "",
