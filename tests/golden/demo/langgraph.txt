@@ -1,0 +1,38 @@
+crashproof demo — langgraph.sync.EXTERNAL.kill@after:tool_effect   seed 7
+  recovery_mechanism=harness   key_source=none
+  claims: EXTERNAL at_least_once · IDEMPOTENT at_least_once · PURE at_least_once
+
+────────────────────────────────────────────────────────────────────────
+BEFORE CRASH
+────────────────────────────────────────────────────────────────────────
+[1]  world up · endpoints issues.create dedup:false · kv.search dedup:n/a  · oracle exposed to the probe
+[2]  dependency: the adapter's own store, cloned fresh for this trial
+[3]  worker: no lease. durability=sync, backend=AsyncPostgresSaver   — nothing here bounds how long an effect may be in flight
+[4]–[7] no journal exposed. This runtime keeps a checkpoint, not an event log, so the
+     four lines that would go here — RUN_CREATED, the clean steps, STEP_INTENDED with
+     its effect key, STEP_ATTEMPT_STARTED — have nothing to read. That is the finding,
+     not a gap in the demo: S2, S4, S5 and C1 print N/A below for the same reason.
+[8]  World receipt issues.create#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
+[9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
+     at the cut: last committed seq — · open step — · no outcome · World's last receipt issues.create#1
+
+────────────────────────────────────────────────────────────────────────
+AFTER RESTART
+────────────────────────────────────────────────────────────────────────
+[10] supervisor: worker gone, 1 restart(s) ≤ max_recoveries 3  → restart with identical argv and env, no run id passed
+[11] the harness re-invokes it by an id the framework persisted — recovery_mechanism=harness
+[12] no RECOVERY_STARTED to print: nothing in this runtime records that a recovery began
+[13] resume re-runs the interrupted node; whether that re-fires the effect is what the
+     World's receipt count below answers
+[17] World after the restart: 1 further receipt(s) for issues.create#1
+     run status COMPLETED  ·  result {'answer': 'Created issue <hash>'}
+
+────────────────────────────────────────────────────────────────────────
+THE POINT
+────────────────────────────────────────────────────────────────────────
+[18] World: receipts(issues.create#1)=2  applied=2   ·  duplicate_effects=1  duplicate_receipts=1
+     verifier: S1✓ S2· S3✓ S4· S5· L1✓ L2✓ C1·        (· = N/A, with the missing input named in the row)
+[19] replay --verify: N/A — this runtime exposes no replay mode to check against
+[20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
+
+The fault landed in the same window, on the same landmark, against the same receiver. This arm sent 2 request(s) and the World applied 2. It declares `at_least_once` for EXTERNAL, so that is not a failure — it is the cost, printed.

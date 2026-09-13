@@ -4,6 +4,7 @@
     chaos    one cell: n seeds of one spec against one adapter
     bench    a matrix of cells, resumable
     report   the cells folded into a page
+    demo     one crash, one recovery, read back off the trial's own artefacts
     verify   the verifier re-run over facts already on disk — nothing executed
     compare  two arms, paired per (location, fault)
     world    the World alone, for adapter development
@@ -329,6 +330,67 @@ def report(
     err.print(f"wrote {target}  ({len(rows)} trials)")
     if mdd:
         out.print(MDD_TABLES)
+
+
+@app.command()
+def demo(
+    adapter: Annotated[str, typer.Option("--adapter")] = "keel",
+    config: Annotated[str, typer.Option("--config", help="the adapter's config id")] = "default",
+    variant: Annotated[str, typer.Option("--variant")] = "EXTERNAL",
+    fault: Annotated[str, typer.Option("--fault")] = "kill@after:tool_effect",
+    seed: Annotated[int, typer.Option("--seed")] = 7,
+    out_dir: Annotated[Path, typer.Option("--out")] = Path("bench/results/demo"),
+    canonical: Annotated[bool, typer.Option("--canonical", help="elide ids, times and paths, for diffing")] = False,
+) -> None:
+    """One crash, one recovery, the whole argument on one screen (§26.3).
+
+    Every line is read back from the trial's own artefacts — journal, receipt log, fault log,
+    verdicts — rather than narrated by the code that ran it. A demo that prints what it *intended*
+    to do keeps printing it after the runtime stops doing it.
+
+    Run it twice: once as it is, and once with `--adapter langgraph --config sync`. Same fault,
+    same landmark, same World, same seed.
+    """
+    import json
+
+    from crashproof import demo as script
+    from crashproof.runner.store import ResultStore, slug
+    from crashproof.runner.trial import run_trial
+    from crashproof.verifier import invariants
+
+    factory = _adapters().get(adapter)
+    if factory is None:
+        err.print(f"[red]no adapter {adapter!r}; built: {sorted(_adapters())}[/]")
+        raise typer.Exit(2)
+    wl = load_named(script.WORKLOAD)
+    cell = script.one_cell(adapter, config, variant, fault)
+    trial_dir = out_dir / slug(cell.id) / f"t-{seed}"
+
+    async def go() -> Any:
+        return await run_trial(
+            adapter=factory(wl, variant, **cell.settings),
+            workload=wl,
+            variant=variant,
+            spec=cell.spec,
+            seed=seed,
+            out_dir=out_dir / slug(cell.id),
+            cell_id=cell.id,
+            keel_commit=_commit(),
+        )
+
+    err.print(f"running {cell.id} seed {seed} …")
+    row = _run(go())
+    store = ResultStore(out_dir)
+    store.append(row.as_dict())
+    facts = invariants.load(json.loads((trial_dir / "facts.json").read_text(encoding="utf8")))
+    # `soft_wrap` so a narrow terminal does not fold a line the reader is meant to diff.
+    # The only path in the output, and the caller knows whether it wants one — cheaper and more
+    # honest than a regex that has to guess what a path looks like on two operating systems.
+    where = "<results>" if canonical else store.results_path
+    for line in script.narrate(row, facts, row_path=where, canonical=canonical):
+        out.print(line, highlight=False, markup=False, soft_wrap=True)
+    # A demo that exits 0 on a violated invariant is a screenshot, not a check.
+    raise typer.Exit(EXIT_INVARIANT_FAIL if _violated([row]) else 0)
 
 
 @app.command()

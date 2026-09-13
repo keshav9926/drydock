@@ -1,0 +1,115 @@
+{
+  "trial_id": "t-7",
+  "cell_id": "langgraph.sync.EXTERNAL.kill@after:tool_effect",
+  "adapter": "langgraph",
+  "workload": "tool_chain_1_effect",
+  "workload_variant": "EXTERNAL",
+  "mode": "shim",
+  "spec_hash": "30e9e7e1d76fb1b937f629adda1e47699b051bd5998ba4b413fd45f3176ea209",
+  "schedule_hash": "b53f70a9b15bb391",
+  "seed": 7,
+  "key_source": "none",
+  "recovery_mechanism": "harness",
+  "claims": {
+    "PURE": "at_least_once",
+    "IDEMPOTENT": "at_least_once",
+    "EXTERNAL": "at_least_once"
+  },
+  "config_pin": {
+    "framework_versions": {
+      "langgraph": "1.2.11",
+      "langgraph-checkpoint-postgres": "3.1.2",
+      "python": "3.13.14"
+    },
+    "backend": "AsyncPostgresSaver",
+    "durability": "sync",
+    "retry": "framework default",
+    "worker_count": 1,
+    "extra": {
+      "world_client_timeout_s": 5.0,
+      "step_timeout": "none documented"
+    }
+  },
+  "started_at": 1789263197.6981802,
+  "ended_at": 1789263203.8760626,
+  "wall_ms": 5389.856815338135,
+  "status": "COMPLETED",
+  "result": {
+    "answer": "Created issue 6d9c0ecf83bb"
+  },
+  "verdicts": {
+    "S1": "PASS",
+    "S2": "N/A",
+    "S3": "PASS",
+    "S4": "N/A",
+    "S5": "N/A",
+    "L1": "PASS",
+    "L2": "PASS",
+    "C1": "N/A"
+  },
+  "counterexamples": [],
+  "metrics": {
+    "recovery_rate": 1,
+    "recovery_detect_ms": null,
+    "recovery_latency_ms": 2240.334987640381,
+    "time_to_first_live_step_ms": 2155.5988788604736,
+    "logical_correctness": 0,
+    "duplicate_effects": 1,
+    "duplicate_receipts": 1,
+    "lost_effects": null,
+    "missing_required": 0,
+    "extra_model_calls": null,
+    "extra_tokens": null,
+    "storage_overhead": null,
+    "wall_clock_overhead_ms": null,
+    "void_rate": 0,
+    "replay_divergence": null,
+    "restart_latency_ms": 84.73610877990723,
+    "raw": {
+      "world_applied": {
+        "issues.create#1": 2
+      },
+      "world_receipts": {
+        "kv.search#1": 1,
+        "issues.create#1": 2
+      },
+      "applied_order": [
+        [
+          "issues.create",
+          "[\"CI flake: test_retry\"]",
+          2
+        ]
+      ],
+      "receipts_total": 3,
+      "sut_committed": null,
+      "model_calls": 3,
+      "tokens": 163,
+      "storage_bytes": null,
+      "wall_ms": 5389.856815338135,
+      "faults_fired": 1,
+      "world_probes": 0
+    }
+  },
+  "faults": [
+    {
+      "fault_id": "deb32a7f1d4a542d",
+      "trial_id": "t-7",
+      "recovery_index": 0,
+      "type": "kill",
+      "boundary": "after:tool_effect",
+      "landmark": "tool:create_issue",
+      "occurrence": 1,
+      "params": {},
+      "trigger_observed_at": 1789263200.8991418,
+      "trigger_observed_mono_ns": 334728179626600,
+      "sut_pid": 11396,
+      "sut_ref": {},
+      "executed": true
+    }
+  ],
+  "recoveries": [],
+  "restarts": 1,
+  "valid": true,
+  "stale": false,
+  "keel_commit": "a212a20"
+}

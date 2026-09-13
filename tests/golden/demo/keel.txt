@@ -1,0 +1,43 @@
+crashproof demo — keel.default.EXTERNAL.kill@after:tool_effect   seed 7
+  recovery_mechanism=self   key_source=none
+  claims: EXTERNAL at_least_once · IDEMPOTENT effectively_once · PURE effectively_once
+
+────────────────────────────────────────────────────────────────────────
+BEFORE CRASH
+────────────────────────────────────────────────────────────────────────
+[1]  world up · endpoints issues.create dedup:false · kv.search dedup:n/a  · oracle exposed to the probe
+[2]  dependency: the adapter's own store, cloned fresh for this trial
+[3]  worker: lease_ttl 2.0 s > create_issue timeout 1.0 s   — the pre-dispatch check refuses an EXTERNAL effect otherwise (§8)
+[4]  RUN_CREATED seq 1 at lease_epoch 0   — the one append with no lease to fence against
+[5]  epoch 1 runs 3 steps clean: #0 · #1 · #2   (seq 6–12)
+     [week 2] §26.3's APPROVAL at #3, RUN_WAITING{WAITING_APPROVAL}, `keel approve`
+              and RECOVERY_STARTED{cause=WAKE} need the signals inbox.
+[6]  #3 TOOL create_issue [EXTERNAL]  STEP_INTENDED seq 13  key=<hash>
+[7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
+[8]  World receipt issues.create#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
+[9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
+     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt issues.create#1
+
+────────────────────────────────────────────────────────────────────────
+AFTER RESTART
+────────────────────────────────────────────────────────────────────────
+[10] supervisor: worker gone, 1 restart(s) ≤ max_recoveries 3  → restart with identical argv and env, no run id passed
+[11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline  → runs.orphaned_at set → claim
+[12] RECOVERY_STARTED{cause=ORPHANED, from_seq=14} seq 15   — a different process, told nothing
+[13] re-execution: 4 steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
+[14] #3 STARTED without an outcome, class EXTERNAL  → STEP_AMBIGUOUS seq 16   — the runtime does not guess
+[15] probe → the receiver is asked, not assumed: probe says COMMITTED
+     STEP_RESOLVED{RESOLVED_COMPLETED} seq 17   — resolved, never re-fired
+[16] RECOVERY_COMPLETED{live_from_step=4, replayed_steps=4} seq 18
+[17] World after the restart: 0 further receipt(s) for issues.create#1   — the effect was never re-sent
+     run status COMPLETED  ·  result {'answer': 'Created issue <hash>'}
+
+────────────────────────────────────────────────────────────────────────
+THE POINT
+────────────────────────────────────────────────────────────────────────
+[18] World: receipts(issues.create#1)=1  applied=1   ·  duplicate_effects=0  duplicate_receipts=0
+     verifier: S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓        (· = N/A, with the missing input named in the row)
+[19] replay --verify: 5 steps reproduced  · projection hash match
+[20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
+
+The World had the effect and the journal did not. A different process read the journal, found the open EXTERNAL step, asked the receiver what had happened, and finished the run — 1 request, 1 applied, nothing re-sent and nothing guessed.

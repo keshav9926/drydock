@@ -1,0 +1,61 @@
+{
+  "world_receipts": [
+    {
+      "endpoint": "kv.search",
+      "effect_key": null,
+      "logical_identity": "kv.search#1",
+      "ts": 1789263200.6617298
+    },
+    {
+      "endpoint": "issues.create",
+      "effect_key": null,
+      "logical_identity": "issues.create#1",
+      "ts": 1789263200.891802
+    },
+    {
+      "endpoint": "issues.create",
+      "effect_key": null,
+      "logical_identity": "issues.create#1",
+      "ts": 1789263203.1394768
+    }
+  ],
+  "world_applied": {
+    "issues.create#1": 2
+  },
+  "sut_committed": null,
+  "journal": null,
+  "status": "COMPLETED",
+  "expected_status": "COMPLETED",
+  "required_effects": [
+    "issues.create#1"
+  ],
+  "claims": {
+    "PURE": "at_least_once",
+    "IDEMPOTENT": "at_least_once",
+    "EXTERNAL": "at_least_once"
+  },
+  "effect_class": "EXTERNAL",
+  "faults": [
+    {
+      "fault_id": "deb32a7f1d4a542d",
+      "trial_id": "t-7",
+      "recovery_index": 0,
+      "type": "kill",
+      "boundary": "after:tool_effect",
+      "landmark": "tool:create_issue",
+      "occurrence": 1,
+      "params": {},
+      "trigger_observed_at": 1789263200.8991418,
+      "trigger_observed_mono_ns": 334728179626600,
+      "sut_pid": 11396,
+      "sut_ref": {},
+      "executed": true
+    }
+  ],
+  "restarts": 1,
+  "max_recoveries": 3,
+  "timed_out": false,
+  "reached_terminal": true,
+  "replay": null,
+  "sut_effects": null
+}

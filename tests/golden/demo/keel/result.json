@@ -1,0 +1,139 @@
+{
+  "trial_id": "t-7",
+  "cell_id": "keel.default.EXTERNAL.kill@after:tool_effect",
+  "adapter": "keel",
+  "workload": "tool_chain_1_effect",
+  "workload_variant": "EXTERNAL",
+  "mode": "shim",
+  "spec_hash": "30e9e7e1d76fb1b937f629adda1e47699b051bd5998ba4b413fd45f3176ea209",
+  "schedule_hash": "b53f70a9b15bb391",
+  "seed": 7,
+  "key_source": "none",
+  "recovery_mechanism": "self",
+  "claims": {
+    "PURE": "effectively_once",
+    "IDEMPOTENT": "effectively_once",
+    "EXTERNAL": "at_least_once"
+  },
+  "config_pin": {
+    "framework_versions": {
+      "keel": "0.1.0",
+      "python": "3.13.14"
+    },
+    "backend": "postgres",
+    "durability": "journal",
+    "lease_ttl_s": 2.0,
+    "tool_timeout_s": 1.0,
+    "heartbeat_s": 0.6666666666666666,
+    "retry": "max_attempts=3, backoff=exponential+jitter",
+    "worker_count": 1,
+    "pause_ms": 3000.0,
+    "claim_poll_s": 0.2,
+    "reaper_period_s": 0.2,
+    "extra": {
+      "model_timeout_s": 2.0,
+      "world_client_timeout_s": 5.0
+    }
+  },
+  "started_at": 1789263133.4882543,
+  "ended_at": 1789263138.4525585,
+  "wall_ms": 4292.180776596069,
+  "status": "COMPLETED",
+  "result": {
+    "answer": "Created issue 6d9c0ecf83bb"
+  },
+  "verdicts": {
+    "S1": "PASS",
+    "S2": "PASS",
+    "S3": "PASS",
+    "S4": "PASS",
+    "S5": "PASS",
+    "L1": "PASS",
+    "L2": "PASS",
+    "C1": "PASS"
+  },
+  "counterexamples": [],
+  "metrics": {
+    "recovery_rate": 1,
+    "recovery_detect_ms": 2388.4379999999996,
+    "recovery_latency_ms": 2420.684814453125,
+    "time_to_first_live_step_ms": 2398.3371257781982,
+    "logical_correctness": 1,
+    "duplicate_effects": 0,
+    "duplicate_receipts": 0,
+    "lost_effects": 0,
+    "missing_required": 0,
+    "extra_model_calls": null,
+    "extra_tokens": null,
+    "storage_overhead": null,
+    "wall_clock_overhead_ms": null,
+    "void_rate": 0,
+    "replay_divergence": null,
+    "restart_latency_ms": 22.347688674926758,
+    "raw": {
+      "world_applied": {
+        "issues.create#1": 1
+      },
+      "world_receipts": {
+        "kv.search#1": 1,
+        "issues.create#1": 1
+      },
+      "applied_order": [
+        [
+          "issues.create",
+          "[\"CI flake: test_retry\"]",
+          1
+        ]
+      ],
+      "receipts_total": 2,
+      "sut_committed": [
+        "issues.create#1"
+      ],
+      "model_calls": 3,
+      "tokens": 280,
+      "storage_bytes": 352256,
+      "wall_ms": 4292.180776596069,
+      "faults_fired": 1,
+      "world_probes": 1
+    }
+  },
+  "faults": [
+    {
+      "fault_id": "deb32a7f1d4a542d",
+      "trial_id": "t-7",
+      "recovery_index": 0,
+      "type": "kill",
+      "boundary": "after:tool_effect",
+      "landmark": "tool:create_issue",
+      "occurrence": 1,
+      "params": {},
+      "trigger_observed_at": 1789263135.3606167,
+      "trigger_observed_mono_ns": 334662641100700,
+      "sut_pid": 3548,
+      "sut_ref": {},
+      "executed": true
+    }
+  ],
+  "recoveries": [
+    {
+      "recovery_index": 1,
+      "lease_epoch": 1,
+      "cause": "START",
+      "acquired_at": "2026-09-13T01:32:15.093288+00:00",
+      "outcome": "CRASHED",
+      "replayed_steps": 0
+    },
+    {
+      "recovery_index": 2,
+      "lease_epoch": 2,
+      "cause": "ORPHANED",
+      "acquired_at": "2026-09-13T01:32:17.689166+00:00",
+      "outcome": "TERMINAL",
+      "replayed_steps": 4
+    }
+  ],
+  "restarts": 1,
+  "valid": true,
+  "stale": false,
+  "keel_commit": "a212a20"
+}
