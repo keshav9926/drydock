@@ -299,13 +299,27 @@ uv run keel db migrate --app keel.agents.demo:app
 
 uv run crashproof demo                                   # the one command, in under a minute
 uv run python scripts/day2_demo.py                       # the same window, narrated step by step
-uv run crashproof bench --matrix bench/specs/matrix_v0.yaml   # the published matrix, ~1 h at 6 slots
-uv run crashproof verify bench/results/latest/results.jsonl --recheck   # the publication gate
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --out out/mine   # ~1 h, serial
+uv run crashproof verify out/mine/results.jsonl --recheck                    # the publication gate
 ```
 
-Nothing is published from a results directory whose `--recheck` is not clean: it re-runs the verifier
-over each trial's own recorded facts and fails if a verdict moved, or if the results file has drifted
-from the directories it summarises.
+**The rows behind every published report are in this repository**, one JSON object per trial, each
+carrying its own `(spec_hash, seed, keel_commit, adapter_commit, framework_versions, config_pin)`:
+[`bench/results/matrix_v0/results.jsonl`](bench/results/matrix_v0/results.jsonl),
+[`tier1a`](bench/results/tier1a/results.jsonl),
+[`reask_alternate`](bench/results/reask_alternate/results.jsonl). `report` and `compare` are pure
+functions over them, so you can regenerate any page here without running a trial:
+
+```bash
+uv run crashproof report bench/results/matrix_v0 --out /tmp/check.md   # byte-identical to the published one
+uv run crashproof compare bench/results/matrix_v0 --a 'keel.*' --b 'langgraph.sync.*'
+```
+
+The per-trial directories — journals, receipt logs, fault logs, one `facts.json` each — are hundreds
+of megabytes and are *not* committed. That is the one thing a clone cannot re-check: `--recheck`
+re-runs the verifier over each trial's own recorded facts and fails if a verdict moved or if the
+results file has drifted from the directories it summarises, so it runs against a directory you
+generated. Against a clone's rows it reports, correctly, that it has no facts to re-verify from.
 
 **`bench` is serial on purpose, and parallelism is sharding.** One run owns one `results.jsonl` and
 one `cursor.json`, which is what makes `--resume` safe and a re-taken void trial unambiguous; two
@@ -455,6 +469,9 @@ structure. Adding a file that only re-exports is worse than a documented merge:
 | `world/services/{issues,kv}.py` | `world/services.py` | §11.1's own component table says `services.py`; the two services are one endpoint table and forty lines of semantics |
 | `crashproof compare a.jsonl b.jsonl --paired` (§25.2) | `crashproof compare <results-dir> --a <cell glob> --b <cell glob>` | a store is one append-only `results.jsonl`, not one file per cell, so a shell glob over filenames has nothing to match. The globs select cells instead, which is the same selection expressed against the thing that exists. `--paired` is not a flag because pairing is the only mode: an unpaired comparison of two runtimes is not a weaker claim, it is a different one |
 | `verifier/{invariants,metrics}.py` | plus `verifier/views.py` | §19.5's placement view and effect ledger are *views* over the same `TrialFacts` the verdicts are computed from, not verdicts. Putting them in `invariants.py` would mix "what is true" with "how to read it", and `crashproof verify --placement` needs them without needing a verdict |
+| `crashproof export` (§25.3, v1) | not built | Parquet/CSV over the same rows. Nothing in phases 1–7 reads it, and `results.jsonl` is already `grep`-able and `jq`-able; it arrives with DuckDB in week 3, or not at all if nothing ever needs it |
+| — | `crashproof workloads` | not in §25.3's tree. One table of the workload declaration — variant, `key_source`, tool, class, endpoint, required effects — which is the thing an adapter author and a matrix reader both have to check, and it is four lines over machinery `chaos` already loads |
+| — | `keel reap` | not in §25.2's tree. One reaper sweep, printed. The predicate is the load-bearing statement of §8.4 and a worker runs it on a timer; being able to run exactly one and see what it returns is how the predicate gets debugged without a stopwatch |
 | §25.2 exit codes | same, now wired | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. A harness whose failure mode is red text in a log nobody reads is not a CI gate |
 
 One platform note: psycopg's async mode cannot run on Windows' default ProactorEventLoop, so every entry
