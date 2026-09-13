@@ -13,7 +13,115 @@ The specification is [`docs/KEEL-ARCHITECTURE.md`](docs/KEEL-ARCHITECTURE.md). I
 constitution)** binds every decision here; where a section and the constitution disagree, the constitution
 wins.
 
-## Status — phase 5 of 8: replay as a first-class mode
+## One command
+
+```bash
+uv sync --extra dev && docker compose up -d postgres
+uv run crashproof demo
+```
+
+A real worker, a real Postgres, a real HTTP receiver that fsyncs its receipt **before** it computes a
+response. The worker is killed at the one instant where the receiver has the effect and the journal
+does not. Every line below is read back from the trial's own artefacts — journal, receipt log, fault
+log, verdicts — not narrated by the code that ran it:
+
+```
+──────────────────────────────────── BEFORE CRASH ────────────────────────────────────
+[7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
+[8]  World receipt issues.create#1  ·  1 request(s) received before the cut
+[9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
+     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt issues.create#1
+─────────────────────────────────── AFTER RESTART ────────────────────────────────────
+[12] RECOVERY_STARTED{cause=ORPHANED, from_seq=14} seq 15   — a different process, told nothing
+[13] re-execution: 4 steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
+[14] #3 STARTED without an outcome, class EXTERNAL  → STEP_AMBIGUOUS seq 16   — the runtime does not guess
+[15] probe → the receiver is asked, not assumed: probe says COMMITTED
+     STEP_RESOLVED{RESOLVED_COMPLETED} seq 17   — resolved, never re-fired
+[17] World after the restart: 0 further receipt(s) for issues.create#1   — the effect was never re-sent
+```
+
+Now the same command, same fault, same landmark, same World, same seed, against another runtime:
+
+```bash
+uv run crashproof demo --adapter langgraph --config sync
+```
+
+```
+[4]–[7] no journal exposed. This runtime keeps a checkpoint, not an event log …
+[13] resume re-runs the interrupted node; whether that re-fires the effect is what the
+     World's receipt count below answers
+[18] World: receipts(issues.create#1)=2  applied=2   ·  duplicate_effects=1
+```
+
+Neither arm failed an invariant. LangGraph declares `at_least_once` for EXTERNAL and is held to what
+it claims — **the duplicate is the cost, printed**. That rule, and not a leaderboard, is what the
+whole matrix is built on.
+
+## The matrix
+
+**[`bench/reports/matrix_v0.md`](bench/reports/matrix_v0.md)** — 40 cells × 30 seeds, **1 200
+trials**, four runtime configs, two bands, every arm running the same spec file. Duplicate *applied*
+effects in the `EXTERNAL` band (`issues.create`, `dedup: false`, no key), out of 30 seeds:
+
+| (location, fault) | keel | langgraph sync | async | exit |
+|---|---|---|---|---|
+| `before:tool_call` | 0 | 0 | 0 | 0 |
+| `after:tool_effect` | **0** | **30** | **30** | **30** |
+| `after:tool_return` | **0** | **30** | **30** | **30** |
+| `pause_past_ttl` | **11** | 0 | 0 | 0 |
+
+The middle two rows are the thesis; the last row is the honest cost, and it is Keel's. A fence
+protects the journal and cannot reach a third party, so a worker frozen past its lease duplicated in
+11 of 30 trials — the residual the constitution names and refuses to claim away. In the `IDEMPOTENT`
+band the same freeze produced 10 re-sends and **0** duplicates: the key travels and the receiver does
+the rest. LangGraph's zombie column is 0 for a different reason — with no successor, nothing takes
+over while it is frozen, so nothing races it.
+
+Beside it, and never unioned with it:
+**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 36 white-box cells firing
+faults *inside* Keel's own write path, where no shim can reach. A boundary only one runtime exposes
+is not a fair column.
+
+How each arm is built, and the key formula behind its fairness level:
+[`docs/adapters/keel.md`](docs/adapters/keel.md) ·
+[`docs/adapters/langgraph.md`](docs/adapters/langgraph.md). What a finding has to clear before it
+goes to someone else's issue tracker: [`docs/upstream-report-template.md`](docs/upstream-report-template.md).
+
+## Status — phase 7 of 8: the artifact other people see
+
+`crashproof demo` above, read off the artefacts rather than scripted, with CI diffing its printed
+lines on every commit. `keel events --follow` — §25.2's one unbuilt MVP flag — in place of the
+`keel watch` TUI, which is cut: what the TUI was for is the BEFORE CRASH / AFTER RESTART split, and
+that split already lives in the event stream. Every rendered report now carries the MDD tables and
+the "you only ran this thirty times" FAQ, because an answer that needs a second command to produce
+is an answer a reader will not find.
+
+### Phase 6: white box
+
+The windows that decide whether Keel's journal protocol is correct are all inside a single
+transaction, where no shim can reach. So Keel grew ten named boundaries in its own write path, and
+pointing the first one at the journal found a real bug: a store error raised from inside a step
+arrived at the worker's `except Exception` — right about a program bug, wrong about an outage — and
+the worker wrote `RUN_FAILED` and released the lease, turning a two-second blink into permanent
+unrecoverable loss with the issue already filed. `StoreUnavailable` now takes the `Abandon` path:
+**a worker that cannot write must not write a verdict.**
+
+The conformance table's payoff is one window with three disposals. Crash at `after:effect_exec`,
+World has the effect, journal does not:
+
+| class | disposal | receipts | applied |
+|---|---|---|---|
+| PURE | `COMPLETED` (re-read) | 2 | 0 |
+| IDEMPOTENT | `COMPLETED` (re-fired under the same key) | 2 | **1** |
+| EXTERNAL | `RESOLVED_COMPLETED` (probed) | **1** | 1 |
+
+Also phase 6: `crashproof/stats/ci.py` (Wilson · exact binomial · paired bootstrap · Holm · MDD),
+comparisons made per `(location, fault)` cell instead of averaged across triggers — which made Holm
+mean something and exposed a verdict that had been printing the *diverging* arm as the better one —
+`crashproof verify --recheck/--placement/--effects` over a `facts.json` every trial now writes, and
+`KeelMachine`, a Hypothesis state machine that fires those faults in sequences nobody wrote down.
+
+### Phase 5: replay as a first-class mode
 
 Every phase so far asked whether a runtime reached the right answer. This one asks whether it got
 there the way its own history says it did — and builds the fault that makes the difference visible
@@ -61,7 +169,7 @@ cleanest column.
 
 FORK is cut, by §28.5's own cut line rather than by choice.
 
-## Phase 4: ambiguity
+### Phase 4: ambiguity
 
 A crash is the easy fault. Phase 4 is the one where the process stays alive and the *answer* goes
 missing — the request left, the receiver applied it, and nothing came back. Retrying is how correct
@@ -130,7 +238,7 @@ step engine routes on the *effect class* rather than the status code; a `tool_ti
 receiver**, so the effect really lands and the answer really never comes; and `crashproof compare`,
 which counts safety, estimates liveness, and says *too noisy to claim* out loud.
 
-## Phase 3: the matrix
+### Phase 3: the matrix
 
 Phase 1 built the spine, phase 2 built the referee. Phase 3 points a saboteur at the runtime and
 publishes what the referee saw.
@@ -142,28 +250,13 @@ uv run crashproof report bench/results/latest --out bench/reports/matrix_v0.md
 
 **[`bench/reports/matrix_v0.md`](bench/reports/matrix_v0.md)** — 40 cells, 30 seeds, **1 200 trials**,
 four runtime configs, two bands, every arm running the same spec. Every safety invariant held in every
-scored trial; no counterexamples.
+scored trial; no counterexamples. The headline table is [at the top](#the-matrix); what follows is how
+it was taken.
 
-Duplicate *applied* effects, `EXTERNAL` band (`issues.create`, `dedup: false`, no key), out of 30 seeds:
-
-| (location, fault) | keel | langgraph sync | async | exit |
-|---|---|---|---|---|
-| `before:tool_call` | 0 | 0 | 0 | 0 |
-| `after:tool_effect` | **0** | **30** | **30** | **30** |
-| `after:tool_return` | **0** | **30** | **30** | **30** |
-| `pause_past_ttl` | **11** | 0 | 0 | 0 |
-
-The middle two rows are the thesis. A kill between the effect landing and the outcome being recorded
-duplicates the issue in every LangGraph trial and in none of Keel's — the journal remembers that the
-attempt started, so the successor asks the receiver instead of guessing. S1 is PASS for all four
-columns, because LangGraph claims `at_least_once` and is held to that; the duplicate is printed anyway.
-
-The last row is the honest cost. Under a worker frozen past its lease, Keel duplicated in **11 of 30**
-trials — the residual window the constitution names and refuses to claim away, since a fence protects
-the journal and cannot reach a third party. In the `IDEMPOTENT` band the same freeze produced 10
-re-sends and **0** duplicate effects: the key travels, and the receiver does the rest. LangGraph's
-zombie column is 0 for a different reason — with no successor, nothing takes over while it is frozen,
-so nothing races it.
+A kill between the effect landing and the outcome being recorded duplicates the issue in every
+LangGraph trial and in none of Keel's — the journal remembers that the attempt started, so the
+successor asks the receiver instead of guessing. S1 is PASS for all four columns, because LangGraph
+claims `at_least_once` and is held to that; the duplicate is printed anyway.
 
 Model calls are counted at the wire, identically for every arm, so the economy column exists for
 runtimes that keep no tally of their own. After a kill at `after:tool_effect`: `+0` for Keel and
@@ -176,7 +269,7 @@ three instants inside every runtime; a **supervisor** that restarts with identic
 never says what to resume; a **verifier** that is a pure function from four logs to a verdict; and a
 **report** that prints safety and estimates differently because they are different kinds of claim.
 
-## Phase 2: effects, ambiguity and ground truth
+### Phase 2: effects, ambiguity and ground truth
 
 Phase 2 built the **referee**. Until now the runtime's own journal was the only witness to what happened
 in the outside world, which is precisely the thing that cannot be trusted: a system that appears to recover
@@ -195,16 +288,24 @@ while quietly re-firing a side effect looks identical, from the inside, to one t
 - **Drain on SIGTERM** hands the run back at a step boundary rather than holding it until the lease lapses.
 - **Property tests** — the fold, the effect key and the step machine, on `MemoryJournal` + `FakeClock`.
 
-## Quickstart
+## Running it yourself
 
 ```bash
 uv sync --extra dev
-docker compose up -d postgres
+docker compose up -d postgres                            # Docker Desktop first, on Windows
 uv run keel db migrate --app keel.agents.demo:app
-uv run python scripts/day2_demo.py       # the World, a kill inside the window, and both bands
+
+uv run crashproof demo                                   # the one command, in under a minute
+uv run python scripts/day2_demo.py                       # the same window, narrated step by step
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml   # the published matrix, ~1 h at 6 slots
+uv run crashproof verify bench/results/latest/results.jsonl --recheck   # the publication gate
 ```
 
-## What phase 2 proves
+Nothing is published from a results directory whose `--recheck` is not clean: it re-runs the verifier
+over each trial's own recorded facts and fails if a verdict moved, or if the results file has drifted
+from the directories it summarises.
+
+### What phase 2 proves
 
 `scripts/day2_demo.py` starts a real World and a real `keel worker`, and kills the worker (`SIGKILL`) at the
 instant the World has durably receipted the effect and the journal has no outcome for it. Then it runs the
@@ -252,7 +353,7 @@ Two receipts and one application is the whole argument for effect classes: **ide
 the receiver, not of the caller.** The runtime's job is to keep the key stable across the crash and to be
 honest when there is no key to keep.
 
-## The World
+### The World
 
 ```bash
 uv run crashproof world --port 8600 --dedup issues.create=false --hold issues.create=150
@@ -341,11 +442,16 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-Phases 7–8: the day-7 artifact — `crashproof demo`, the `keel watch` TUI, the report polish, the
-adapter docs and the upstream-report template. Inside phase 4, two things are still named rather
-than stubbed: `max_usd` and `max_wall_clock` (they need a pinned price table and a deadline every
-waiting kind respects), and backoff longer than the lease (it needs `RUN_WAITING` and the signals
-inbox, both v1).
+Week 2 is the signals inbox and delegation: approvals, `keel approve`, `RECOVERY_STARTED{cause=WAKE}`
+— which is also the missing half of §26.3's demo script, and the demo says so where those lines
+would go rather than printing a sequence the runtime cannot produce. Week 3 is the confirmation tier
+at n = 300 on fresh seeds, the HTML report, and segments and streaming. `keel watch` is **cut**, not
+pending: `keel events --follow` shows the same BEFORE CRASH / AFTER RESTART split, in the event
+stream where it already lives.
+
+Inside phase 4, two things are still named rather than stubbed: `max_usd` and `max_wall_clock` (they
+need a pinned price table and a deadline every waiting kind respects), and backoff longer than the
+lease (it needs `RUN_WAITING` and the signals inbox, both v1).
 
 Seven of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
 refused rather than firing nothing: `before/after:signal_consume`, `during:approval_wait`,
