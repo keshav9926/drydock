@@ -1,5 +1,7 @@
 # drydock
 
+[![ci](https://github.com/keshav9926/drydock/actions/workflows/ci.yml/badge.svg)](https://github.com/keshav9926/drydock/actions/workflows/ci.yml)
+
 Two things live here, and the second is the point of the first.
 
 **`keel/`** — a single-node, event-sourced, agent-native durable execution runtime (Python, Postgres).

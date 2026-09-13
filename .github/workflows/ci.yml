@@ -1,0 +1,57 @@
+# Two jobs, because two of this repository's claims need checking on every commit and they need
+# different things to run.
+#
+# `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 36 white-box
+# conformance cells, and the golden diff of the demo's printed lines — which is §28.7's named
+# mitigation for "a demo that only works on the author's machine".
+#
+# `integration` needs Postgres, because the four control-plane statements are the one place the
+# MemoryJournal tests and the real store could disagree, and a durability claim checked only against
+# an in-memory fake is not checked.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - name: unit, property and conformance
+        run: uv run pytest tests/unit tests/property tests/conformance -q --hypothesis-seed=0
+      # The conformance cells write their table. If the committed one differs, the code and the
+      # published artefact have diverged — which is exactly what a generated file is for.
+      - name: the conformance table is current
+        run: git diff --exit-code -- bench/keel_conformance/table.md
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: keel
+          POSTGRES_PASSWORD: keel
+          POSTGRES_DB: keel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U keel"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - name: control-plane statements against a real store
+        env:
+          KEEL_TEST_DSN: postgresql://keel:keel@localhost:5432/keel
+        run: uv run pytest tests/integration -q
