@@ -307,6 +307,24 @@ Nothing is published from a results directory whose `--recheck` is not clean: it
 over each trial's own recorded facts and fails if a verdict moved, or if the results file has drifted
 from the directories it summarises.
 
+**`bench` is serial on purpose, and parallelism is sharding.** One run owns one `results.jsonl` and
+one `cursor.json`, which is what makes `--resume` safe and a re-taken void trial unambiguous; two
+processes pointed at the same `--out` corrupt both. To use more cores, give each shard its own cell
+glob and its own directory, then concatenate — the row carries its own `cell_id`, `seed` and
+`spec_hash`, so a merged file is exactly the file a single run would have written:
+
+```bash
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --cells 'keel.*'      --out out/keel &
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --cells 'langgraph.*' --out out/lg &
+wait && mkdir -p out/all && cat out/*/results.jsonl > out/all/results.jsonl
+uv run crashproof report out/all --out bench/reports/matrix_v0.md
+```
+
+A long run gets killed for memory on some machines roughly every few hundred trials — each
+LangGraph SUT imports the whole langgraph stack. That is what `--resume` is for: re-issue the same
+command and it continues from the store, re-taking void trials and costing nothing for the rows that
+already exist.
+
 ### What phase 2 proves
 
 `scripts/day2_demo.py` starts a real World and a real `keel worker`, and kills the worker (`SIGKILL`) at the
