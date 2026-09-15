@@ -573,6 +573,42 @@ def compare(
         raise typer.Exit(EXIT_TOO_NOISY)
 
 
+@app.command()
+def agree(
+    shim: Annotated[list[Path], typer.Option("--shim", help="results dir(s) run in shim mode; repeatable")],
+    proxy: Annotated[list[Path], typer.Option("--proxy", help="results dir(s) run in proxy mode; repeatable")],
+    out_path: Annotated[Path | None, typer.Option("--out")] = None,
+) -> None:
+    """§29.1's proxy/shim agreement column: the same cells, measured from inside the SUT and from
+    the network edge, paired on (cell, seed). No p-values — a check on the harness, not a claim."""
+    from crashproof.report.agreement import agreement, render
+    from crashproof.runner.store import ResultStore
+
+    shim_rows = [r for p in shim for r in ResultStore(p).rows()]
+    proxy_rows = [r for p in proxy for r in ResultStore(p).rows()]
+    if not shim_rows or not proxy_rows:
+        err.print(f"[red]nothing to pair: shim={len(shim_rows)} rows, proxy={len(proxy_rows)} rows[/]")
+        raise typer.Exit(1)
+    wrong = [r["cell_id"] for r in shim_rows if r.get("mode") != "shim"] + [
+        r["cell_id"] for r in proxy_rows if r.get("mode") != "proxy"
+    ]
+    if wrong:
+        err.print(f"[red]a results dir is on the wrong side of the pairing: {sorted(set(wrong))[:3]} …[/]")
+        raise typer.Exit(1)
+    page = render(
+        agreement(
+            shim_rows, proxy_rows,
+            shim_name="+".join(p.name for p in shim), proxy_name="+".join(p.name for p in proxy),
+        )
+    )
+    if out_path is None:
+        out.print(page)
+    else:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(page, encoding="utf8")
+        err.print(f"wrote {out_path}")
+
+
 def main() -> None:  # pragma: no cover
     app()
 
