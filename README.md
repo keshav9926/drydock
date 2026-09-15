@@ -80,9 +80,9 @@ the rest. LangGraph's zombie column is 0 for a different reason — with no succ
 over while it is frozen, so nothing races it.
 
 Beside it, and never unioned with it:
-**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 36 white-box cells firing
-faults *inside* Keel's own write path, where no shim can reach. A boundary only one runtime exposes
-is not a fair column.
+**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 41 white-box cells firing
+faults *inside* Keel's own write path and its inbox drain, where no shim can reach. A boundary only
+one runtime exposes is not a fair column.
 
 How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/keel.md`](docs/adapters/keel.md) ·
@@ -436,7 +436,7 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
 | `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
-| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 36 `(boundary, fault, class)` cells, 12 N/A with reasons |
+| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 41 `(boundary, fault, class)` cells — the write path per effect class, plus the inbox drain and the approval park on a gated run — 12 N/A with reasons |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
 
 The property files drive the *real* runtime over `MemoryJournal` + `FakeClock` and take its journal — random
@@ -488,8 +488,9 @@ Inside phase 4, two things are still named rather than stubbed: `max_usd` and `m
 need a pinned price table and a deadline every waiting kind respects), and backoff longer than the
 lease (it needs `RUN_WAITING` and the signals inbox, both v1).
 
-Seven of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
-refused rather than firing nothing: `before/after:signal_consume`, `during:approval_wait`,
-`before:child_spawn` and `during:child_wait` arrive with the inbox and delegation in week 2;
-`before:segment_write` and `during:stream(chunk=k)` in week 3. §29.2's *all seventeen* is the
-honest completion date. §27 is the binding staging table; nothing here is ahead of it.
+Four of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
+refused rather than firing nothing: `before:child_spawn` and `during:child_wait` arrive with
+delegation; `before:segment_write` and `during:stream(chunk=k)` in week 3. The inbox and approvals
+brought `before/after:signal_consume` and `during:approval_wait` with them, and their cells are in
+the conformance table. §29.2's *all seventeen* is the honest completion date. §27 is the binding
+staging table; nothing here is ahead of it.

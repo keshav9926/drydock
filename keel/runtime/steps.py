@@ -221,6 +221,11 @@ class StepEngine:
             return
 
         cancel = pause = False
+        # The drain is one fenced transaction, and these two boundaries bracket it. A crash before
+        # it leaves every signal unconsumed and the run exactly as it was — the successor drains the
+        # same rows. A crash after it leaves the decision durable and consumed, and nothing done
+        # about it yet by the program — which is the window S7's "decided once" is about.
+        hooks.at("before:signal_consume", step_index=step_index, signals=len(pending))
         async with self.journal.append(self.lease) as tx:
             # One `now()` for the whole drain: expiry is judged by the store's clock at drain time,
             # never by the worker's, and two signals in one transaction must be judged against the
@@ -237,6 +242,7 @@ class StepEngine:
                 applied = await self._apply_signal(tx, row, seq, step_index, waiting, now)
                 cancel = cancel or applied == "cancel"
                 pause = pause or applied == "pause"
+        hooks.at("after:signal_consume", step_index=step_index, signals=len(pending))
         # Cancel outranks pause: a run that has been told to stop for good does not first stop for
         # a while. Both are raised after the commit, so the journal is already durable when the
         # program is told.
@@ -335,6 +341,7 @@ class StepEngine:
                 RunWaiting(reason="approval", wake_at=wake_at, step_index=intent.step_index)
             )
             await tx.set_run(phase="WAITING_APPROVAL", wake_at=wake_at)
+        hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=wake_at)
         raise Parked("approval", wake_at=wake_at)
 
     async def _apply_signal(
@@ -472,6 +479,11 @@ class StepEngine:
                 causation_seq=intent_seq,
             )
             await tx.set_run(phase="WAITING_APPROVAL", wake_at=expires_at)
+        # The park is durable; the lease is not yet released. This is the only instant "during" a
+        # wait at which any code of ours runs, so it is where a fault can ask what a crash between
+        # the two leaves behind: a parked run under a lease nobody holds, which the reaper must
+        # reclaim as a wait rather than as an abandoned attempt (§7.3.1).
+        hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=expires_at)
         raise Parked("approval", wake_at=expires_at)
 
     async def _gate(self, intent: StepIntent) -> None:

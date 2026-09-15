@@ -42,6 +42,11 @@ HOOK_BOUNDARIES = (
     "after:outcome_commit",
     "before:lease_heartbeat",
     "before:lease_release",
+    # Week 2: the inbox drain's one transaction, bracketed, and the instant a park is durable but
+    # the lease is not yet released (§4.10).
+    "before:signal_consume",
+    "after:signal_consume",
+    "during:approval_wait",
 )
 #: `supervisor` is the one boundary that is not in the SUT: the harness executes it from outside.
 BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")

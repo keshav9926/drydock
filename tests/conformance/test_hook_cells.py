@@ -84,7 +84,20 @@ WINDOW: dict[str, tuple[str, str]] = {
     # the cell asserts the recovery and prints the placement rather than pinning a window. Reaching
     # it at all needs the run to outlive one heartbeat period, which is what the hold below buys.
     "before:lease_heartbeat": ("any", "any"),
+    # Week 2 (§4.10). These three are reached by a *gated* run and judged on its APPROVAL step
+    # rather than on a tool step: the park is durable and the lease not yet released; the drain's
+    # one transaction, before and after. `settled` at `after:signal_consume` is the decision —
+    # consumed and journaled — with the gated effect not yet started.
+    "during:approval_wait": ("running", "untouched"),
+    "before:signal_consume": ("running", "untouched"),
+    "after:signal_consume": ("settled", "untouched"),
 }
+
+#: The boundaries only a gated run reaches. Their cells run `gated_tool_chain`, park, are granted
+#: through the inbox, and arm the fault on the *successor's* drain — so the class under test is the
+#: gated EXTERNAL effect and the window is read on the APPROVAL step (index 0).
+GATED_BOUNDARIES = ("during:approval_wait", "before:signal_consume", "after:signal_consume")
+APPROVAL_STEP = 0
 
 #: A fault that is not a crash leaves a different window, and the difference is the point rather
 #: than an exception to the rule. An ordinary `raise` before the effect runs is a tool failure: the
@@ -132,12 +145,20 @@ FAULTS: dict[str, tuple[str, ...]] = {
     "after:outcome_commit": ("crash",),
     "before:lease_heartbeat": ("crash", "sleep"),
     "before:lease_release": ("crash",),
+    # A journal error *after* the park has committed is a no-op nobody would see, so the wait
+    # boundary takes a crash only; the drain takes both, because a store that blinks mid-drain is
+    # exactly the outage the `Abandon` path exists for.
+    "during:approval_wait": ("crash",),
+    "before:signal_consume": ("crash", "journal_error"),
+    "after:signal_consume": ("crash", "journal_error"),
 }
 
 #: Invariants every cell is judged on, whatever its boundary. The same functions the benchmark
 #: verifier calls — the sim drifting from the runtime is the standing risk here, and sharing the
 #: judge is the mitigation (§28.6).
-JUDGED = ("S1", "S3", "S4", "S5", "L1", "C1")
+#: S7 is in the grid for every cell and N/A for the write-path ones, whose workload gates nothing —
+#: the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
+JUDGED = ("S1", "S3", "S4", "S5", "S7", "L1", "C1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +180,9 @@ CELLS = [
     Cell(boundary, fault, klass)
     for boundary in FAULTS
     for fault in FAULTS[boundary]
-    for klass in UNDER_TEST
+    # The write-path boundaries are exercised per effect class; the gated ones have one shape, a
+    # gated EXTERNAL effect, and would say nothing more three times over.
+    for klass in (("GATED",) if boundary in GATED_BOUNDARIES else tuple(UNDER_TEST))
 ]
 
 
@@ -325,6 +348,139 @@ async def run_cell(cell: Cell) -> Result:
         await server.stop()
 
 
+async def run_gated_cell(cell: Cell) -> Result:
+    """The three week-2 boundaries, reached by a gated run (§4.10, §7.5).
+
+    Shape: w1 parks on `ctx.approve`; the human grants through the inbox; a successor drains the
+    grant and the fault lands on *its* boundary. `during:approval_wait` is the exception — it fires
+    on w1, at the instant the park is durable and the lease not yet released. Whatever the window,
+    the last successor must finish the run with the gated effect applied exactly once and the
+    approval requested and decided exactly once each: S7 is the whole subject of these cells.
+    """
+    result = Result(cell=cell)
+    identity = "issues.create#1"
+    world = build_world()
+    server = WorldServer(world, port=0)
+    await server.start()
+    previous_url = demo.WORLD_URL
+    demo.WORLD_URL = server.base_url
+    try:
+        clock = FakeClock()
+        k = Keel(
+            journal=MemoryJournal(clock=clock),
+            provider=ScriptedProvider(demo.SCRIPT),
+            tools=[demo.search, demo.create_issue_tool("EXTERNAL")],
+            programs=[demo.gated_tool_chain],
+            clock=clock,
+        )
+        handle = await k.start(demo.gated_tool_chain, {"title": "conformance"})
+        landed: list[str] = []
+
+        # w1: the park. Only the wait boundary is armed here.
+        if cell.boundary == "during:approval_wait":
+            _arm(cell, APPROVAL_STEP, landed)
+        lease = await k.journal.claim("w1", timedelta(seconds=TTL))
+        assert lease is not None
+        await _work(k, "w1", lease)
+        hooks.reset()
+
+        async def snapshot() -> None:
+            # The window, on the APPROVAL step, at the instant of the fault — read before anyone
+            # is granted anything, or the successor's own work would be mistaken for the window.
+            state = fold(await k.events(handle.run_id))
+            result.fired = bool(landed)
+            result.landed_at = landed[0] if landed else ""
+            result.window = _window(state, APPROVAL_STEP, world, identity)
+            expected_journal, expected_world = WINDOW[cell.boundary]
+            result.window_ok = (
+                not result.fired or result.window == f"{expected_journal}/{expected_world}"
+            )
+
+        if cell.boundary == "during:approval_wait":
+            await snapshot()  # the fault landed on w1, at the park
+
+        # The human grants. One row; whoever comes next drains it.
+        from keel.core.ids import uuid7
+        from keel.journal.protocol import SignalRow
+
+        assert await k.journal.insert_signal(
+            SignalRow(signal_id=uuid7(), run_id=handle.run_id, type="approve", payload={"by": "cell"})
+        )
+
+        # w2: the drain. The signal boundaries are armed here and land on this successor.
+        if cell.boundary != "during:approval_wait":
+            _arm(cell, APPROVAL_STEP, landed)
+        clock.advance(TTL + 2)
+        await k.journal.reap()
+        successor = await k.journal.acquire(handle.run_id, "w2", timedelta(seconds=TTL))
+        if successor is not None:
+            await _work(k, "w2", successor)
+        hooks.reset()
+        if cell.boundary != "during:approval_wait":
+            await snapshot()  # the fault landed on w2, at the drain
+
+        # w3: whoever comes after the fault. For the wait boundary this is the drain itself.
+        clock.advance(TTL + 2)
+        await k.journal.reap()
+        last = await k.journal.acquire(handle.run_id, "w3", timedelta(seconds=TTL))
+        if last is not None:
+            result.recovered = True
+            await _work(k, "w3", last)
+
+        events = await k.events(handle.run_id)
+        final = fold(events)
+        result.status = final.phase
+        row = final.steps.get(APPROVAL_STEP)
+        result.disposal = row.state if row else "—"
+        result.applied = world.applied_counts().get(identity, 0)
+        result.receipts = sum(1 for r in world.receipts if r.logical_identity == identity)
+
+        replay = await run_verify(k.journal, handle.run_id, demo.gated_tool_chain.fn, tools=k.tools)
+        verdicts = invariants.verify(
+            invariants.TrialFacts(
+                world_receipts=[
+                    {"endpoint": r.endpoint, "effect_key": r.effect_key,
+                     "logical_identity": r.logical_identity, "ts": r.ts}
+                    for r in world.receipts
+                ],
+                world_applied=world.applied_counts(),
+                sut_committed={
+                    e.external_ref
+                    for e in (await k.journal.effects(handle.run_id))
+                    if e.status in ("COMMITTED", "RESOLVED_COMMITTED") and e.external_ref
+                },
+                journal=[
+                    {"seq": e.seq, "type": e.type, "ts": e.ts.isoformat(),
+                     "step_index": e.step_index, "attempt_no": e.attempt_no,
+                     "body": e.body.model_dump(mode="json")}
+                    for e in events
+                ],
+                status=_status(final.phase),
+                required_effects=(identity,),
+                claims=KeelAdapter.claims,
+                effect_class="EXTERNAL",
+                faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
+                restarts=2 if result.recovered else 1,
+                replay=replay.as_dict(),
+            )
+        )
+        judged = (*JUDGED, "S7")
+        result.verdicts = {n: v for n, v in verdicts.as_dict().items() if n in judged}
+        result.details = {n: f.detail for n, f in verdicts.findings.items() if n in judged}
+        # The cells' own claim, beyond the verifier's: one request, one decision, whatever the
+        # crash. A second APPROVAL_REQUESTED would mint a second approval id and make S7 vacuous.
+        requested = sum(1 for e in events if e.type == "APPROVAL_REQUESTED")
+        decided = sum(1 for e in events if e.type == "APPROVAL_DECIDED")
+        if (requested, decided) != (1, 1):
+            result.verdicts["S7"] = "FAIL"
+            result.details["S7"] = f"APPROVAL_REQUESTED x{requested}, APPROVAL_DECIDED x{decided}"
+        return result
+    finally:
+        demo.WORLD_URL = previous_url
+        hooks.reset()
+        await server.stop()
+
+
 def _identity(effect_class: str, variant: str) -> str:
     """The logical identity of the effect this cell aims at. The two bands run against different
     endpoints — `issues.create` honours nothing, `issues.upsert` deduplicates — so the identity is
@@ -369,7 +525,7 @@ async def test_cell(cell: Cell) -> None:
     if cell.na:
         RESULTS[cell.id] = Result(cell=cell, verdicts=dict.fromkeys(JUDGED, "N/A"))
         pytest.skip(cell.na)
-    result = await run_cell(cell)
+    result = await (run_gated_cell(cell) if cell.boundary in GATED_BOUNDARIES else run_cell(cell))
     RESULTS[cell.id] = result
     assert result.fired, "the fault never fired; a cell that did not test what it claims is void"
     assert result.window_ok, (
@@ -409,8 +565,8 @@ def render() -> str:
         "idempotency bought, and the runtime gets no credit for it.",
         "",
         "| boundary | fault | class | window | disposal | applied | receipts | status "
-        "| S1 | S3 | S4 | S5 | L1 | C1 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| S1 | S3 | S4 | S5 | S7 | L1 | C1 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for cell in CELLS:
         r = RESULTS[cell.id]
@@ -419,7 +575,7 @@ def render() -> str:
                 f"| `{cell.boundary}` | `{cell.fault}` | {cell.effect_class} | N/A | "
                 + " | ".join(["—"] * 4)
                 + " | "
-                + " | ".join(["N/A"] * 6)
+                + " | ".join(["N/A"] * len(JUDGED))
                 + " |"
             )
             continue
@@ -449,10 +605,11 @@ def render() -> str:
         f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed. "
         f"Regenerate with `uv run pytest tests/conformance -q`.",
         "",
-        "The seven remaining boundaries — `before/after:signal_consume`, `during:approval_wait`,",
-        "`before:child_spawn`, `during:child_wait`, `before:segment_write` and",
-        "`during:stream(chunk=k)` — are absent rather than stubbed, and arrive with the mechanisms",
-        "they name (§28.6). §29.2's *all seventeen hook boundaries* is the honest completion date.",
+        "Thirteen of the seventeen boundaries exist: the ten of the write path (§28.6) and the three",
+        "the inbox and approvals brought with them (§4.10). The four remaining — `before:child_spawn`",
+        "and `during:child_wait` with delegation, `before:segment_write` and `during:stream(chunk=k)`",
+        "in week 3 — are absent rather than stubbed, so a spec naming one is refused instead of",
+        "firing nothing. §29.2's *all seventeen hook boundaries* is the honest completion date.",
         "",
     ]
     return "\n".join(lines)

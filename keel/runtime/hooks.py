@@ -35,9 +35,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-#: The ten boundaries whose mechanisms exist today. The remaining seven arrive with the mechanisms
-#: they name — signals and approvals in week 2, segments and streams in week 3 — and are absent
-#: rather than stubbed, so a spec naming one is refused instead of firing nothing (§28.6).
+#: The thirteen boundaries whose mechanisms exist today: the ten of the write path (§28.6) and the
+#: three the inbox and approvals brought with them. The remaining four arrive with the mechanisms
+#: they name — `before:child_spawn` and `during:child_wait` with delegation, `before:segment_write`
+#: and `during:stream(chunk=k)` in week 3 — and are absent rather than stubbed, so a spec naming one
+#: is refused instead of firing nothing.
 BOUNDARIES = (
     "before:intent_commit",
     "after:intent_commit",
@@ -49,6 +51,12 @@ BOUNDARIES = (
     "after:outcome_commit",
     "before:lease_heartbeat",
     "before:lease_release",
+    # Week 2, with the inbox and approvals (§4.10). `signal_consume` brackets the drain's one fenced
+    # transaction; `during:approval_wait` is the instant the park is durable and the lease is not
+    # yet released — the only moment "during" a wait at which any code of ours is running.
+    "before:signal_consume",
+    "after:signal_consume",
+    "during:approval_wait",
 )
 
 
