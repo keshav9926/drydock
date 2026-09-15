@@ -95,6 +95,10 @@ def terminate(pid: int) -> None:
 
 # --- Windows plumbing --------------------------------------------------------
 _PROCESS_SUSPEND_RESUME = 0x0800
+#: STATUS_PROCESS_IS_TERMINATING. A process the proxy has just `taskkill`ed can still be opened for
+#: a few milliseconds — `poll()` says alive — and refuses to be suspended or resumed. That is the
+#: outcome we wanted, not an error: the same rule `_ignore_gone` applies on POSIX.
+_STATUS_PROCESS_IS_TERMINATING = 0xC000010A
 
 
 def _with_handle(pid: int, fn: str) -> None:
@@ -112,9 +116,11 @@ def _with_handle(pid: int, fn: str) -> None:
     if not handle:
         return  # the process is already gone, which is not an error here
     try:
-        status = getattr(ntdll, fn)(handle)
+        status = getattr(ntdll, fn)(handle) & 0xFFFFFFFF
+        if status == _STATUS_PROCESS_IS_TERMINATING:
+            return  # gone in every sense that matters
         if status != 0:
-            raise OSError(f"{fn}({pid}) failed with NTSTATUS 0x{status & 0xFFFFFFFF:08x}")
+            raise OSError(f"{fn}({pid}) failed with NTSTATUS 0x{status:08x}")
     finally:
         kernel32.CloseHandle(handle)
 
