@@ -85,8 +85,10 @@ the cell clean — which is the whole reason `replay_divergence` exists as a col
 
 The wait primitive is `interrupt()`; resumption is a fresh `ainvoke(Command(resume=...))` on the
 same thread, made by the worker on the harness's instruction (a file in the trial directory — the
-human's decision, written once and never deleted). Single-seed smoke results, ahead of the 30-seed
-run; each is a printed count beside a declared `at_least_once`, not a failure:
+human's decision, written once and never deleted). Thirty seeds per cell, both LangGraph configs
+([`bench/reports/w5.md`](../../bench/reports/w5.md), [`w5_pre.md`](../../bench/reports/w5_pre.md));
+every row below held 30/30, and each is a printed count beside a declared `at_least_once`, not a
+failure:
 
 | cell | LangGraph sync | Keel | what it says |
 |---|---|---|---|
@@ -94,7 +96,7 @@ run; each is a printed count beside a declared `at_least_once`, not a failure:
 | `kill_while_waiting` (headline) | deploy **1**, 5 model calls | deploy **1**, 3 model calls | H7 held: `interrupt()` is checkpointed, so the successor is granted once. The interrupting node re-ran on the restart — the `+1` model call §13.7 predicted. |
 | `approval_expiry` | **still WAITING at 60 s**, L1 FAIL, nothing deployed | expired at 5 s, COMPLETED `not done`, nothing deployed | There is no deadline on `interrupt()`. A human who never answers is a run that never ends. S3/S7 hold either way — nothing was deployed. |
 | **tier-2** baseline (`notify` before the gate) | notify **2**, deploy 1 | notify **1**, deploy 1 | H7 held: pre-interrupt code re-runs on resume. |
-| **tier-2** `kill_while_waiting` | notify **3**, deploy 1 | — (30-seed run) | Every re-entry of the interrupting node re-runs what came before the interrupt: original, restart, resume. |
+| **tier-2** `kill_while_waiting` | notify **3**, deploy 1 | notify **1**, deploy 1 | Every re-entry of the interrupting node re-runs what came before the interrupt: original, restart, resume — 120 extra `notify` effects across the 270 tier-2 trials, none of them a deploy. |
 
 The tier-2 rows are in their own band because the workload was *constructed* to exercise a
 documented caveat — §13.4: "pre-interrupt code re-runs" — and the adapter honours that on purpose:

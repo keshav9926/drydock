@@ -124,10 +124,17 @@ at a step boundary inside its own fenced transaction, without ever becoming a se
   often finished), so the shim's T3 window is not reachable from the edge; and the proxy parks a
   frozen worker's request, turning `pause_past_ttl`'s timing-dependent 11/30 residual into a
   deterministic 30/30. Both are what §11.2's precision-lost column said.
+- **W5 at thirty seeds** ([`bench/reports/w5.md`](bench/reports/w5.md), 450 trials;
+  [`w5_pre.md`](bench/reports/w5_pre.md), 270): H7 held on every arm, 30/30 — the gated deploy fires
+  once whoever holds the wait and whoever is killed while holding it. What separates the arms is the
+  wait itself: LangGraph re-runs the interrupting node on every re-entry (+1 model call on resume, +2
+  when killed while parked; in the tier-2 form an ungated `notify` before the gate fires 2× and 3×,
+  120 extra effects in 270 trials, PASS against at-least-once and printed), and `interrupt()` has no
+  deadline, so under `approval_expiry` it is still WAITING at 60 s in 60 of 60 trials (L1 FAIL by
+  design) where Keel expires by the store's clock and completes with nothing deployed, 30/30.
 - **Not built, named:** the DBOS and Pydantic AI arms wait on a word from the owner before any
   framework is installed; W4 is cut (third in §29.1's own cut order: it needs TRANSACTIONAL, the
-  effect-table bridge and a DBOS arm to be a comparison). The 30-seed W5 / W5-pre runs are queued
-  behind tier1p.
+  effect-table bridge and a DBOS arm to be a comparison).
 
 ### Phase 7: the artifact other people see
 
