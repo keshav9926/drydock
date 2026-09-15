@@ -89,7 +89,47 @@ How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/langgraph.md`](docs/adapters/langgraph.md). What a finding has to clear before it
 goes to someone else's issue tracker: [`docs/upstream-report-template.md`](docs/upstream-report-template.md).
 
-## Status — phase 7 of 8: the artifact other people see
+## Status — phase 8 of 8: outside the holder
+
+Week 2 of §29.1. Everyone who is *not* the lease holder — a human with a decision, a child with a
+result, a network with an opinion — now influences a run through one table, applied by the holder
+at a step boundary inside its own fenced transaction, without ever becoming a second writer.
+
+- **The inbox** (§4.10). `keel cancel|pause|resume|approve|reject|signal` are each one row in
+  `signals` and nothing else; the holder drains at every step boundary, `SIGNAL_RECEIVED` ‖ what was
+  done ‖ `consumed_seq` in one transaction. The MVP's direct `runnable_at` path is deleted.
+- **Approvals** (§7.5). `ctx.approve(gates=(tool, args))` parks with no lease **and** no `runnable_at`
+  — zero compute, zero ticks — and binds the effect key it authorises before anyone decides; a
+  refused call costs no attempt (`attempt_no=0`, `DENIED`). Expiry is judged by the store's clock and
+  outranks arrival order. **W5** runs the same gated script against Keel and LangGraph's
+  `interrupt()`, with the harness as the human; §13.7's H7 held on both arms
+  ([`docs/adapters/langgraph.md`](docs/adapters/langgraph.md), citation from `langgraph 1.2.11`'s
+  own `interrupt()` docstring).
+- **Children** (§17). `ctx.delegate_many` commits the spawn as one fact (INTENT + STARTED +
+  N×`CHILD_SPAWNED` + each child's row, `RUN_CREATED` and contract + the park); a child's terminal
+  event co-commits its parent's `child_result` row; the parent grades the result against the contract
+  at the drain; cancel is asked first and forced by lease takeover after `cancel_grace` — the fifth
+  control-plane statement, pinned epoch, grace by the store's clock, open non-PURE attempts honoured.
+  The reaper collects strays of a terminal parent the same way (S8). `deadline_s` is journaled, not
+  yet enforced.
+- **Fifteen of seventeen hook boundaries**, with cells: [`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)
+  is 44 cells, 12 N/A, S7 and S8 judged from the whole tree of journals.
+- **Proxy mode** (§11.2). The black-box injector at the network edge — no harness code in the SUT.
+  [`bench/reports/tier1p.md`](bench/reports/tier1p.md): 36 cells × 30 seeds, **1 080 trials**, every
+  safety invariant PASS; Keel applies once under kill-after-effect, 5xx, dropped, malformed and timeout
+  (the probe finds COMMITTED), LangGraph sync twice in each (PASS against at-least-once, printed raw).
+  [`bench/reports/agreement_tier1p.md`](bench/reports/agreement_tier1p.md) pairs the same cells with
+  their shim twins: **23 of 28 agree**, and the five that differ are two findings about the
+  *instrument* — `taskkill` lands the proxy's `after:tool_return` kill after the SUT has parsed (and
+  often finished), so the shim's T3 window is not reachable from the edge; and the proxy parks a
+  frozen worker's request, turning `pause_past_ttl`'s timing-dependent 11/30 residual into a
+  deterministic 30/30. Both are what §11.2's precision-lost column said.
+- **Not built, named:** the DBOS and Pydantic AI arms wait on a word from the owner before any
+  framework is installed; W4 is cut (third in §29.1's own cut order: it needs TRANSACTIONAL, the
+  effect-table bridge and a DBOS arm to be a comparison). The 30-seed W5 / W5-pre runs are queued
+  behind tier1p.
+
+### Phase 7: the artifact other people see
 
 `crashproof demo` above, read off the artefacts rather than scripted, with CI diffing its printed
 lines on every commit. `keel events --follow` — §25.2's one unbuilt MVP flag — in place of the
