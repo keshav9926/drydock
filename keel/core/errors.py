@@ -106,6 +106,17 @@ class DeadlineExceeded(KeelError): ...
 class Cancelled(KeelError): ...
 
 
+class ContractInvalid(KeelError):
+    """A delegation contract that cannot be honoured, refused at `ctx.delegate` entry before the
+    DELEGATE INTENT commits: a program bug, never a fault (§17.2)."""
+
+
+class ContractViolation(KeelError):
+    """A child's result that does not satisfy the contract's `result_schema`. Judged by the parent
+    at drain; the child's own journal still says COMPLETED, and the two can disagree only in the
+    direction that matters (§17.8)."""
+
+
 class PolicyDenied(KeelError): ...
 
 
@@ -119,12 +130,6 @@ class ApprovalRejected(KeelError): ...
 
 
 class ApprovalExpired(KeelError): ...
-
-
-class ContractViolation(KeelError): ...
-
-
-class ContractInvalid(KeelError): ...
 
 
 class EffectDeniedInFork(KeelError): ...

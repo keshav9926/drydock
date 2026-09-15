@@ -18,6 +18,7 @@ from keel.core.hashing import effect_key as _effect_key
 from keel.core.hashing import request_hash as _request_hash
 from keel.core.protocols import StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
+from keel.runtime.delegation import ChildResult, Delegation, canonical
 from keel.runtime.steps import StepEngine
 
 
@@ -133,6 +134,43 @@ class Ctx:
             program_version=self.program_version,
         )
         return await self._run(intent)
+
+    async def delegate(self, contract: Delegation | dict[str, Any], *, name: str = "delegate") -> ChildResult:
+        """One child, one contract. Always the `ChildResult` wrapper, never the bare result, so
+        the failure path cannot be skipped by accident (§17.8)."""
+        [result] = await self.delegate_many([contract], name=name)
+        return result
+
+    async def delegate_many(
+        self, contracts: Sequence[Delegation | dict[str, Any]], *, name: str = "delegate_many"
+    ) -> list[ChildResult]:
+        """DELEGATE step: spawn children under contracts and park until every one is terminal.
+
+        Identity = (DELEGATE, name, hash of the journaled contracts) — the result schema included,
+        so a redeploy that changes what a child is asked to return trips `NondeterminismDetected`
+        here rather than re-grading children spawned under the old contract (§17.8). The run holds
+        no lease and costs no ticks while the children work; each child's terminal event commits
+        with the `child_result` row that wakes this run (§5.10).
+
+        Results come back in ordinal order, one per contract, whatever their status: what a failed
+        child *means* is the program's business unless the contract said `fail_parent`.
+        """
+        index = self._open()
+        try:
+            cs = [c if isinstance(c, Delegation) else Delegation.model_validate(c) for c in contracts]
+            args = {"contracts": canonical(cs)}
+            intent = StepIntent(
+                step_index=index,
+                kind=StepKind.DELEGATE,
+                name=name,
+                args=args,
+                args_hash=_args_hash(args),
+                program_version=self.program_version,
+            )
+        except BaseException:
+            self._in_flight = False
+            raise
+        return [ChildResult.model_validate(r) for r in await self._run(intent)]
 
     async def tool(self, name: str, /, **args: Any) -> Any:
         """TOOL step; identity = (TOOL, name, canonical-args hash)."""

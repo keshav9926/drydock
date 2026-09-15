@@ -97,6 +97,30 @@ class Approval:
 
 
 @dataclass(slots=True)
+class ChildState:
+    """The parent's view of one delegation (§7.6.1). There is no RUNNING here, deliberately: every
+    transition is caused by an event in the *parent's own* journal, and "the child has started" is
+    not one. The parent is contractually blind to the child's internals."""
+
+    child_run_id: Any
+    delegation_id: Any
+    step_index: int
+    state: str = "SPAWNED"  # SPAWNED | COMPLETED | FAILED | CANCELLING | CANCELLED
+    child_ordinal: int = 0
+    retry_no: int = 0
+    contract: dict[str, Any] = field(default_factory=dict)
+    budget_reserved: dict[str, Any] = field(default_factory=dict)
+    result: Any = None
+    error: str | None = None
+    policy_applied: str | None = None
+    usage_settled: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def terminal(self) -> bool:
+        return self.state in ("COMPLETED", "FAILED", "CANCELLED")
+
+
+@dataclass(slots=True)
 class Charged:
     """The budget projection: a run-wide fold, never bounded by a segment boundary, or a run would
     forget what it had spent every few hundred steps (§16.4).
@@ -129,6 +153,23 @@ class Charged:
         self.tokens_charged -= reservation
         self.tokens_charged += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
 
+    # --- delegation (§17.4): the child's slice is a reservation in the parent's ledger --------
+    def reserve_child(self, child_run_id: Any, slice_: dict[str, Any]) -> None:
+        """Charged at CHILD_SPAWNED, in full. A child that never reaches terminal — suspended and
+        forgotten — stays charged at its slice for good, which is the conservative answer."""
+        tokens = int(slice_.get("max_tokens") or 0)
+        self.tokens_charged += tokens
+        self.reserved[("child", child_run_id)] = tokens
+
+    def settle_child(self, child_run_id: Any, usage: dict[str, Any] | None) -> None:
+        """Swap the slice for what the child's own journal charged — itself an upper bound on the
+        child's provider bill (§16.4), so S9 holds for the whole tree."""
+        reservation = self.reserved.pop(("child", child_run_id), None)
+        if reservation is None or usage is None:
+            return
+        self.tokens_charged -= reservation
+        self.tokens_charged += int(usage.get("tokens_charged") or 0)
+
 
 @dataclass(slots=True)
 class RunState:
@@ -157,6 +198,14 @@ class RunState:
     budget: Mapping[str, Any] = field(default_factory=dict)
     charged: Charged = field(default_factory=Charged)
     approvals: dict[Any, Approval] = field(default_factory=dict)
+    children: dict[Any, ChildState] = field(default_factory=dict)
+
+    def children_of(self, step_index: int) -> list[ChildState]:
+        """The delegations one DELEGATE step spawned, in ordinal order."""
+        return sorted(
+            (c for c in self.children.values() if c.step_index == step_index),
+            key=lambda c: (c.child_ordinal, c.retry_no),
+        )
 
     # --- what re-execution asks -------------------------------------------
     def step(self, step_index: int) -> StepState | None:
@@ -301,11 +350,49 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         a = st.approvals[b.approval_id]
         a.state = {"granted": "GRANTED", "rejected": "REJECTED", "expired": "EXPIRED"}[b.decision]
         a.by = b.by
+    elif t == "STEP_CANCELLED":
+        s = st.steps.get(b.step_index)
+        if s is not None:
+            s.state = CANCELLED
+            s.outcome_seq = ev.seq
+            s.outcome_epoch = ev.lease_epoch
+    elif t == "CHILD_SPAWNED":
+        st.children[b.child_run_id] = ChildState(
+            child_run_id=b.child_run_id,
+            delegation_id=b.delegation_id,
+            step_index=b.step_index,
+            child_ordinal=b.child_ordinal,
+            retry_no=b.retry_no,
+            contract=b.contract,
+            budget_reserved=b.budget_reserved,
+        )
+        st.charged.reserve_child(b.child_run_id, b.budget_reserved)
+    elif t == "CHILD_COMPLETED":
+        c = st.children[b.child_run_id]
+        c.state = "COMPLETED"
+        c.result = b.result
+        c.usage_settled = b.usage_settled
+        st.charged.settle_child(b.child_run_id, b.usage_settled)
+    elif t == "CHILD_FAILED":
+        c = st.children[b.child_run_id]
+        # `ChildCancelled` is a failure with a policy applied like any other; the parent's view has
+        # no separate CANCELLED transition because no parent event of its own produces one (§7.6.1).
+        c.state = "CANCELLED" if b.error == "ChildCancelled" else "FAILED"
+        c.error = b.error
+        c.policy_applied = b.policy_applied
+        c.usage_settled = b.usage_settled
+        st.charged.settle_child(b.child_run_id, b.usage_settled)
     elif t == "CANCEL_ACKNOWLEDGED":
         # The index the program was told at. Re-execution reads exactly this and raises `Cancelled`
         # there — without it a replay would run further or less far than the original did, and a
         # cancelled run would not be reproducible (§4.10).
         st.cancel_acknowledged_at = b.step_index
+        # Every child still open was told in the same transaction — one `cancel` row per inbox
+        # (§7.6.2). The parent's view moves to CANCELLING; only a `child_result`, or the takeover
+        # that forces one, moves it further.
+        for c in st.children.values():
+            if not c.terminal:
+                c.state = "CANCELLING"
     elif t == "STEP_INTENDED":
         st.steps[b.step_index] = StepState(
             step_index=b.step_index,

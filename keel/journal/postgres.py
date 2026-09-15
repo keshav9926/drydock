@@ -22,14 +22,22 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from keel.core.errors import DuplicateEffectKey, Fenced
+from keel.core.errors import DuplicateEffectKey, Fenced, IllegalTransition
 from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.events.schema import TERMINAL_TYPES
 from keel.core.errors import AmbiguousRunRef, StoreUnavailable
 from keel.journal.blobs import externalise, internalise
-from keel.journal.protocol import EffectRow, Lease, RecoveryRow, ReplayRow, RunRow, SignalRow
+from keel.journal.protocol import (
+    DelegationRow,
+    EffectRow,
+    Lease,
+    RecoveryRow,
+    ReplayRow,
+    RunRow,
+    SignalRow,
+)
 
 SQL_DIR = Path(__file__).parent / "sql"
 
@@ -169,6 +177,122 @@ class _PgAppendTx:
             (*values, self._lease.run_id, self._lease.epoch),
         )
 
+    # --- delegation (§17): three more things that commit with the append ----------
+    async def insert_signal(self, row: SignalRow) -> None:
+        """A row in another run's inbox, on this transaction's connection (§5.10)."""
+        await _insert_signal(self._conn, row)
+
+    async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:
+        payload, blob_ids = await externalise(payload_of(created), self._j.blobs)
+        cur = await self._conn.execute("SELECT now()")
+        now = (await cur.fetchone())[0]
+        if not await _insert_run(self._conn, row, payload, blob_ids, runnable_at=now, on_conflict="error"):
+            raise IllegalTransition(f"child run {row.run_id} already exists")
+        try:
+            await self._conn.execute(
+                "INSERT INTO delegations (delegation_id, parent_run_id, parent_step_index,"
+                " child_run_id, role, contract, budget_reserved, status, usage_settled,"
+                " spawned_seq, settled_seq, child_ordinal, retry_no)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    delegation.delegation_id,
+                    delegation.parent_run_id,
+                    delegation.parent_step_index,
+                    delegation.child_run_id,
+                    delegation.role,
+                    Jsonb(delegation.contract),
+                    Jsonb(delegation.budget_reserved),
+                    delegation.status,
+                    Jsonb(delegation.usage_settled) if delegation.usage_settled is not None else None,
+                    delegation.spawned_seq,
+                    delegation.settled_seq,
+                    delegation.child_ordinal,
+                    delegation.retry_no,
+                ),
+            )
+        except psycopg.errors.UniqueViolation as exc:
+            # `delegations_contract_key`: a re-executed spawn is a loud violation, never a twin
+            # (§7.6.1). Loud here means the whole transaction — CHILD_SPAWNED included — rolls back.
+            raise IllegalTransition(
+                f"delegation ({delegation.parent_run_id}, {delegation.parent_step_index}, "
+                f"{delegation.child_ordinal}, {delegation.retry_no}) already spawned"
+            ) from exc
+
+    async def settle_delegation(
+        self, delegation_id: UUID, *, status: str, usage_settled: dict[str, Any] | None, settled_seq: int
+    ) -> None:
+        await self._conn.execute(
+            "UPDATE delegations SET status = %s, usage_settled = %s, settled_seq = %s,"
+            " updated_at = now() WHERE delegation_id = %s",
+            (status, Jsonb(usage_settled) if usage_settled is not None else None, settled_seq, delegation_id),
+        )
+
+
+async def _insert_run(
+    conn: psycopg.AsyncConnection,
+    row: RunRow,
+    payload: dict[str, Any],
+    blob_ids: Any,
+    *,
+    runnable_at: datetime | None,
+    on_conflict: str = "ignore",
+) -> bool:
+    """The `runs` row and its RUN_CREATED at `lease_epoch = 0` — the one append with no fence
+    (§23.4), shared by `keel run` for a root and by the parent's spawn transaction for a child."""
+    cur = await conn.execute(
+        "INSERT INTO runs (run_id, run_root_id, parent_run_id, program, program_version,"
+        " keel_version, model_config, args, budget, trace_id, phase, runnable_at, runnable_reason)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'CREATED',%s,%s)"
+        + (" ON CONFLICT (run_id) DO NOTHING" if on_conflict == "ignore" else ""),
+        (
+            row.run_id,
+            row.run_root_id,
+            row.parent_run_id,
+            row.program,
+            row.program_version,
+            row.keel_version,
+            Jsonb(dict(row.model_config)),
+            Jsonb(row.args),
+            Jsonb(dict(row.budget)),
+            row.trace_id,
+            runnable_at,
+            "START" if runnable_at else None,
+        ),
+    )
+    if cur.rowcount == 0:
+        return False
+    await conn.execute(
+        "INSERT INTO events (run_id, seq, type, schema_version, lease_epoch,"
+        " program_version, trace_id, payload, blob_ids)"
+        " VALUES (%s, 1, 'RUN_CREATED', %s, 0, %s, %s, %s, %s)",
+        (row.run_id, CURRENT["RUN_CREATED"], row.program_version, row.trace_id, Jsonb(payload), list(blob_ids)),
+    )
+    return True
+
+
+async def _insert_signal(conn: psycopg.AsyncConnection, row: SignalRow) -> bool:
+    """One inbox row, plus the wake (§5.6). Refused before the insert for a terminal target — no
+    future holder will drain it — and deduplicated by `signals_client_key`."""
+    cur = await conn.execute(
+        "INSERT INTO signals (signal_id, run_id, type, payload, client_key, source)"
+        " SELECT %s, %s, %s, %s, %s, %s"
+        " WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = %s AND terminal_at IS NULL)"
+        " ON CONFLICT DO NOTHING",
+        (row.signal_id, row.run_id, row.type, Jsonb(row.payload), row.client_key, row.source, row.run_id),
+    )
+    if cur.rowcount == 0:
+        return False
+    # The insert is also the wake. `runnable_at` is set only when it is NULL, so a signal
+    # arriving at a run that is already runnable does not move it ahead of its queue.
+    await conn.execute(
+        "UPDATE runs SET runnable_at = COALESCE(runnable_at, now()),"
+        " runnable_reason = COALESCE(runnable_reason, 'WAKE'), updated_at = now()"
+        " WHERE run_id = %s AND terminal_at IS NULL",
+        (row.run_id,),
+    )
+    await conn.execute("SELECT pg_notify('keel_signals', %s)", (str(row.run_id),))
+    return True
+
 
 class PostgresJournal:
     def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 8) -> None:
@@ -192,7 +316,7 @@ class PostgresJournal:
     async def migrate(self) -> None:
         pool = await self._ready()
         async with pool.connection() as conn:
-            for name in ("0001_init.sql", "0002_indexes.sql"):
+            for name in ("0001_init.sql", "0002_indexes.sql", "0003_delegations.sql"):
                 await conn.execute((SQL_DIR / name).read_text(encoding="utf8"))
 
     async def register_program(self, **f: Any) -> None:
@@ -229,40 +353,8 @@ class PostgresJournal:
         payload, blob_ids = await externalise(payload_of(created), self.blobs)
         async with pool.connection() as conn:
             async with conn.transaction():
-                cur = await conn.execute(
-                    "INSERT INTO runs (run_id, run_root_id, program, program_version, keel_version,"
-                    " model_config, args, budget, trace_id, phase, runnable_at, runnable_reason)"
-                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'CREATED',%s,%s)"
-                    " ON CONFLICT (run_id) DO NOTHING",
-                    (
-                        row.run_id,
-                        row.run_root_id,
-                        row.program,
-                        row.program_version,
-                        row.keel_version,
-                        Jsonb(dict(row.model_config)),
-                        Jsonb(row.args),
-                        Jsonb(dict(row.budget)),
-                        row.trace_id,
-                        runnable_at,
-                        "START" if runnable_at else None,
-                    ),
-                )
-                if cur.rowcount == 0:
-                    return  # run_id given -> idempotent start (§24.1)
-                await conn.execute(
-                    "INSERT INTO events (run_id, seq, type, schema_version, lease_epoch,"
-                    " program_version, trace_id, payload, blob_ids)"
-                    " VALUES (%s, 1, 'RUN_CREATED', %s, 0, %s, %s, %s, %s)",
-                    (
-                        row.run_id,
-                        CURRENT["RUN_CREATED"],
-                        row.program_version,
-                        row.trace_id,
-                        Jsonb(payload),
-                        list(blob_ids),
-                    ),
-                )
+                # A given run_id that already exists is an idempotent start (§24.1), not an error.
+                await _insert_run(conn, row, payload, blob_ids, runnable_at=runnable_at)
 
     # --- (2a) ACQUIRE, queue pop --------------------------------------------
     async def claim(self, worker_id: str, ttl: timedelta) -> Lease | None:
@@ -449,28 +541,7 @@ class PostgresJournal:
     async def insert_signal(self, row: SignalRow) -> bool:
         pool = await self._ready()
         async with pool.connection() as conn:
-            # Refused before the insert, not after: a signal addressed to a terminal run has no
-            # future holder to drain it and would sit unconsumed for ever (§5.6).
-            cur = await conn.execute(
-                "INSERT INTO signals (signal_id, run_id, type, payload, client_key, source)"
-                " SELECT %s, %s, %s, %s, %s, %s"
-                " WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = %s AND terminal_at IS NULL)"
-                " ON CONFLICT DO NOTHING",
-                (row.signal_id, row.run_id, row.type, Jsonb(row.payload), row.client_key,
-                 row.source, row.run_id),
-            )
-            if cur.rowcount == 0:
-                return False
-            # The insert is also the wake. `runnable_at` is set only when it is NULL, so a signal
-            # arriving at a run that is already runnable does not move it ahead of its queue.
-            await conn.execute(
-                "UPDATE runs SET runnable_at = COALESCE(runnable_at, now()),"
-                " runnable_reason = COALESCE(runnable_reason, 'WAKE'), updated_at = now()"
-                " WHERE run_id = %s AND terminal_at IS NULL",
-                (row.run_id,),
-            )
-            await conn.execute("SELECT pg_notify('keel_signals', %s)", (str(row.run_id),))
-            return True
+            return await _insert_signal(conn, row)
 
     async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
         pool = await self._ready()
@@ -504,6 +575,100 @@ class PostgresJournal:
             ):
                 fired += 1
         return fired
+
+    # --- delegation (§17) ----------------------------------------------------
+    async def children(self, parent_run_id: RunId) -> list[RunRow]:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM runs WHERE parent_run_id = %s ORDER BY created_at, run_id",
+                (parent_run_id,),
+            )
+            return [_run_row(r) for r in await cur.fetchall()]
+
+    async def delegations(self, parent_run_id: RunId) -> list[DelegationRow]:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM delegations WHERE parent_run_id = %s"
+                " ORDER BY parent_step_index, child_ordinal, retry_no",
+                (parent_run_id,),
+            )
+            return [
+                DelegationRow(
+                    delegation_id=r["delegation_id"],
+                    parent_run_id=r["parent_run_id"],
+                    parent_step_index=r["parent_step_index"],
+                    child_run_id=r["child_run_id"],
+                    role=r["role"],
+                    contract=r["contract"],
+                    budget_reserved=r["budget_reserved"],
+                    status=r["status"],
+                    usage_settled=r["usage_settled"],
+                    spawned_seq=r["spawned_seq"],
+                    settled_seq=r["settled_seq"],
+                    child_ordinal=r["child_ordinal"],
+                    retry_no=r["retry_no"],
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def stray_children(self) -> list[RunRow]:
+        pool = await self._ready()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT c.* FROM runs c JOIN runs p ON p.run_id = c.parent_run_id"
+                " WHERE c.terminal_at IS NULL AND p.terminal_at IS NOT NULL"
+                " ORDER BY c.created_at"
+            )
+            return [_run_row(r) for r in await cur.fetchall()]
+
+    # --- (5) TAKEOVER --------------------------------------------------------
+    async def takeover(
+        self,
+        child_run_id: RunId,
+        worker_id: str,
+        ttl: timedelta,
+        *,
+        cancel_grace: timedelta,
+    ) -> Lease | None:
+        pool = await self._ready()
+        async with pool.connection() as conn:
+            async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+                # The read pins the epoch under the row lock; the UPDATE re-checks it. A heartbeat
+                # that lands between the two waits on the lock and then sees the new epoch — 0 rows
+                # — which is the fence doing exactly what it is for.
+                await cur.execute(
+                    """
+                    SELECT lease_epoch FROM runs
+                     WHERE run_id = %s AND parent_run_id IS NOT NULL AND terminal_at IS NULL
+                       AND (attempt_deadline IS NULL OR attempt_deadline < now())
+                       AND EXISTS (SELECT 1 FROM signals
+                                    WHERE run_id = %s AND type = 'cancel'
+                                      AND created_at + %s <= now())
+                       FOR UPDATE
+                    """,
+                    (child_run_id, child_run_id, cancel_grace),
+                )
+                seen = await cur.fetchone()
+                if seen is None:
+                    return None
+                await cur.execute(
+                    """
+                    UPDATE runs
+                       SET lease_epoch = lease_epoch + 1, lease_owner = %s,
+                           lease_expires_at = now() + %s, runnable_at = NULL, wake_at = NULL,
+                           orphaned_at = NULL, updated_at = now()
+                     WHERE run_id = %s AND lease_epoch = %s AND terminal_at IS NULL
+                    RETURNING run_id, lease_epoch, program_version, trace_id, lease_expires_at,
+                              'ORPHANED' AS cause
+                    """,
+                    (worker_id, ttl, child_run_id, seen["lease_epoch"]),
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    return None
+                return await self._finish_acquire(conn, row, worker_id, ttl)
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:
@@ -691,6 +856,7 @@ def _run_row(r: Mapping[str, Any]) -> RunRow:
         terminal_at=r["terminal_at"],
         attempt_deadline=r["attempt_deadline"],
         created_at=r["created_at"],
+        parent_run_id=r["parent_run_id"],
     )
 
 

@@ -23,6 +23,7 @@ from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.journal.blobs import MemoryBlobStore, externalise, internalise
 from keel.journal.protocol import (
     REPLAY_RESULTS,
+    DelegationRow,
     EffectRow,
     Lease,
     RecoveryRow,
@@ -49,6 +50,9 @@ class _MemoryAppendTx:
         self._effect_updates: list[tuple[EffectKey, dict[str, Any]]] = []
         self._run_fields: dict[str, Any] = {}
         self._consumed: list[tuple[Any, int]] = []
+        self._signals_out: list[SignalRow] = []
+        self._children: list[tuple[RunRow, Any, DelegationRow]] = []
+        self._settlements: list[tuple[Any, str, dict[str, Any] | None, int]] = []
         self._start_seq = lease.next_seq
 
     async def now(self) -> datetime:
@@ -87,6 +91,18 @@ class _MemoryAppendTx:
     async def consume_signal(self, signal_id: Any, seq: int) -> None:
         self._consumed.append((signal_id, seq))
 
+    # --- delegation (§17): three more things that commit with the append ----------
+    async def insert_signal(self, row: SignalRow) -> None:
+        self._signals_out.append(row)
+
+    async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:
+        self._children.append((row, created, delegation))
+
+    async def settle_delegation(
+        self, delegation_id: Any, *, status: str, usage_settled: dict[str, Any] | None, settled_seq: int
+    ) -> None:
+        self._settlements.append((delegation_id, status, usage_settled, settled_seq))
+
     # --- commit / rollback ---------------------------------------------------
     def _commit(self) -> None:
         j = self._j
@@ -114,6 +130,38 @@ class _MemoryAppendTx:
                 row.consumed_seq = seq
         for k, v in self._run_fields.items():
             setattr(run, k, v)
+        # Delegation: the child's row, its RUN_CREATED at epoch 0 and the contract, in *this*
+        # transaction beside the parent's CHILD_SPAWNED (§7.6.1). `delegations` is unique on
+        # (parent, step, ordinal, retry), so a re-executed spawn is a loud violation, not a twin.
+        for child, created, delegation in self._children:
+            key = (delegation.parent_run_id, delegation.parent_step_index, delegation.child_ordinal, delegation.retry_no)
+            if any(
+                (d.parent_run_id, d.parent_step_index, d.child_ordinal, d.retry_no) == key
+                for d in j._delegations.values()
+            ):
+                raise IllegalTransition(f"delegation {key} already spawned")
+            child.created_at = j.clock.now()
+            child.runnable_at = j.clock.now()
+            child.runnable_reason = "START"
+            j._runs[child.run_id] = child
+            payload = payload_of(created)
+            env = Envelope(
+                run_id=child.run_id, seq=1, ts=j.clock.now(),
+                schema_version=CURRENT["RUN_CREATED"], lease_epoch=0,
+                program_version=child.program_version, trace_id=child.trace_id, blob_ids=[],
+            )
+            j._events[child.run_id] = [Event(env=env, body=body_from_payload("RUN_CREATED", CURRENT["RUN_CREATED"], payload))]
+            j._delegations[delegation.delegation_id] = delegation
+        for delegation_id, status, usage, seq in self._settlements:
+            d = j._delegations.get(delegation_id)
+            if d is not None:
+                d.status, d.usage_settled, d.settled_seq = status, usage, seq
+        # A row in *another* run's inbox — the child's terminal event and its parent's
+        # `child_result`, or the parent's acknowledgement and its children's `cancel` — commits
+        # with this append or not at all (§5.10). The same routine as the API's insert: refused
+        # for a terminal target, deduplicated by client_key, and the target becomes claimable.
+        for row in self._signals_out:
+            j._put_signal(row)
 
     def _rollback(self) -> None:
         self._lease.next_seq = self._start_seq
@@ -130,6 +178,7 @@ class MemoryJournal:
         self._replays: list[ReplayRow] = []
         self._programs: dict[tuple[str, str], dict[str, Any]] = {}
         self._signals: dict[Any, SignalRow] = {}
+        self._delegations: dict[Any, DelegationRow] = {}
         self._lock = asyncio.Lock()
 
     # --- guards mirroring the partial unique indexes of §5.3 -----------------
@@ -323,34 +372,39 @@ class MemoryJournal:
     # --- inbox (§5.6) --------------------------------------------------------
     async def insert_signal(self, row: SignalRow) -> bool:
         async with self._lock:
-            run = self._runs.get(row.run_id)
-            if run is None or run.terminal_at is not None:
-                # §5.6: a signal addressed to a terminal run is refused before the insert — there
-                # is no future holder to drain it, so the row would sit unconsumed for ever.
-                return False
-            if row.client_key is not None and any(
-                r.run_id == row.run_id and r.client_key == row.client_key
-                for r in self._signals.values()
-            ):
-                return False  # `signals_client_key`: the caller's retry, deduplicated
-            # Postgres stamps `created_at` with `now()`, which is the *transaction* timestamp, so
-            # two separate inserts always differ. A `FakeClock` does not move between them, and the
-            # application order `(created_at, signal_id)` would then be decided by the random half
-            # of a uuid7 minted in the same millisecond — two approvals racing in a test in an
-            # order no real store would produce. Nudging past the last row models `now()`'s
-            # resolution, for the same reason `_check_guards` mirrors the unique indexes: a
-            # permissive memory backend makes every fast test a lie.
-            now = self.clock.now()
-            latest = max((r.created_at for r in self._signals.values() if r.created_at), default=None)
-            if latest is not None and now <= latest:
-                now = latest + timedelta(microseconds=1)
-            row.created_at = row.created_at or now
-            self._signals[row.signal_id] = row
-            # The insert is also the wake: an unconsumed signal makes the run claimable, which is
-            # what turns a parked run back into a runnable one without anybody polling it.
-            run.runnable_at = run.runnable_at or self.clock.now()
-            run.runnable_reason = run.runnable_reason or "WAKE"
-            return True
+            return self._put_signal(row)
+
+    def _put_signal(self, row: SignalRow) -> bool:
+        """The insert, under the lock the caller holds: the API's own, or an append transaction
+        committing a row into *another* run's inbox (§5.10)."""
+        run = self._runs.get(row.run_id)
+        if run is None or run.terminal_at is not None:
+            # §5.6: a signal addressed to a terminal run is refused before the insert — there
+            # is no future holder to drain it, so the row would sit unconsumed for ever.
+            return False
+        if row.client_key is not None and any(
+            r.run_id == row.run_id and r.client_key == row.client_key
+            for r in self._signals.values()
+        ):
+            return False  # `signals_client_key`: the caller's retry, deduplicated
+        # Postgres stamps `created_at` with `now()`, which is the *transaction* timestamp, so
+        # two separate inserts always differ. A `FakeClock` does not move between them, and the
+        # application order `(created_at, signal_id)` would then be decided by the random half
+        # of a uuid7 minted in the same millisecond — two approvals racing in a test in an
+        # order no real store would produce. Nudging past the last row models `now()`'s
+        # resolution, for the same reason `_check_guards` mirrors the unique indexes: a
+        # permissive memory backend makes every fast test a lie.
+        now = self.clock.now()
+        latest = max((r.created_at for r in self._signals.values() if r.created_at), default=None)
+        if latest is not None and now <= latest:
+            now = latest + timedelta(microseconds=1)
+        row.created_at = row.created_at or now
+        self._signals[row.signal_id] = row
+        # The insert is also the wake: an unconsumed signal makes the run claimable, which is
+        # what turns a parked run back into a runnable one without anybody polling it.
+        run.runnable_at = run.runnable_at or self.clock.now()
+        run.runnable_reason = run.runnable_reason or "WAKE"
+        return True
 
     async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
         async with self._lock:
@@ -381,6 +435,50 @@ class MemoryJournal:
             ):
                 fired += 1
         return fired
+
+    # --- delegation (§17) ----------------------------------------------------
+    async def children(self, parent_run_id: RunId) -> list[RunRow]:
+        rows = [r for r in self._runs.values() if r.parent_run_id == parent_run_id]
+        rows.sort(key=lambda r: (r.created_at or datetime.min, str(r.run_id)))
+        return rows
+
+    async def delegations(self, parent_run_id: RunId) -> list[DelegationRow]:
+        rows = [d for d in self._delegations.values() if d.parent_run_id == parent_run_id]
+        rows.sort(key=lambda d: (d.parent_step_index, d.child_ordinal, d.retry_no))
+        return rows
+
+    async def stray_children(self) -> list[RunRow]:
+        return [
+            r for r in self._runs.values()
+            if r.parent_run_id is not None and r.terminal_at is None
+            and (p := self._runs.get(r.parent_run_id)) is not None and p.terminal_at is not None
+        ]
+
+    async def takeover(
+        self,
+        child_run_id: RunId,
+        worker_id: str,
+        ttl: timedelta,
+        *,
+        cancel_grace: timedelta,
+    ) -> Lease | None:
+        """The fifth statement (§7.6.2), under the one lock: the read of the epoch and the move
+        cannot straddle a heartbeat here any more than a pinned UPDATE can in Postgres."""
+        async with self._lock:
+            run = self._runs.get(child_run_id)
+            now = self.clock.now()
+            if run is None or run.parent_run_id is None or run.terminal_at is not None:
+                return None
+            if run.attempt_deadline is not None and run.attempt_deadline >= now:
+                return None  # an open non-PURE attempt that could still commit (§8.4)
+            told = any(
+                r.run_id == child_run_id and r.type == "cancel"
+                and r.created_at is not None and r.created_at + cancel_grace <= now
+                for r in self._signals.values()
+            )
+            if not told:
+                return None  # never asked to stop, or asked too recently to be forced
+            return self._take(run, worker_id, ttl, "ORPHANED")
 
     # --- reads ---------------------------------------------------------------
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]:

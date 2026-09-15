@@ -47,6 +47,9 @@ HOOK_BOUNDARIES = (
     "before:signal_consume",
     "after:signal_consume",
     "during:approval_wait",
+    # Delegation (§4.11): the spawn transaction, and the park on children.
+    "before:child_spawn",
+    "during:child_wait",
 )
 #: `supervisor` is the one boundary that is not in the SUT: the harness executes it from outside.
 BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")

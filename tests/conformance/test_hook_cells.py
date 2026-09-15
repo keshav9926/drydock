@@ -91,6 +91,12 @@ WINDOW: dict[str, tuple[str, str]] = {
     "during:approval_wait": ("running", "untouched"),
     "before:signal_consume": ("running", "untouched"),
     "after:signal_consume": ("settled", "untouched"),
+    # Delegation (§7.6.1). Before the spawn transaction nothing exists — no step, no child, no
+    # row; a crash there costs exactly nothing and the successor spawns once. After it the parent
+    # is parked with N children that all exist and none of which has run: the lease is still held,
+    # so the reaper reclaims the park as a wait, never as an abandoned attempt.
+    "before:child_spawn": ("no row", "untouched"),
+    "during:child_wait": ("running", "untouched"),
 }
 
 #: The boundaries only a gated run reaches. Their cells run `gated_tool_chain`, park, are granted
@@ -98,6 +104,11 @@ WINDOW: dict[str, tuple[str, str]] = {
 #: gated EXTERNAL effect and the window is read on the APPROVAL step (index 0).
 GATED_BOUNDARIES = ("during:approval_wait", "before:signal_consume", "after:signal_consume")
 APPROVAL_STEP = 0
+#: The boundaries only a delegating run reaches. Their cells run `orchestrator`, whose one step
+#: is a DELEGATE (index 0) fanning out two `research_child` runs. The window is read on that step;
+#: S8 is judged from the whole tree of journals, which only these cells hold.
+DELEGATION_BOUNDARIES = ("before:child_spawn", "during:child_wait")
+DELEGATE_STEP = 0
 
 #: A fault that is not a crash leaves a different window, and the difference is the point rather
 #: than an exception to the rule. An ordinary `raise` before the effect runs is a tool failure: the
@@ -151,14 +162,19 @@ FAULTS: dict[str, tuple[str, ...]] = {
     "during:approval_wait": ("crash",),
     "before:signal_consume": ("crash", "journal_error"),
     "after:signal_consume": ("crash", "journal_error"),
+    # The spawn transaction takes both — a store that blinks at the instant the parent commits N
+    # children is the outage the `Abandon` path exists for; the park after it takes a crash only,
+    # for the same reason the approval wait does.
+    "before:child_spawn": ("crash", "journal_error"),
+    "during:child_wait": ("crash",),
 }
 
 #: Invariants every cell is judged on, whatever its boundary. The same functions the benchmark
 #: verifier calls — the sim drifting from the runtime is the standing risk here, and sharing the
 #: judge is the mitigation (§28.6).
-#: S7 is in the grid for every cell and N/A for the write-path ones, whose workload gates nothing —
-#: the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
-JUDGED = ("S1", "S3", "S4", "S5", "S7", "L1", "C1")
+#: S7 and S8 are in the grid for every cell and N/A wherever the workload gates or delegates
+#: nothing — the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
+JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "L1", "C1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,9 +196,14 @@ CELLS = [
     Cell(boundary, fault, klass)
     for boundary in FAULTS
     for fault in FAULTS[boundary]
-    # The write-path boundaries are exercised per effect class; the gated ones have one shape, a
-    # gated EXTERNAL effect, and would say nothing more three times over.
-    for klass in (("GATED",) if boundary in GATED_BOUNDARIES else tuple(UNDER_TEST))
+    # The write-path boundaries are exercised per effect class; the gated and delegating ones
+    # have one shape each — a gated EXTERNAL effect, a fan-out of PURE children — and would say
+    # nothing more three times over.
+    for klass in (
+        ("GATED",) if boundary in GATED_BOUNDARIES
+        else ("DELEGATED",) if boundary in DELEGATION_BOUNDARIES
+        else tuple(UNDER_TEST)
+    )
 ]
 
 
@@ -481,6 +502,138 @@ async def run_gated_cell(cell: Cell) -> Result:
         await server.stop()
 
 
+async def run_delegation_cell(cell: Cell) -> Result:
+    """The two delegation boundaries, reached by a fanning-out run (§7.6.1, §17).
+
+    Shape: w1 runs `orchestrator`, whose only step delegates two `research_child` runs, and the
+    fault lands on w1 — before the spawn transaction, or at the park after it. A successor takes
+    the parent from the journal alone; the children run; the parent wakes on their results and
+    finishes. Two claims, judged from every journal in the tree: the spawn happened exactly once
+    per ordinal whatever the crash, and S8 — every child terminal before the parent, no child
+    receipt after the parent's terminal event.
+    """
+    result = Result(cell=cell)
+    world = build_world()
+    server = WorldServer(world, port=0)
+    await server.start()
+    previous_url = demo.WORLD_URL
+    demo.WORLD_URL = server.base_url
+    try:
+        clock = FakeClock()
+        k = Keel(
+            journal=MemoryJournal(clock=clock),
+            provider=ScriptedProvider(demo.SCRIPT),
+            tools=[demo.search, demo.create_issue_tool("EXTERNAL")],
+            programs=[demo.orchestrator, demo.research_child],
+            clock=clock,
+        )
+        handle = await k.start(demo.orchestrator, {"tasks": ["a", "b"]})
+        landed: list[str] = []
+
+        _arm(cell, DELEGATE_STEP, landed)
+        lease = await k.journal.claim("w1", timedelta(seconds=TTL))
+        assert lease is not None
+        await _work(k, "w1", lease)
+        hooks.reset()
+        result.fired = bool(landed)
+        result.landed_at = landed[0] if landed else ""
+
+        # The window, on the DELEGATE step, before anyone recovers. `sent` is any World traffic at
+        # all: the children have not run, so there must be none.
+        state = fold(await k.events(handle.run_id))
+        result.window = _window(state, DELEGATE_STEP, world, None)
+        expected_journal, expected_world = WINDOW[cell.boundary]
+        result.window_ok = not result.fired or result.window == f"{expected_journal}/{expected_world}"
+
+        # The successor: the lease lapses, the reaper says so, w2 takes the parent from the journal.
+        clock.advance(TTL + 2)
+        await k.journal.reap()
+        successor = await k.journal.acquire(handle.run_id, "w2", timedelta(seconds=TTL))
+        if successor is not None:
+            result.recovered = True
+            await _work(k, "w2", successor)
+
+        # The children, then the parent on their results.
+        for i, child in enumerate(await k.journal.children(handle.run_id)):
+            child_lease = await k.journal.acquire(child.run_id, f"c{i}", timedelta(seconds=TTL))
+            if child_lease is not None:
+                await _work(k, f"c{i}", child_lease)
+        receipts_before_parent_finished = len(world.receipts)
+        last = await k.journal.acquire(handle.run_id, "w3", timedelta(seconds=TTL))
+        if last is not None:
+            await _work(k, "w3", last)
+
+        events = await k.events(handle.run_id)
+        final = fold(events)
+        result.status = final.phase
+        row = final.steps.get(DELEGATE_STEP)
+        result.disposal = row.state if row else "—"
+        result.applied = sum(world.applied_counts().values())
+        result.receipts = len(world.receipts)
+
+        replay = await run_verify(k.journal, handle.run_id, demo.orchestrator.fn, tools=k.tools)
+        verdicts = invariants.verify(
+            invariants.TrialFacts(
+                world_receipts=[
+                    {"endpoint": r.endpoint, "effect_key": r.effect_key,
+                     "logical_identity": r.logical_identity, "ts": r.ts}
+                    for r in world.receipts
+                ],
+                world_applied=world.applied_counts(),
+                sut_committed=set(),
+                journal=[
+                    {"seq": e.seq, "type": e.type, "ts": e.ts.isoformat(),
+                     "step_index": e.step_index, "attempt_no": e.attempt_no,
+                     "body": e.body.model_dump(mode="json")}
+                    for e in events
+                ],
+                status=_status(final.phase),
+                required_effects=(),
+                claims=KeelAdapter.claims,
+                effect_class="PURE",
+                faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
+                restarts=1 if result.recovered else 0,
+                replay=replay.as_dict(),
+            )
+        )
+        result.verdicts = {n: v for n, v in verdicts.as_dict().items() if n in JUDGED}
+        result.details = {n: f.detail for n, f in verdicts.findings.items() if n in JUDGED}
+
+        # The cells' own claims. Spawned once per ordinal, whatever the crash: a second
+        # CHILD_SPAWNED for an ordinal would be two children under one contract.
+        ordinals = sorted(e.body.child_ordinal for e in events if e.type == "CHILD_SPAWNED")
+        children = await k.journal.children(handle.run_id)
+        if ordinals != [0, 1] or len(children) != 2:
+            result.verdicts["S5"] = "FAIL"
+            result.details["S5"] = f"CHILD_SPAWNED ordinals {ordinals}, {len(children)} child rows"
+        # S8, from the whole tree (§12.4): each child's journal has one RUN_CREATED at epoch 0,
+        # every child is terminal once the parent is, and the World saw nothing after the parent
+        # finished. Counted, not timestamped: the journals run on a FakeClock and the World on the
+        # wall clock, and an ordering across the two would be an ordering of nothing.
+        problems: list[str] = []
+        for child in children:
+            child_events = await k.events(child.run_id)
+            born = [e for e in child_events if e.type == "RUN_CREATED"]
+            if len(born) != 1 or born[0].lease_epoch != 0:
+                problems.append(f"{child.run_id}: {len(born)} RUN_CREATED")
+            child_state = fold(child_events)
+            if not child_state.terminal:
+                problems.append(f"{child.run_id}: {child_state.phase} after the parent finished")
+        if final.terminal and len(world.receipts) != receipts_before_parent_finished:
+            problems.append("a child receipt after the parent's terminal event")
+        if not final.terminal:
+            problems.append(f"the parent ended {final.phase}")
+        result.verdicts["S8"] = "FAIL" if problems else "PASS"
+        result.details["S8"] = "; ".join(problems) if problems else (
+            f"{len(children)} children, each born once at epoch 0 and terminal before the parent"
+        )
+        return result
+    finally:
+        demo.WORLD_URL = previous_url
+        hooks.reset()
+        await server.stop()
+
+
 def _identity(effect_class: str, variant: str) -> str:
     """The logical identity of the effect this cell aims at. The two bands run against different
     endpoints — `issues.create` honours nothing, `issues.upsert` deduplicates — so the identity is
@@ -492,12 +645,14 @@ def _status(phase: str) -> str:
     return {"COMPLETED": "COMPLETED", "FAILED": "FAILED", "CANCELLED": "CANCELLED"}.get(phase, phase)
 
 
-def _window(state: Any, step: int, world: Any, identity: str) -> str:
+def _window(state: Any, step: int, world: Any, identity: str | None) -> str:
     """`journal/world` at the instant of the fault, in the vocabulary the recovery table uses.
 
     `sent` is about the effect *under test*, not about traffic in general. The PURE read two steps
     earlier has already reached the World by the time the write is attempted, and reading any
-    receipt as evidence would report every window after step 1 as `sent`.
+    receipt as evidence would report every window after step 1 as `sent`. `identity=None` is the
+    delegation cells' case, where the parent itself sends nothing and *any* receipt is a child that
+    ran before it should have.
     """
     row = state.steps.get(step)
     if row is None:
@@ -506,7 +661,7 @@ def _window(state: Any, step: int, world: Any, identity: str) -> str:
         journal = "running"
     else:
         journal = "settled"
-    sent = any(r.logical_identity == identity for r in world.receipts)
+    sent = any(identity is None or r.logical_identity == identity for r in world.receipts)
     return f"{journal}/{'sent' if sent else 'untouched'}"
 
 
@@ -525,7 +680,12 @@ async def test_cell(cell: Cell) -> None:
     if cell.na:
         RESULTS[cell.id] = Result(cell=cell, verdicts=dict.fromkeys(JUDGED, "N/A"))
         pytest.skip(cell.na)
-    result = await (run_gated_cell(cell) if cell.boundary in GATED_BOUNDARIES else run_cell(cell))
+    runner = (
+        run_gated_cell if cell.boundary in GATED_BOUNDARIES
+        else run_delegation_cell if cell.boundary in DELEGATION_BOUNDARIES
+        else run_cell
+    )
+    result = await runner(cell)
     RESULTS[cell.id] = result
     assert result.fired, "the fault never fired; a cell that did not test what it claims is void"
     assert result.window_ok, (
@@ -564,9 +724,9 @@ def render() -> str:
         "to do, printed whatever the verdicts say: the gap between them is what the receiver's",
         "idempotency bought, and the runtime gets no credit for it.",
         "",
-        "| boundary | fault | class | window | disposal | applied | receipts | status "
-        "| S1 | S3 | S4 | S5 | S7 | L1 | C1 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| boundary | fault | class | window | disposal | applied | receipts | status | "
+        + " | ".join(JUDGED) + " |",
+        "|" + "---|" * (8 + len(JUDGED)),
     ]
     for cell in CELLS:
         r = RESULTS[cell.id]
@@ -605,11 +765,14 @@ def render() -> str:
         f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed. "
         f"Regenerate with `uv run pytest tests/conformance -q`.",
         "",
-        "Thirteen of the seventeen boundaries exist: the ten of the write path (§28.6) and the three",
-        "the inbox and approvals brought with them (§4.10). The four remaining — `before:child_spawn`",
-        "and `during:child_wait` with delegation, `before:segment_write` and `during:stream(chunk=k)`",
-        "in week 3 — are absent rather than stubbed, so a spec naming one is refused instead of",
-        "firing nothing. §29.2's *all seventeen hook boundaries* is the honest completion date.",
+        "Fifteen of the seventeen boundaries exist: the ten of the write path (§28.6), the three the",
+        "inbox and approvals brought with them (§4.10), and the two delegation brought (§4.11). The",
+        "two remaining — `before:segment_write` and `during:stream(chunk=k)`, week 3 — are absent",
+        "rather than stubbed, so a spec naming one is refused instead of firing nothing. §29.2's",
+        "*all seventeen hook boundaries* is the honest completion date.",
+        "",
+        "S8 is judged here and nowhere else yet: these cells hold every journal in the tree, and the",
+        "matrix's collector reads one per trial, so the matrix prints N/A with that reason (§15.11).",
         "",
     ]
     return "\n".join(lines)

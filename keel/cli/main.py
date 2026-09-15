@@ -203,6 +203,20 @@ def show(
                 str(r.live_from_step), str(r.replayed_steps), r.outcome or "-",
             )
         out.print(table)
+        # The parent's view of its children is the `delegations` row and nothing else (§17.3):
+        # contract, status, what was reserved and what was settled. Never the child's journal.
+        delegations = await keel.journal.delegations(run_id)
+        if delegations:
+            kids = Table(box=None, title="children")
+            for col in ("step", "ordinal", "retry", "child", "role", "status", "reserved", "settled"):
+                kids.add_column(col)
+            for d in delegations:
+                kids.add_row(
+                    str(d.parent_step_index), str(d.child_ordinal), str(d.retry_no),
+                    str(d.child_run_id), d.role, d.status,
+                    json.dumps(d.budget_reserved), json.dumps(d.usage_settled) if d.usage_settled else "-",
+                )
+            out.print(kids)
 
     _run(go())
 

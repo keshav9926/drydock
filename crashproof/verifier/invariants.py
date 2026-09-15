@@ -33,6 +33,11 @@ MVP_INVARIANTS = ("S1", "S2", "S3", "S4", "S5", "L1", "L2")
 #: a cell that ran before the column existed is not missing it, and a workload with no approvals in
 #: it prints N/A rather than a free PASS.
 APPROVAL_INVARIANTS = ("S7",)
+#: S8 arrives with delegation (v1, week 2): no child receipt after the parent's terminal event, and
+#: every child terminal before its parent. It needs the *children's* journals beside the parent's,
+#: and the collector reads one journal per trial — so the matrix prints N/A with that reason, and
+#: the conformance cells, which hold every journal in the tree, judge it themselves.
+DELEGATION_INVARIANTS = ("S8",)
 #: C1 arrives with replay as a first-class mode (v1, day 5). Listed apart from the MVP set because
 #: a cell that never had it is not missing a column — it is a cell from before the column existed.
 CONSISTENCY_INVARIANTS = ("C1",)
@@ -132,8 +137,25 @@ def verify(facts: TrialFacts) -> Verdicts:
     _l1_recovery_completes(facts, v)
     _l2_bounded_recoveries(facts, v)
     _s7_approval_binding(facts, v)
+    _s8_children_before_parent(facts, v)
     _c1_replay_determinism(facts, v)
     return v
+
+
+def _s8_children_before_parent(f: TrialFacts, v: Verdicts) -> None:
+    """No child World receipt after the parent's terminal event; every child terminal before its
+    parent (§12.4). The parent's journal names its children — CHILD_SPAWNED, CHILD_COMPLETED — but
+    "the child was terminal first" is a statement about the *children's* timestamps, and the
+    collector supplies one journal per trial. N/A says so rather than passing on the parent alone;
+    the conformance cells hold the whole tree and judge it there.
+    """
+    if f.journal is None:
+        v.add("S8", "N/A", "the runtime exposes no journal")
+        return
+    if not any(e["type"] == "CHILD_SPAWNED" for e in f.journal):
+        v.add("S8", "N/A", "this workload delegates nothing")
+        return
+    v.add("S8", "N/A", "needs the children's journals; the collector supplies the parent's only")
 
 
 # --- consistency -------------------------------------------------------------

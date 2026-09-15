@@ -35,11 +35,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-#: The thirteen boundaries whose mechanisms exist today: the ten of the write path (§28.6) and the
-#: three the inbox and approvals brought with them. The remaining four arrive with the mechanisms
-#: they name — `before:child_spawn` and `during:child_wait` with delegation, `before:segment_write`
-#: and `during:stream(chunk=k)` in week 3 — and are absent rather than stubbed, so a spec naming one
-#: is refused instead of firing nothing.
+#: The fifteen boundaries whose mechanisms exist today: the ten of the write path (§28.6), the
+#: three the inbox and approvals brought, and the two delegation brought. The remaining two —
+#: `before:segment_write` and `during:stream(chunk=k)` — arrive with segments and streaming in
+#: week 3 and are absent rather than stubbed, so a spec naming one is refused instead of firing
+#: nothing.
 BOUNDARIES = (
     "before:intent_commit",
     "after:intent_commit",
@@ -57,6 +57,11 @@ BOUNDARIES = (
     "before:signal_consume",
     "after:signal_consume",
     "during:approval_wait",
+    # Delegation (§4.11). `before:child_spawn` is the instant before the one transaction that
+    # commits CHILD_SPAWNED, the child's row, its RUN_CREATED and the contract together;
+    # `during:child_wait` is the park on children, durable but not yet released.
+    "before:child_spawn",
+    "during:child_wait",
 )
 
 

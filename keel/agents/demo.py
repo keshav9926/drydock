@@ -29,6 +29,7 @@ from keel.client import Keel, program
 from keel.core.protocols import EffectClass, Idempotency, ProbeResult
 from keel.effects.registry import ToolCtx, tool
 from keel.providers.scripted import Decision, ScriptedProvider
+from keel.runtime.delegation import Delegation
 
 WORLD_URL = os.environ.get("KEEL_WORLD_URL", "http://127.0.0.1:8600")
 VARIANT = os.environ.get("KEEL_DEMO_VARIANT", "EXTERNAL")
@@ -167,6 +168,50 @@ async def gated_tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {"answer": f"filed {result.get('id')}", "decision": decision}
 
 
+@program(name="research_child", version="1.0")
+async def research_child(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """A worker child (§17.2): one PURE read, one answer in the contract's shape. It is an ordinary
+    program — nothing in it knows it has a parent. The runtime does: its terminal event commits
+    with the `child_result` row that wakes the parent (§5.10)."""
+    task = str(args.get("task", ""))
+    found = await ctx.tool("search", q=task)
+    return {"task": task, "hits": len(found.get("hits", []))}
+
+
+@program(name="orchestrator", version="1.0")
+async def orchestrator(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """§17's one multi-agent shape, smallest form: fan out under contracts, park for free while
+    the children work, and read back a list of `ChildResult`s — the wrapper, never the bare result,
+    so a failed child is a value the program has to look at rather than an exception it can skip.
+
+    `on_failure` and `result_schema` come from the run's input so a cell can ask for the failure
+    policy it wants to measure; the schema is part of the DELEGATE step's identity either way.
+    """
+    tasks = list(args.get("tasks") or ["flaky test in ci", "retry policy"])
+    results = await ctx.delegate_many(
+        [
+            Delegation(
+                program=str(args.get("child_program", "research_child")),
+                task=t,
+                allowed_tools=frozenset({"search"}),
+                budget_slice={"max_tokens": int(args.get("slice_tokens", 100))},
+                result_schema=args.get(
+                    "result_schema",
+                    {"type": "object", "required": ["hits"], "properties": {"hits": {"type": "integer"}}},
+                ),
+                on_failure=args.get("on_failure", "escalate"),
+                max_retries=int(args.get("max_retries", 1)),
+            )
+            for t in tasks
+        ]
+    )
+    return {
+        "answers": [r.result for r in results if r.status == "completed"],
+        "failed": [{"child": r.child_run_id, "status": r.status, "error": r.error} for r in results
+                   if r.status != "completed"],
+    }
+
+
 SCRIPT = [
     Decision(text="searching", tool="search", args={"q": "flaky test in ci"}),
     Decision(
@@ -190,7 +235,7 @@ def build(dsn: str | None = None, *, variant: str = VARIANT) -> Keel:
         dsn or os.environ.get("KEEL_DSN", "postgresql://keel:keel@localhost:5432/keel"),
         provider=ScriptedProvider(SCRIPT),
         tools=[search, create_issue_tool(variant)],
-        programs=[tool_chain],
+        programs=[tool_chain, gated_tool_chain, orchestrator, research_child],
     )
 
 

@@ -13,9 +13,11 @@ import random as _random
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
-from keel.core.errors import Cancelled, Fenced, StepFailed, Rejected, UnknownOutcome
+from keel.core.errors import Cancelled, ContractInvalid, Fenced, KeelError, StepFailed, Rejected, UnknownOutcome
 from keel.core.errors import NondeterminismDetected
+from keel.core.ids import uuid7
 from keel.core.protocols import (
     Ambiguous,
     Completed,
@@ -27,35 +29,53 @@ from keel.core.protocols import (
     StepKind,
     StepOutcome,
 )
+from keel.core.versions import KEEL_VERSION
 from keel.events import (
     ApprovalDecided,
     ApprovalRequested,
     CancelAcknowledged,
+    ChildCompleted,
+    ChildFailed,
+    ChildSpawned,
     RecoveryCompleted,
+    RunCreated,
     RunPaused,
     RunWaiting,
     SignalIgnored,
     SignalReceived,
     StepAmbiguous,
     StepAttemptStarted,
+    StepCancelled,
     StepCompleted,
     StepFailed as StepFailedEvent,
     StepIntended,
     StepResolved,
 )
-from keel.journal.protocol import EffectRow, JournalBackend, Lease
+from keel.journal.protocol import DelegationRow, EffectRow, JournalBackend, Lease, RunRow
 from keel.providers.protocol import ModelRequest
 from keel.runtime import hooks
 from keel.runtime.budget import BudgetExceeded, Reservation, admit, reserve_model, reserve_tool
+from keel.runtime.delegation import (
+    MAX_CHILDREN_IN_FLIGHT,
+    Delegation,
+    cancel_signal,
+    delegation_id,
+    json_schema_ok,
+    row_role,
+    validate,
+)
 from keel.runtime.retry import NO_RETRY, RetryPolicy
+from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S, force_cancel
 from keel.state.fold import (
     AMBIGUOUS,
+    CANCELLED,
     COMPLETED,
     FAILED,
     INTENDED,
     RESOLVED_UNKNOWN,
     RUNNING,
     WAITING_KINDS,
+    ChildState,
     RunState,
 )
 
@@ -152,6 +172,11 @@ class StepEngine:
         retry: RetryPolicy = NO_RETRY,
         model_timeout_s: float = DEFAULT_MODEL_TIMEOUT_S,
         allow_live: bool = True,
+        parent_run_id: Any = None,
+        depth: int = 0,
+        model_config: Any = None,
+        resolve_program: Callable[[str], Any] | None = None,
+        cancel_grace_s: float = DEFAULT_CANCEL_GRACE_S,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -163,6 +188,16 @@ class StepEngine:
         self.should_drain = should_drain
         self.retry = retry
         self.model_timeout_s = model_timeout_s
+        #: Delegation (§17). The parent, if this run is a child — the worker co-commits the
+        #: `child_result` row with the terminal event; the depth, so a verifier cannot delegate to a
+        #: verifier; the binding a child inherits; and how a child's program becomes a version,
+        #: which is the worker's business (`runtime` imports no sibling) and is lent here.
+        self.parent_run_id = parent_run_id
+        self.depth = depth
+        self.model_config = dict(model_config or {})
+        self.resolve_program = resolve_program
+        self.cancel_grace_s = cancel_grace_s
+        self._waiting_intent: StepIntent | None = None
         #: VERIFY (§10.9). One flag rather than a second loop: a separate replayer would drift from
         #: this one, and the drift would be invisible — VERIFY would keep passing while the thing
         #: it is supposed to be checking had changed underneath it.
@@ -177,9 +212,15 @@ class StepEngine:
         # original pass the drain below has just appended CANCEL_ACKNOWLEDGED; on every later one
         # the journal says where it landed, and raising at exactly that index is what makes a
         # cancelled run reproducible rather than a run that stopped somewhere near there (§4.10).
-        if self.state.cancel_acknowledged_at == intent.step_index:
-            raise Cancelled(f"cancelled at step {intent.step_index}")
+        #
+        # One exception, and it is §7.6.2's: a DELEGATE step acknowledged while parked stays open
+        # until its children are terminal — cancelled cooperatively or taken over — and is closed
+        # by STEP_CANCELLED then. Until that event exists the step is re-entered, not raised past.
         journaled = self.state.step(intent.step_index)
+        if self.state.cancel_acknowledged_at == intent.step_index and not (
+            journaled is not None and journaled.kind == "DELEGATE" and not journaled.settled
+        ):
+            raise Cancelled(f"cancelled at step {intent.step_index}")
         if journaled is not None:
             if journaled.identity() != intent.identity():
                 raise NondeterminismDetected(
@@ -220,7 +261,7 @@ class StepEngine:
         if not pending:
             return
 
-        cancel = pause = False
+        cancel = pause = telling_children = False
         # The drain is one fenced transaction, and these two boundaries bracket it. A crash before
         # it leaves every signal unconsumed and the run exactly as it was — the successor drains the
         # same rows. A crash after it leaves the decision durable and consumed, and nothing done
@@ -242,11 +283,18 @@ class StepEngine:
                 applied = await self._apply_signal(tx, row, seq, step_index, waiting, now)
                 cancel = cancel or applied == "cancel"
                 pause = pause or applied == "pause"
+                telling_children = telling_children or applied == "cancel_children"
         hooks.at("after:signal_consume", step_index=step_index, signals=len(pending))
         # Cancel outranks pause: a run that has been told to stop for good does not first stop for
         # a while. Both are raised after the commit, so the journal is already durable when the
         # program is told.
-        if cancel:
+        #
+        # A cancel with children still open is acknowledged but not raised: the parent's open
+        # DELEGATE step waits for them to end (§7.6.2), and `_wait_children` owns that wait. The
+        # one place that cannot be true — a cancel drained at a live boundary with open children,
+        # which no program can reach because it cannot pass an open DELEGATE step — falls through
+        # to the plain cancel, and the reaper's liveness rule collects the strays (§17.7).
+        if cancel or (telling_children and waiting is None):
             raise Cancelled(f"cancelled at step {step_index}")
         if pause:
             raise Paused(f"paused at step {step_index}")
@@ -326,10 +374,15 @@ class StepEngine:
     async def _settle_waiting(self, intent: StepIntent, journaled: Any) -> Any:
         """A parked step, woken. Drain; if a decision arrived the step is settled and its value is
         returned, and if not the run parks again for the price of one row."""
+        self._waiting_intent = intent
         await self._drain_inbox(intent.step_index, waiting=journaled)
         settled = self.state.step(intent.step_index)
         if settled is not None and settled.settled:
+            if settled.state == CANCELLED:
+                raise Cancelled(f"cancelled at step {intent.step_index}")
             return _value_of(settled)
+        if journaled.kind == "DELEGATE":
+            return await self._wait_children(intent, journaled)
         approval = self.state.approval_at(intent.step_index)
         wake_at = approval.expires_at if approval else None
         # Park *again*, with its own RUN_WAITING. The acquisition already appended
@@ -354,6 +407,16 @@ class StepEngine:
         SIGNAL_IGNORED with the reason. Nothing is refused at the API; everything is decided here.
         """
         kind = row.type
+        if kind == "child_result":
+            return await self._settle_child(tx, row, seq)
+        if kind == "timer" and waiting is not None and waiting.kind == "DELEGATE":
+            # The wake after `cancel_grace`, or a deadline: nothing to decide here — the drain's
+            # caller reads the children and acts. Consumed so it is not re-read for ever.
+            await tx.append(
+                SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="wake"),
+                causation_seq=seq,
+            )
+            return None
         if kind in ("approve", "reject", "timer"):
             return await self._decide_approval(tx, row, seq, waiting, now)
         if kind == "cancel":
@@ -363,9 +426,23 @@ class StepEngine:
                     causation_seq=seq,
                 )
                 return None
-            await tx.append(CancelAcknowledged(step_index=step_index), causation_seq=seq)
+            ack = await tx.append(CancelAcknowledged(step_index=step_index), causation_seq=seq)
             self.state.cancel_acknowledged_at = step_index
-            return "cancel"
+            # Propagation (§7.6.2): one `cancel` per child still open, in *this* transaction, so
+            # the acknowledgement and the telling cannot be separated by a crash. The child is
+            # asked, not forced — forcing is the takeover, after `cancel_grace`.
+            open_children = [c for c in self.state.children.values() if not c.terminal]
+            for c in open_children:
+                await tx.insert_signal(
+                    cancel_signal(
+                        c.child_run_id,
+                        client_key=f"cancel:{self.lease.run_id}:{ack}",
+                        by=f"parent:{self.lease.run_id}",
+                        reason="parent_cancel",
+                    )
+                )
+                c.state = "CANCELLING"
+            return "cancel_children" if open_children else "cancel"
         if kind == "pause":
             await tx.append(RunPaused(step_index=step_index), causation_seq=seq)
             await tx.set_run(phase="PAUSED")
@@ -422,13 +499,20 @@ class StepEngine:
         req = ModelRequest.model_validate(intent.args)
         return reserve_model(await self.provider.count_tokens(req), req.max_tokens)
 
-    async def _refuse(self, intent: StepIntent, exc: BudgetExceeded) -> None:
-        """A pre-dispatch refusal: attempt_no 0, never retryable, no attempt and so no bill."""
+    async def _refuse(self, intent: StepIntent, exc: Exception, *, first: bool = True) -> None:
+        """A pre-dispatch refusal: attempt_no 0, never retryable, no attempt and so no bill.
+
+        The step's INTENT commits with the refusal when this is the step's first pass, so the
+        journal folds — a STEP_FAILED with no STEP_INTENDED before it is a step the projection
+        cannot place. A re-attempt already has its intent and appends only the refusal.
+        """
         async with self.journal.append(self.lease) as tx:
+            intent_seq = await tx.append(_intended(intent)) if first else None
             await tx.append(
                 StepFailedEvent(
                     step_index=intent.step_index, attempt_no=0, error=str(exc), retryable=False
-                )
+                ),
+                causation_seq=intent_seq,
             )
         raise StepFailed(intent.step_index, str(exc), retryable=False)
 
@@ -524,9 +608,325 @@ class StepEngine:
             )
         raise StepFailed(intent.step_index, error, retryable=False)
 
+    # --- delegation (§7.6, §17) -----------------------------------------------------
+    async def _spawn_children(self, intent: StepIntent) -> Any:
+        """DELEGATE, live: one transaction, then a park (§7.6.1, §5.10).
+
+        INTENT, STARTED, one CHILD_SPAWNED per contract, each child's `runs` row + RUN_CREATED +
+        `delegations` row, and RUN_WAITING{children} commit together. A crash anywhere inside
+        leaves either no step or N children that all exist — never a parent that says it spawned
+        a child the store has no row for, and never a child whose parent does not know it.
+        """
+        contracts = [Delegation.model_validate(c) for c in intent.args["contracts"]]
+        try:
+            validate(
+                contracts,
+                parent_tools=self.tools,
+                parent_remaining_tokens=self._remaining_tokens(),
+                parent_depth=self.depth,
+            )
+            for c in contracts:
+                self._child_version(c.program)  # an unknown child program is a contract error
+        except ContractInvalid as exc:
+            await self._refuse(intent, exc)
+        hooks.at("before:intent_commit", **_where(intent))
+        hooks.at("before:child_spawn", children=len(contracts), **_where(intent))
+        async with self.journal.append(self.lease) as tx:
+            now = await tx.now()
+            intent_seq = await tx.append(_intended(intent))
+            hooks.at("after:intent_commit", **_where(intent))
+            await tx.append(
+                StepAttemptStarted(
+                    step_index=intent.step_index,
+                    attempt_no=1,
+                    lease_epoch=self.lease.epoch,
+                    started_at=now,
+                ),
+                causation_seq=intent_seq,
+            )
+            hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+            # Fan-out is bounded: `max_children_in_flight` now, the rest as slots free (§17.5).
+            for ordinal, c in enumerate(contracts[:MAX_CHILDREN_IN_FLIGHT]):
+                await self._spawn_one(tx, intent.step_index, ordinal, 0, c, causation_seq=intent_seq)
+            await tx.append(
+                RunWaiting(reason="children", wake_at=None, step_index=intent.step_index),
+                causation_seq=intent_seq,
+            )
+            await tx.set_run(phase="WAITING_CHILDREN", wake_at=None)
+        # The park is durable; the lease is not yet released — the same instant `during:approval_wait`
+        # names, for a run waiting on children instead of a human.
+        hooks.at("during:child_wait", children=len(contracts), **_where(intent))
+        raise Parked("children")
+
+    async def _spawn_one(
+        self, tx: Any, step_index: int, ordinal: int, retry_no: int, contract: Delegation, *, causation_seq: int
+    ) -> None:
+        """CHILD_SPAWNED, plus the child's birth in the same transaction (§7.6.1)."""
+        child_id = uuid7()
+        did = UUID(delegation_id(self.lease.run_id, step_index, ordinal, retry_no))
+        journaled = contract.as_journaled()
+        version = self._child_version(contract.program)
+        slice_ = dict(contract.budget_slice)
+        seq = await tx.append(
+            ChildSpawned(
+                step_index=step_index,
+                child_run_id=child_id,
+                delegation_id=did,
+                child_ordinal=ordinal,
+                retry_no=retry_no,
+                contract=journaled,
+                budget_reserved=slice_,
+            ),
+            causation_seq=causation_seq,
+        )
+        args = {"task": contract.task, **contract.args}
+        await tx.create_child(
+            RunRow(
+                run_id=child_id,
+                run_root_id=self.run_root_id,
+                program=contract.program,
+                program_version=version,
+                keel_version=KEEL_VERSION,
+                phase="CREATED",
+                trace_id=self.lease.trace_id,
+                args=args,
+                budget=slice_,
+                model_config=dict(self.model_config),
+                parent_run_id=self.lease.run_id,
+            ),
+            RunCreated(
+                program=contract.program,
+                program_version=version,
+                args=args,
+                budget=slice_,
+                model_config=dict(self.model_config),
+                parent_run_id=self.lease.run_id,
+                delegation_id=did,
+            ),
+            DelegationRow(
+                delegation_id=did,
+                parent_run_id=self.lease.run_id,
+                parent_step_index=step_index,
+                child_run_id=child_id,
+                role=row_role(contract.role),
+                contract=journaled,
+                budget_reserved=slice_,
+                spawned_seq=seq,
+                child_ordinal=ordinal,
+                retry_no=retry_no,
+            ),
+        )
+        # The engine's own fold, advanced in place, exactly as `_apply` would.
+        self.state.children[child_id] = ChildState(
+            child_run_id=child_id,
+            delegation_id=did,
+            step_index=step_index,
+            child_ordinal=ordinal,
+            retry_no=retry_no,
+            contract=journaled,
+            budget_reserved=slice_,
+        )
+        self.state.charged.reserve_child(child_id, slice_)
+
+    async def _settle_child(self, tx: Any, row: Any, seq: int) -> str | None:
+        """The parent's verdict on a `child_result` (§17.8): validated against the contract's
+        `result_schema` here, by the parent, so the two journals can disagree only in the direction
+        that matters — a child that says COMPLETED and a parent that says ContractViolation."""
+        payload = row.payload or {}
+        try:
+            child_id = UUID(str(payload.get("child_run_id")))
+        except ValueError:
+            child_id = None
+        child = self.state.children.get(child_id) if child_id is not None else None
+        if child is None or child.terminal:
+            await tx.append(
+                SignalIgnored(
+                    signal_id=row.signal_id,
+                    signal_type=row.type,
+                    reason="unknown_child" if child is None else "child_terminal",
+                ),
+                causation_seq=seq,
+            )
+            return None
+        contract = child.contract
+        status = payload.get("status")
+        usage = dict(payload.get("usage") or {})
+        error: str | None = None
+        detail: Any = None
+        applied: str | None = None
+        if status == "completed":
+            ok, why = json_schema_ok(contract.get("result_schema"), payload.get("result"))
+            if ok:
+                out_seq = await tx.append(
+                    ChildCompleted(child_run_id=child_id, result=payload.get("result"), usage_settled=usage),
+                    causation_seq=seq,
+                )
+                child.state, child.result = "COMPLETED", payload.get("result")
+            else:
+                error, detail = "ContractViolation", why
+        elif status == "cancelled":
+            # A cancelled child settles at its full slice (§17.4): what it spent is not knowable
+            # from outside its own journal, and a bound has to bound.
+            error, detail, usage = "ChildCancelled", payload.get("error"), dict(child.budget_reserved)
+        else:
+            error, detail = str(payload.get("error") or "ChildFailed"), None
+        if error is not None:
+            policy = str(contract.get("on_failure") or "escalate")
+            can_retry = (
+                policy == "retry"
+                and error != "ChildCancelled"
+                and child.retry_no < int(contract.get("max_retries") or 0)
+                and self._admit_slice(child.budget_reserved)
+            )
+            applied = "retry" if can_retry else ("escalate" if policy == "retry" else policy)
+            out_seq = await tx.append(
+                ChildFailed(
+                    child_run_id=child_id,
+                    error=error,
+                    policy_applied=applied,  # type: ignore[arg-type]
+                    usage_settled=usage,
+                    detail=detail,
+                ),
+                causation_seq=seq,
+            )
+            child.state = "CANCELLED" if error == "ChildCancelled" else "FAILED"
+            child.error, child.policy_applied = error, applied
+        child.usage_settled = usage
+        self.state.charged.settle_child(child_id, usage)
+        await tx.settle_delegation(
+            child.delegation_id, status=child.state, usage_settled=usage, settled_seq=out_seq
+        )
+        if applied == "retry":
+            # §17.6: a *new* child under the same contract; its EXTERNAL effects get new keys,
+            # which is why `validate` refused retry over assume_failed tools.
+            await self._spawn_one(
+                tx, child.step_index, child.child_ordinal, child.retry_no + 1,
+                Delegation.model_validate(contract), causation_seq=out_seq,
+            )
+        await self._fill_slots(tx, child.step_index, causation_seq=out_seq)
+        return await self._maybe_settle_delegate(tx, child.step_index)
+
+    async def _fill_slots(self, tx: Any, step_index: int, *, causation_seq: int) -> None:
+        """`delegate_many` past `max_children_in_flight` waits for a slot rather than failing
+        (§17.5): the next unspawned ordinal starts as a terminal child frees one."""
+        contracts = self._contracts_of(step_index)
+        if contracts is None or self.state.cancel_acknowledged_at == step_index:
+            return
+        spawned = {c.child_ordinal for c in self.state.children_of(step_index)}
+        in_flight = sum(1 for c in self.state.children_of(step_index) if not c.terminal)
+        for ordinal in range(len(contracts)):
+            if in_flight >= MAX_CHILDREN_IN_FLIGHT:
+                return
+            if ordinal in spawned:
+                continue
+            await self._spawn_one(
+                tx, step_index, ordinal, 0, Delegation.model_validate(contracts[ordinal]),
+                causation_seq=causation_seq,
+            )
+            in_flight += 1
+
+    async def _maybe_settle_delegate(self, tx: Any, step_index: int) -> str | None:
+        """The DELEGATE step settles when every ordinal's latest child is terminal — one outcome,
+        the list of child results, which is all the program ever sees of them (§17.3)."""
+        step = self.state.steps.get(step_index)
+        if step is None or step.settled:
+            return None
+        contracts = self._contracts_of(step_index)
+        latest = self._latest_children(step_index)
+        if not latest or not all(c.terminal for c in latest):
+            return None
+        if contracts is not None and len(latest) < len(contracts) and self.state.cancel_acknowledged_at != step_index:
+            return None  # ordinals still waiting for a slot
+        if self.state.cancel_acknowledged_at == step_index:
+            # §7.6.2: the acknowledged step closes with STEP_CANCELLED once the last child is
+            # terminal, in whichever epoch observes it; RUN_CANCELLED follows from the worker.
+            seq = await tx.append(StepCancelled(step_index=step_index, attempt_no=1))
+            step.state, step.outcome_seq, step.outcome_epoch = CANCELLED, seq, self.lease.epoch
+            await tx.set_run(phase="RUNNING", wake_at=None)
+            return "cancel"
+        fatal = [c for c in latest if c.state != "COMPLETED" and c.policy_applied == "fail_parent"]
+        if fatal:
+            error = f"ChildFailed: {fatal[0].error}"
+            seq = await tx.append(
+                StepFailedEvent(step_index=step_index, attempt_no=1, error=error, retryable=False)
+            )
+            step.state, step.error, step.retryable = FAILED, error, False
+        else:
+            result = [_child_result(c) for c in latest]
+            seq = await tx.append(StepCompleted(step_index=step_index, attempt_no=1, result=result))
+            step.state, step.result = COMPLETED, result
+        step.outcome_seq, step.outcome_epoch = seq, self.lease.epoch
+        await tx.set_run(phase="RUNNING", wake_at=None)
+        return None
+
+    async def _wait_children(self, intent: StepIntent, journaled: Any) -> Any:
+        """Woken with the step still open: re-park, for the price of one row.
+
+        With a cancel acknowledged, the wake is also the moment to force (§7.6.2): every child
+        still open is offered to the store's takeover predicate, which refuses until the child has
+        had `cancel_grace` to acknowledge on its own. A takeover commits the child's `child_result`
+        into this inbox, so a second drain settles the step and raises `Cancelled` from here.
+        """
+        i = intent.step_index
+        wake_at = None
+        if self.state.cancel_acknowledged_at == i:
+            forced = False
+            for c in [c for c in self.state.children_of(i) if not c.terminal]:
+                outcome = await force_cancel(
+                    self.journal,
+                    c.child_run_id,
+                    worker_id=self.lease.worker_id,
+                    ttl_s=self.lease.ttl_seconds,
+                    forced_by=f"parent:{self.lease.run_id}",
+                    cancel_grace_s=self.cancel_grace_s,
+                )
+                forced = forced or outcome != "refused"
+            if forced:
+                await self._drain_inbox(i, waiting=journaled)  # raises Cancelled when it settles
+        async with self.journal.append(self.lease) as tx:
+            if self.state.cancel_acknowledged_at == i:
+                wake_at = await tx.now() + timedelta(seconds=self.cancel_grace_s)
+            await tx.append(RunWaiting(reason="children", wake_at=wake_at, step_index=i))
+            await tx.set_run(phase="WAITING_CHILDREN", wake_at=wake_at)
+        hooks.at("during:child_wait", step_index=i, wake_at=wake_at)
+        raise Parked("children", wake_at=wake_at)
+
+    def _latest_children(self, step_index: int) -> list[ChildState]:
+        """One child per ordinal — the highest retry — in ordinal order."""
+        latest: dict[int, ChildState] = {}
+        for c in self.state.children_of(step_index):
+            if c.child_ordinal not in latest or c.retry_no > latest[c.child_ordinal].retry_no:
+                latest[c.child_ordinal] = c
+        return [latest[k] for k in sorted(latest)]
+
+    def _contracts_of(self, step_index: int) -> list[dict[str, Any]] | None:
+        w = self._waiting_intent
+        if w is None or w.step_index != step_index or not w.args:
+            return None
+        return list(w.args.get("contracts") or [])
+
+    def _remaining_tokens(self) -> int | None:
+        limits = self.state.budget if isinstance(self.state.budget, dict) else {}
+        cap = limits.get("max_tokens")
+        return None if cap is None else int(cap) - self.state.charged.tokens_charged
+
+    def _admit_slice(self, slice_: dict[str, Any]) -> bool:
+        remaining = self._remaining_tokens()
+        return remaining is None or int(slice_.get("max_tokens") or 0) <= remaining
+
+    def _child_version(self, program: str) -> str:
+        if self.resolve_program is None:
+            raise ContractInvalid("this engine cannot resolve child programs")
+        try:
+            return str(self.resolve_program(program).version)
+        except KeelError as exc:
+            raise ContractInvalid(str(exc)) from exc
+
     async def _live(self, intent: StepIntent) -> Any:
         if intent.kind is StepKind.APPROVAL:
             return await self._park_for_approval(intent)
+        if intent.kind is StepKind.DELEGATE:
+            return await self._spawn_children(intent)
         if intent.kind is StepKind.TOOL:
             await self._gate(intent)
         tool = self._tool_of(intent)
@@ -605,7 +1005,7 @@ class StepEngine:
         try:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
-            await self._refuse(intent, exc)
+            await self._refuse(intent, exc, first=False)
         hooks.at("before:attempt_commit", attempt_no=attempt_no, **_where(intent))
         async with self.journal.append(self.lease) as tx:
             if close is not None:
@@ -973,6 +1373,17 @@ def _value_of(step: Any) -> Any:
     if step.state in ("COMPLETED", "RESOLVED_COMPLETED"):
         return step.result
     raise StepFailed(step.step_index, step.error or step.state, retryable=step.retryable)
+
+
+def _child_result(c: ChildState) -> dict[str, Any]:
+    """What a DELEGATE step's outcome carries per child — `ChildResult`'s fields, as JSON."""
+    return {
+        "child_run_id": str(c.child_run_id),
+        "status": c.state.lower(),
+        "result": c.result,
+        "error": c.error,
+        "usage_settled": dict(c.usage_settled or {}),
+    }
 
 
 # --- runtime-owned executors -------------------------------------------------

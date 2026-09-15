@@ -75,6 +75,30 @@ class RunRow:
     terminal_at: datetime | None = None
     attempt_deadline: datetime | None = None
     created_at: datetime | None = None
+    #: Set for a child run. The reaper's liveness rule and the parent's takeover both key on it,
+    #: and it is the one thing about a child that its parent may read without a lease (§17.3).
+    parent_run_id: RunId | None = None
+
+
+@dataclass(slots=True)
+class DelegationRow:
+    """The contract, as a row (§5.5, §17.2). Written only by the parent's holder — at spawn and at
+    settlement — so it is a parent-owned projection cache plus contract store; the child never
+    touches it. Truth remains the `CHILD_*` events."""
+
+    delegation_id: UUID
+    parent_run_id: RunId
+    parent_step_index: int
+    child_run_id: RunId
+    role: str
+    contract: dict[str, Any]
+    budget_reserved: dict[str, Any]
+    status: str = "SPAWNED"  # SPAWNED | COMPLETED | FAILED | CANCELLED
+    usage_settled: dict[str, Any] | None = None
+    spawned_seq: int = 0
+    settled_seq: int | None = None
+    child_ordinal: int = 0
+    retry_no: int = 0
 
 
 @dataclass(slots=True)
@@ -197,6 +221,33 @@ class AppendTx(Protocol):
         """
         ...
 
+    async def insert_signal(self, row: SignalRow) -> None:
+        """An inbox row for *another* run, in this transaction (§5.10).
+
+        The child's terminal event and its parent's `child_result` row commit together, so a child
+        cannot become terminal and die before notifying — the L1 hole a same-database design
+        closes for free. The parent's CANCEL_ACKNOWLEDGED inserts a `cancel` per non-terminal child
+        the same way. Not a foreign append: the constitution names child workers as inbox writers.
+        """
+        ...
+
+    async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:
+        """The child's `runs` row, its RUN_CREATED at `lease_epoch = 0`, and its `delegations` row —
+        inside the parent's fenced transaction, beside the parent's CHILD_SPAWNED.
+
+        Creation is not a foreign append; it is the birth of the child's journal, and no lease on
+        it can exist yet. Committing the four together is what makes "the parent says it spawned"
+        and "the child exists" one fact rather than two that a crash could separate (§7.6.1).
+        """
+        ...
+
+    async def settle_delegation(
+        self, delegation_id: UUID, *, status: str, usage_settled: dict[str, Any] | None, settled_seq: int
+    ) -> None:
+        """The parent-owned projection cache, updated in the same transaction as CHILD_COMPLETED /
+        CHILD_FAILED. Truth is the event; this is what `keel show` and the reaper read."""
+        ...
+
 
 class BlobStore(Protocol):
     async def put(self, data: bytes, *, media_type: str = "application/json") -> str: ...
@@ -280,6 +331,48 @@ class JournalBackend(Protocol):
         polls it — this is what brings it back when its deadline passes rather than when someone
         asks. `client_key = 'timer:<wake_at>'` so two schedulers firing the same deadline produce
         one row (§5.6), which is also why this can run on every worker without coordination.
+        """
+        ...
+
+    # --- delegation (§17) ------------------------------------------------------
+    async def children(self, parent_run_id: RunId) -> list[RunRow]:
+        """A parent may read its children's *control-plane* rows — never their journals (§17.3)."""
+        ...
+
+    async def delegations(self, parent_run_id: RunId) -> list[DelegationRow]: ...
+
+    async def stray_children(self) -> list[RunRow]:
+        """The reaper's liveness predicate (§17.7): `child.terminal_at IS NULL AND
+        parent.terminal_at IS NOT NULL`. A child cannot outlive its parent's terminal state; the
+        reaper cancels each stray and takes its lease over after `cancel_grace`. S8 measures what
+        slips through."""
+        ...
+
+    async def takeover(
+        self,
+        child_run_id: RunId,
+        worker_id: str,
+        ttl: timedelta,
+        *,
+        cancel_grace: timedelta,
+    ) -> Lease | None:
+        """The forced-cancel acquisition of §7.6.2 / §17.7: the fifth control-plane statement, and
+        the only one that moves a lease its holder still believes it has.
+
+            UPDATE runs SET lease_epoch = lease_epoch + 1, lease_owner = $w, lease_expires_at = now() + $ttl
+             WHERE run_id = $child AND lease_epoch = $observed AND terminal_at IS NULL
+               AND EXISTS (cancel signal for $child older than $cancel_grace)
+               AND (attempt_deadline IS NULL OR attempt_deadline < now())
+
+        Three things are in that WHERE on purpose. The epoch is pinned so the read and the move
+        cannot straddle a heartbeat. The cancel row must exist and be older than the grace, judged
+        by the *store's* clock: the child was told, and had its chance to acknowledge at a step
+        boundary. And an open non-PURE attempt's deadline is honoured — the same bound the reaper
+        applies — so a takeover can never jump a request that could still commit. `None` for any
+        of the three: the caller re-parks and asks again after the grace.
+
+        A takeover *is* a lease acquisition: `RECOVERY_STARTED{cause=ORPHANED, forced_by}` is the
+        new epoch's first append, the `recoveries` row is inserted here, and no new cause exists.
         """
         ...
 

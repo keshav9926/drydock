@@ -38,6 +38,12 @@ conditional UPDATE of `runs.runnable_at` was **deleted**, not kept beside it —
 and two ways to influence a run is one more than the fence can defend. `JournalBackend.mark_runnable`
 went with it.
 
+Delegation (§17) adds no command: §25.2 declares none, and a parent's children are reached the
+way §17.3 allows — through the `delegations` rows, which `keel show <parent>` now prints as a
+`children` table (ordinal, retry, child run id, role, status, reserved, settled). A child is a run,
+so `keel show <child>`, `keel events <child>` and `keel cancel <child>` already work on it; a
+`cancel` of the parent propagates to every open child on its own (§7.6.2).
+
 ## Built, not declared
 
 | Surface | Why |

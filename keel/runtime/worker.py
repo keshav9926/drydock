@@ -27,12 +27,14 @@ from keel.events import (
     RunFailed,
     RunSuspended,
 )
-from keel.journal.protocol import JournalBackend, Lease
+from keel.journal.protocol import JournalBackend, Lease, RunRow
 from keel.core.errors import StoreUnavailable
 from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
+from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended
+from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S
 from keel.state.fold import fold
 
 DEFAULT_LEASE_TTL = 30.0
@@ -41,6 +43,18 @@ HEARTBEAT_DIVISOR = 3  # heartbeat period <= ttl/3 (§8.7)
 
 def default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def _depth(journal: JournalBackend, row: RunRow) -> int:
+    """How many parents above this run — the control-plane rows only, never a journal (§17.3).
+    Bounded, so a cycle nobody should be able to write cannot make a worker walk for ever."""
+    depth = 0
+    parent = row.parent_run_id
+    while parent is not None and depth <= MAX_DELEGATION_DEPTH:
+        depth += 1
+        up = await journal.run_row(parent)
+        parent = up.parent_run_id if up is not None else None
+    return depth
 
 
 class Worker:
@@ -58,6 +72,7 @@ class Worker:
         poll: float = 1.0,
         retry: RetryPolicy = NO_RETRY,
         model_timeout_s: float = 60.0,
+        cancel_grace: float = DEFAULT_CANCEL_GRACE_S,
     ) -> None:
         self.journal = journal
         self.resolve = resolve
@@ -70,6 +85,7 @@ class Worker:
         self.poll = poll
         self.retry = retry
         self.model_timeout_s = model_timeout_s
+        self.cancel_grace = cancel_grace
         self.draining = False
         # `lease_ttl` must exceed the largest registered non-PURE tool.timeout, or the pre-dispatch
         # gate could never clear and every attempt would abandon with STARTED open (§8.4).
@@ -141,6 +157,11 @@ class Worker:
             should_drain=lambda: self.draining,
             retry=self.retry,
             model_timeout_s=self.model_timeout_s,
+            parent_run_id=row.parent_run_id,
+            depth=await _depth(journal, row),
+            model_config=row.model_config,
+            resolve_program=self.resolve,
+            cancel_grace_s=self.cancel_grace,
         )
         ctx = Ctx(
             engine,
@@ -249,6 +270,21 @@ class Worker:
             async with journal.append(lease) as tx:
                 await tx.append(body)
                 await tx.set_run(phase=phase)
+                if engine.parent_run_id is not None and phase in ("COMPLETED", "FAILED", "CANCELLED"):
+                    # The outbox in the other direction (§5.10): a child's terminal event and its
+                    # parent's `child_result` row commit together, so a child cannot become
+                    # terminal and die before notifying — the L1 hole a same-database design
+                    # closes for free, and the reason delegation needs no supervisor.
+                    await tx.insert_signal(
+                        child_result_signal(
+                            engine.parent_run_id,
+                            lease.run_id,
+                            status=phase.lower(),
+                            result=getattr(body, "result", None),
+                            error=getattr(body, "error", None) or getattr(body, "reason", None),
+                            usage=usage_of(engine.state),
+                        )
+                    )
         except (Fenced, Abandon):
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="FENCED")
             return

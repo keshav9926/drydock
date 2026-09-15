@@ -47,6 +47,10 @@ class RecoveryStarted(Body):
     cause: Literal["START", "WAKE", "ORPHANED", "RESUME", "DRAIN", "VERIFY"]
     from_seq: int
     from_segment: int = 0
+    #: Set by a takeover writer (§7.6.2): a takeover *is* an ORPHANED acquisition — no new cause —
+    #: but the record says who forced it, because "the lease lapsed" and "the parent took it"
+    #: are different facts about the same epoch.
+    forced_by: str | None = None
 
 
 class RecoveryCompleted(Body):
@@ -165,6 +169,59 @@ class CancelAcknowledged(Body):
     step_index: int
 
 
+class StepCancelled(Body):
+    """An open step closed by a cancel rather than by an outcome — the holder's own step at
+    acknowledgement, or a child's open step under a takeover. Memoized as `Cancelled` on replay."""
+
+    type: Literal["STEP_CANCELLED"] = "STEP_CANCELLED"
+    step_index: int
+    attempt_no: int | None = None
+    forced_by: str | None = None
+
+
+# --- delegation (§4.11, §7.6, §17) ------------------------------------------------
+class ChildSpawned(Body):
+    """Appended by the parent's holder inside `ctx.delegate`, in the *same* transaction as the
+    child's `runs` row, its RUN_CREATED and its `delegations` row. A crash between "the parent
+    says it spawned" and "the child exists" is therefore impossible, which is the one property a
+    delegation protocol cannot do without (§5.10). `budget_reserved` is charged to the parent
+    here and settled at CHILD_COMPLETED / CHILD_FAILED."""
+
+    type: Literal["CHILD_SPAWNED"] = "CHILD_SPAWNED"
+    step_index: int
+    child_run_id: UUID
+    delegation_id: UUID
+    child_ordinal: int = 0
+    retry_no: int = 0
+    contract: dict[str, Any] = Field(default_factory=dict)
+    budget_reserved: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChildCompleted(Body):
+    """The parent's verdict on a child's result, at the drain of its `child_result` signal and
+    after validation against the contract's `result_schema`. The parent's contract decides, not the
+    child's opinion of itself (§17.8)."""
+
+    type: Literal["CHILD_COMPLETED"] = "CHILD_COMPLETED"
+    child_run_id: UUID
+    result: Any = None
+    usage_settled: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChildFailed(Body):
+    """Also at the drain. `ContractViolation` lands here even though the child's own journal says
+    COMPLETED — the two can disagree only in the direction that matters. Carries the settlement
+    too, because a ledger that cannot settle a failure leaves the full reservation charged and
+    over-reports every run that lost a child (§17.4)."""
+
+    type: Literal["CHILD_FAILED"] = "CHILD_FAILED"
+    child_run_id: UUID
+    error: str
+    policy_applied: Literal["retry", "escalate", "fail_parent"] = "escalate"
+    usage_settled: dict[str, Any] = Field(default_factory=dict)
+    detail: Any = None
+
+
 # --- step core ---------------------------------------------------------------
 class StepIntended(Body):
     type: Literal["STEP_INTENDED"] = "STEP_INTENDED"
@@ -245,6 +302,10 @@ EventBody = Annotated[
     | RunPauseLifted
     | ApprovalRequested
     | ApprovalDecided
+    | StepCancelled
+    | ChildSpawned
+    | ChildCompleted
+    | ChildFailed
     | SignalReceived
     | SignalIgnored
     | CancelAcknowledged

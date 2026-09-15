@@ -436,7 +436,8 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
 | `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
-| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 41 `(boundary, fault, class)` cells — the write path per effect class, plus the inbox drain and the approval park on a gated run — 12 N/A with reasons |
+| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 44 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 12 N/A with reasons; S8 judged from the whole tree of journals |
+| `tests/unit/test_delegation.py` | children under contracts: the spawn as one transaction, results that wake the parent, the parent grading the result, cancel asked then forced by takeover, the reaper collecting a stray, fan-out bounded by slots |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
 
 The property files drive the *real* runtime over `MemoryJournal` + `FakeClock` and take its journal — random
@@ -488,9 +489,15 @@ Inside phase 4, two things are still named rather than stubbed: `max_usd` and `m
 need a pinned price table and a deadline every waiting kind respects), and backoff longer than the
 lease (it needs `RUN_WAITING` and the signals inbox, both v1).
 
-Four of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
-refused rather than firing nothing: `before:child_spawn` and `during:child_wait` arrive with
-delegation; `before:segment_write` and `during:stream(chunk=k)` in week 3. The inbox and approvals
-brought `before/after:signal_consume` and `during:approval_wait` with them, and their cells are in
-the conformance table. §29.2's *all seventeen* is the honest completion date. §27 is the binding
+Two of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
+refused rather than firing nothing: `before:segment_write` and `during:stream(chunk=k)`, week 3.
+The inbox and approvals brought `before/after:signal_consume` and `during:approval_wait`, and
+delegation brought `before:child_spawn` and `during:child_wait`; all five have cells in the
+conformance table. §29.2's *all seventeen* is the honest completion date. §27 is the binding
 staging table; nothing here is ahead of it.
+
+Delegation (§17) is built to the constitution's shape and one corner is named rather than hidden:
+`deadline_s` is journaled in the contract and not yet enforced by the parent — a child that never
+reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full slice, until
+someone cancels it. The timer → cancel → takeover path that closes it is the same mechanism the
+parent-cancel path already uses, and arrives with the first cell that measures it.
