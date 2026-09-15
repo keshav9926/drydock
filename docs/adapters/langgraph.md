@@ -99,10 +99,18 @@ run; each is a printed count beside a declared `at_least_once`, not a failure:
 The tier-2 rows are in their own band because the workload was *constructed* to exercise a
 documented caveat — §13.4: "pre-interrupt code re-runs" — and the adapter honours that on purpose:
 the pre-gate call is deliberately not `@task`-wrapped, because wrapping it would measure the
-adapter's care rather than the framework's resume semantics. **Before any of this goes upstream, the
-sentence from the `langgraph 1.2.11` documentation that states the caveat is pasted beside the row**
-([the template](../upstream-report-template.md) requires the quote from the version under test, not
-from memory). Until then it is a measurement with a citation owed.
+adapter's care rather than the framework's resume semantics. The citation the upstream template
+requires — the sentence from the version under test, not from memory — is the framework's own
+docstring, `langgraph.types.interrupt.__doc__` at `langgraph 1.2.11`:
+
+> A client resuming the graph must use the `Command` primitive to specify a value for the interrupt
+> and continue execution. **The graph resumes from the start of the node, re-executing all logic.**
+
+So the tier-2 rows *sharpen* rather than contradict: the docs say the node re-executes, and the
+rows say what that costs when the re-executed logic has a side effect — one extra `notify` per
+re-entry, and three re-entries when the process holding the wait is killed. That is a docs-grade
+finding by the template's own distinction (a documented behaviour with an undocumented consequence
+a user would act on), not a bug report.
 
 ## Adapter rules obeyed
 
