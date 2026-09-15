@@ -108,3 +108,21 @@ nothing. Keel's adapter is held to that as strictly as any other arm: no counter
 lookup, no retry the framework does not do itself, no dedup in the adapter. It calls
 `keel.client`'s public API and nothing private, and the workload binding it uses
 (`keel/agents/demo.py`) is a program a user could write.
+
+## Proxy mode
+
+`bench/specs/tier1p.yaml` runs the matrix-v0 and tier1a windows with the injector *outside* the
+SUT: the worker is pointed at `crashproof/proxy`, which is pointed at the World, and the shim in
+the worker rides along observe-only so model calls are still counted at the wire. Nothing in the
+adapter changes for it. Two translations the adapter already made for the shim now also apply to
+what arrives over the wire, and they are the whole of its involvement: a 5xx status is
+`UnknownOutcome` and a 4xx is `Rejected` (the receiver's semantics, §9.2), and a dropped connection
+or an unparseable body is `UnknownOutcome` too (§8.5's transport ambiguity). The class then decides:
+EXTERNAL becomes AMBIGUOUS, the probe finds COMMITTED, and the effect is not re-fired — which is
+what the `tool_dropped_response` and `tool_malformed` rows show, one applied effect each.
+
+The one cell whose proxy realisation differs from its shim twin is `pause_past_ttl@before:tool_call`:
+the frozen worker's request is parked *at the proxy* and forwarded at the thaw, by which time the
+successor has already probed (ABSENT), re-attempted and applied — so the thawed request lands
+second and the World applies twice on the `dedup:false` endpoint. That is the zombie residual of
+§8.4 by a different road, at-least-once against the declared claim, and the raw count is printed.

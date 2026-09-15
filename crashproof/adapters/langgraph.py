@@ -366,6 +366,8 @@ async def _worker() -> None:  # pragma: no cover - subprocess
     durability = os.environ.get(ENV_DURABILITY, "sync")
     world = WorldClient(os.environ[ENV_WORLD])
     thread_id = (trial.path / "sut" / "thread_id").read_text(encoding="utf8").strip()
+    # The only process that knows its own pid for certain says so; the proxy aims by this file.
+    (trial.path / "sut" / f"pid-{cursor.recovery_index}").write_text(str(os.getpid()), encoding="utf8")
 
     shim = ToolShim(
         trial,
@@ -373,6 +375,8 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         trial_id=cursor.trial_id,
         recovery_index=cursor.recovery_index,
         world=world,
+        # In `proxy` mode the proxy fires and the shim only counts (§11.2).
+        observe_only=os.environ.get("CRASHPROOF_MODE") == "proxy",
     )
 
     async with AsyncPostgresSaver.from_conn_string(os.environ[ENV_DSN]) as saver:

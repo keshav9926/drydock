@@ -110,3 +110,15 @@ No counter, no pre-send lookup, no retry the framework does not do itself, no de
 no key synthesised. The graph shape is fixed and identical across all three configs — agent node =
 one model call, tool node = one `@task` tool call, one superstep each — so a difference between
 columns is a difference in `durability` and nothing else.
+
+## Proxy mode
+
+`bench/specs/tier1p.yaml` puts the injector between the graph and the World instead of inside the
+`@task`. Nothing in the adapter changes for it, and nothing is translated: a 5xx, a dropped
+connection or a body that is not JSON reaches the `@task` as an exception, the node fails, the
+process exits, the supervisor restarts it, and the task — whose result was never persisted —
+re-runs and re-fires the effect. `tool_500`, `tool_dropped_response` and `tool_malformed` each
+show two applied effects on the `dedup:false` endpoint, with one restart. That is the documented
+at-least-once for an un-wrapped effect, PASS against the declared claim, printed raw beside Keel's
+one — and it is the same finding the shim's `tool_500` row already made, now made without any
+harness code in the SUT.

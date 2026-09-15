@@ -62,7 +62,7 @@ class WorldServer:
     # --- one request ---------------------------------------------------------
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            request = await self._read_request(reader)
+            request = await read_request(reader)
             if request is None:
                 return
             method, path, body, key = request
@@ -70,31 +70,12 @@ class WorldServer:
         except Exception as exc:  # noqa: BLE001 - the World answers, it never dies
             status, payload = 500, {"error": f"{type(exc).__name__}: {exc}"}
         try:
-            writer.write(_response(status, payload))
+            writer.write(response_bytes(status, payload))
             await writer.drain()
         except (ConnectionError, BrokenPipeError):  # the SUT was killed mid-answer: expected
             pass
         finally:
             writer.close()
-
-    @staticmethod
-    async def _read_request(
-        reader: asyncio.StreamReader,
-    ) -> tuple[str, str, dict[str, Any], str | None] | None:
-        head = await reader.readuntil(b"\r\n\r\n")
-        lines = head.decode("latin-1").split("\r\n")
-        method, path, _ = lines[0].split(" ", 2)
-        headers = {}
-        for line in lines[1:]:
-            if ":" in line:
-                name, _, value = line.partition(":")
-                headers[name.strip().lower()] = value.strip()
-        length = min(int(headers.get("content-length", 0)), _MAX_BODY)
-        raw = await reader.readexactly(length) if length else b""
-        body = json.loads(raw) if raw else {}
-        # The key travels in a header, never in the body: it is not an argument, it never feeds
-        # `canonical_args`, and a workload must be free to use any field name it likes.
-        return method, path, body, headers.get("idempotency-key")
 
     async def _dispatch(
         self, method: str, path: str, body: dict[str, Any], effect_key: str | None = None
@@ -141,11 +122,35 @@ class WorldServer:
         return 200, result
 
 
-def _response(status: int, payload: Any) -> bytes:
-    body = json.dumps(payload, default=str).encode()
-    reason = {200: "OK", 404: "Not Found", 405: "Method Not Allowed", 500: "Server Error"}[status]
+async def read_request(
+    reader: asyncio.StreamReader,
+) -> tuple[str, str, dict[str, Any], str | None] | None:
+    """One fixed-shape request: the World's own, and the proxy's — which must read exactly what
+    the World would have read, or a fault would be aimed at a request the World never saw."""
+    head = await reader.readuntil(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    method, path, _ = lines[0].split(" ", 2)
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            name, _, value = line.partition(":")
+            headers[name.strip().lower()] = value.strip()
+    length = min(int(headers.get("content-length", 0)), _MAX_BODY)
+    raw = await reader.readexactly(length) if length else b""
+    body = json.loads(raw) if raw else {}
+    # The key travels in a header, never in the body: it is not an argument, it never feeds
+    # `canonical_args`, and a workload must be free to use any field name it likes.
+    return method, path, body, headers.get("idempotency-key")
+
+
+_REASONS = {200: "OK", 404: "Not Found", 405: "Method Not Allowed", 500: "Server Error", 502: "Bad Gateway"}
+
+
+def response_bytes(status: int, payload: Any, *, raw: bytes | None = None) -> bytes:
+    """`raw` is the proxy's `tool_malformed`: a body that is not the JSON the header promises."""
+    body = json.dumps(payload, default=str).encode() if raw is None else raw
     return (
-        f"HTTP/1.1 {status} {reason}\r\n"
+        f"HTTP/1.1 {status} {_REASONS.get(status, 'Error')}\r\n"
         f"Content-Type: application/json\r\n"
         f"Content-Length: {len(body)}\r\n"
         f"Connection: close\r\n\r\n"

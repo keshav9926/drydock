@@ -112,8 +112,11 @@ def test_a_schedule_that_outruns_max_recoveries_is_loud() -> None:
 
 def test_unbuilt_modes_and_fault_types_are_refused_at_load() -> None:
     """A spec naming machinery that does not exist yet must fail loudly, not run and fire nothing."""
+    assert from_doc({**T2, "mode": "proxy"}).mode == "proxy", "a kill at a tool boundary is a proxy fault"
     with pytest.raises(CrashproofSpecError):
-        from_doc({**T2, "mode": "proxy"})
+        # Model traffic does not cross the proxy; a model boundary there fires nothing (§11.2).
+        from_doc({**T2, "mode": "proxy", "faults": [{"id": "m", "type": "model_500",
+                  "trigger": {"boundary": "before:model_call", "landmark": "model:*"}}]})
     with pytest.raises(CrashproofSpecError):
         from_doc({**T2, "faults": [{**T2["faults"][0], "type": "journal_unavailable"}]})
     with pytest.raises(CrashproofSpecError):

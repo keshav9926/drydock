@@ -51,6 +51,11 @@ HOOK_BOUNDARIES = (
     "before:child_spawn",
     "during:child_wait",
 )
+#: The three boundaries the proxy observes at the network edge — §11.2's correspondence table,
+#: one process further out than the shim. Model traffic never crosses it in the scripted
+#: configuration (the provider is in the SUT's process), so a proxy spec naming a model boundary
+#: is refused with that reason rather than firing nothing.
+PROXY_BOUNDARIES = ("before:tool_call", "after:tool_effect", "after:tool_return")
 #: `supervisor` is the one boundary that is not in the SUT: the harness executes it from outside.
 BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")
 
@@ -82,10 +87,32 @@ MODIFIERS = frozenset({"model_reask_alternate"})
 
 #: What the shim can actually do. A spec naming anything else is refused at load, loudly, rather
 #: than producing a trial that quietly never fires. The rest of §11.5 arrives with its mode: the
-#: journal faults need `hook` (phase 6), and the duplicate-response and partition faults need the
-#: proxy, because a shim can neither deliver a response twice nor stop forwarding.
+#: journal faults need `hook`, and the dropped and malformed responses need the proxy, because a
+#: shim sits inside the client and cannot do to a socket what a network does.
 #: Faults only the hook injector can fire, because only it is inside the write path.
 HOOK_FAULT_TYPES = frozenset({"journal_unavailable", "blob_write_fail"})
+
+#: What the proxy can do to a request: what a network can. Not forward it, forward it and never
+#: answer, answer late, answer 5xx, answer garbage, close the socket — plus the OS signals the
+#: supervisor sends on its behalf. No model faults: model traffic does not cross it (§11.2).
+#: `tool_duplicate_response` is absent on purpose: HTTP/1.1 with `Connection: close` delivers one
+#: response per request, and the spec's own physical caveat (§11.5) says the late bytes reach the
+#: SUT only when the transport outlives the app-level timeout — a cell for a sync-tool variant
+#: that does not exist yet.
+PROXY_FAULT_TYPES = frozenset(
+    {
+        "kill",
+        "pause_past_ttl",
+        "tool_timeout",
+        "tool_500",
+        "tool_delay",
+        "tool_dropped_response",
+        "tool_malformed",
+        "approval_delay",
+        "approval_expiry",
+        "kill_while_waiting",
+    }
+)
 
 SHIM_FAULT_TYPES = frozenset(
     {
@@ -119,6 +146,10 @@ FAULT_BOUNDARIES = {
     "approval_delay": {"supervisor"},
     "approval_expiry": {"supervisor"},
     "kill_while_waiting": {"supervisor"},
+    # Both are "applied, then the answer went wrong": before the effect they would be a refusal
+    # wearing a different name, and the cell would measure a different thing (§11.5).
+    "tool_dropped_response": {"after:tool_effect"},
+    "tool_malformed": {"after:tool_effect"},
 }
 
 
@@ -201,19 +232,29 @@ class FaultSpec(Frozen):
     spec_hash: str = ""
 
     def model_post_init(self, _: Any) -> None:
-        if self.mode not in ("shim", "hook"):
-            raise CrashproofSpecError(f"mode {self.mode!r} is not built: `proxy` is week 2 (§27.7)")
         # A mode is a *vocabulary*, and mixing them silently is how a cell ends up firing nothing:
         # a hook boundary named in a shim spec never matches, and the trial runs green.
-        allowed_types = SHIM_FAULT_TYPES | (HOOK_FAULT_TYPES if self.mode == "hook" else frozenset())
+        if self.mode == "hook":
+            allowed_types = SHIM_FAULT_TYPES | HOOK_FAULT_TYPES
+            mode_boundaries: tuple[str, ...] = HOOK_BOUNDARIES
+        elif self.mode == "proxy":
+            allowed_types = PROXY_FAULT_TYPES
+            mode_boundaries = PROXY_BOUNDARIES
+        else:
+            allowed_types = SHIM_FAULT_TYPES
+            mode_boundaries = SHIM_BOUNDARIES
         # `supervisor` is legal in every mode: it is the one boundary that is not in the SUT, so
         # no vocabulary owns it (§11.9). The human-in-the-loop faults fire there.
-        allowed_boundaries = (*(HOOK_BOUNDARIES if self.mode == "hook" else SHIM_BOUNDARIES), "supervisor")
+        allowed_boundaries = (*mode_boundaries, "supervisor")
         for f in self.faults:
             if f.type not in allowed_types:
+                why = (
+                    "model traffic does not cross the proxy in the scripted configuration (§11.2)"
+                    if self.mode == "proxy" and f.type.startswith("model")
+                    else f"available: {sorted(allowed_types)} (§27.7 stages the rest)"
+                )
                 raise CrashproofSpecError(
-                    f"fault {f.id!r}: type {f.type!r} is not built in {self.mode!r} mode; "
-                    f"available: {sorted(allowed_types)} (§27.7 stages the rest)"
+                    f"fault {f.id!r}: type {f.type!r} is not built in {self.mode!r} mode; {why}"
                 )
             allowed = FAULT_BOUNDARIES.get(f.type)
             if allowed and f.trigger.boundary not in allowed:
@@ -222,9 +263,13 @@ class FaultSpec(Frozen):
                     f"not {f.trigger.boundary}"
                 )
             if f.trigger.boundary not in allowed_boundaries and f.trigger.boundary != "supervisor":
+                why = (
+                    "model traffic does not cross the proxy in the scripted configuration (§11.2)"
+                    if self.mode == "proxy" and "model" in f.trigger.boundary
+                    else f"one of {sorted(allowed_boundaries)}"
+                )
                 raise CrashproofSpecError(
-                    f"fault {f.id!r}: {f.trigger.boundary} is not a {self.mode} boundary; "
-                    f"one of {sorted(allowed_boundaries)}"
+                    f"fault {f.id!r}: {f.trigger.boundary} is not a {self.mode} boundary; {why}"
                 )
         if any(f.type in MODIFIERS for f in self.faults) and not any(
             f.type in RESTART_CAUSING for f in self.faults

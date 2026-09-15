@@ -118,6 +118,20 @@ class WorldClient:
         body: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Any:
+        status, data = self.request_raw(method, path, body, headers)
+        if status >= 400:
+            raise WorldError(f"{status} {path}: {data}", status=status)
+        return data
+
+    def request_raw(
+        self,
+        method: str,
+        path: str,
+        body: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[int, Any]:
+        """The status and the parsed body, whatever the status. The proxy forwards with this, so
+        a World's 404 reaches the SUT as a 404 and not as the proxy's own error."""
         conn = HTTPConnection(self.host, self.port, timeout=self.timeout)
         try:
             payload = json.dumps(body).encode() if body is not None else None
@@ -125,13 +139,15 @@ class WorldClient:
             conn.request(method, path, body=payload, headers=hdrs)
             resp = conn.getresponse()
             raw = resp.read()
-            data = json.loads(raw) if raw else None
-            if resp.status >= 400:
-                raise WorldError(f"{resp.status} {path}: {data}")
-            return data
+            return resp.status, (json.loads(raw) if raw else None)
         finally:
             conn.close()
 
 
 class WorldError(RuntimeError):
-    pass
+    """The receiver answered with a status. Carried, because which statuses mean "unknown" and
+    which mean "no" is the receiver's semantics, and an adapter translates them (§9.2)."""
+
+    def __init__(self, message: str, *, status: int = 500) -> None:
+        super().__init__(message)
+        self.status = status

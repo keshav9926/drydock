@@ -17,10 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from crashproof.adapters.base import SutHandle
+from crashproof.faults.injectors.proxy import ProxyInjector
 from crashproof.faults.log import TrialDir
 from crashproof.faults.schedule import Schedule, expand
 from crashproof.faults.spec import FaultSpec
 from crashproof.faults.supervisor import Supervisor
+from crashproof.proxy import Proxy
 from crashproof.verifier import invariants, metrics
 from crashproof.workloads.spec import Workload
 from crashproof.world import oracle
@@ -89,8 +91,21 @@ async def run_trial(
     world = world_from_endpoints(workload.endpoint_decls(), log_path=trial.receipts_path)
     server = WorldServer(world, port=0)
     await server.start()
+    # In `proxy` mode the SUT is pointed at the proxy, which is pointed at the World. The proxy is
+    # the firing site; the SUT's shim rides along observe-only, so model calls are still counted
+    # at the wire (§11.2).
+    proxy = None
+    world_url = server.base_url
+    if spec.mode == "proxy":
+        proxy = Proxy(
+            server.base_url,
+            ProxyInjector(trial, schedule, trial_id=trial_id),
+            tool_names={t.endpoint: t.name for t in workload.tools_for(variant)},
+        )
+        await proxy.start()
+        world_url = proxy.base_url
 
-    handle = SutHandle(trial_dir=trial.path, dependency=None, world_url=server.base_url)  # type: ignore[arg-type]
+    handle = SutHandle(trial_dir=trial.path, dependency=None, world_url=world_url)  # type: ignore[arg-type]
     started = time.time()
     try:
         # 2. the SUT's own store, owned by the adapter that knows what belongs in it
@@ -102,7 +117,9 @@ async def run_trial(
             schedule,
             trial_id=trial_id,
             argv=adapter.worker_argv(handle),
-            env=adapter.worker_env(handle),
+            # The mode travels with the env so the SUT's shim knows whether it may fire: in
+            # `proxy` mode it observes only, and the proxy is the one firing site (§11.2).
+            env={**adapter.worker_env(handle), "CRASHPROOF_MODE": spec.mode},
             is_terminal=lambda: _terminal(adapter, handle, workload),
             worker_count=worker_count,
             secondary_env={"CRASHPROOF_KEEL_ROLE": "successor"},
@@ -234,6 +251,8 @@ async def run_trial(
         return row
     finally:
         await adapter.stop_dependency(handle)
+        if proxy is not None:
+            await proxy.stop()
         await server.stop()
 
 

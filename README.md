@@ -300,6 +300,7 @@ uv run keel db migrate --app keel.agents.demo:app
 uv run crashproof demo                                   # the one command, in under a minute
 uv run python scripts/day2_demo.py                       # the same window, narrated step by step
 uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --out out/mine   # ~1 h, serial
+uv run crashproof bench --matrix bench/specs/tier1p.yaml   --out out/proxy  # the same windows, from the network edge
 uv run crashproof verify out/mine/results.jsonl --recheck                    # the publication gate
 ```
 
@@ -438,6 +439,7 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
 | `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 44 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 12 N/A with reasons; S8 judged from the whole tree of journals |
 | `tests/unit/test_delegation.py` | children under contracts: the spawn as one transaction, results that wake the parent, the parent grading the result, cancel asked then forced by takeover, the reaper collecting a stray, fan-out bounded by slots |
+| `tests/unit/test_proxy.py` | the black-box injector: the shim's three instants one process out, what the World did versus what the SUT was told under a dropped, 5xx, malformed or never-sent answer, real kills aimed at the pid the SUT wrote, a freeze that forwards nothing until the thaw |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
 
 The property files drive the *real* runtime over `MemoryJournal` + `FakeClock` and take its journal — random

@@ -13,7 +13,7 @@ This file is the flag-level detail.
 
 | Surface | Declared | Why not, and when |
 |---|---|---|
-| `inject`/`chaos --mode hook\|shim\|proxy` | §25.3 | Mode is a property of the **spec file** (`mode: shim`), where it is validated — it decides which fault vocabulary is legal, and a CLI override would be a second source of truth for exactly the field that must not have one. `hook` cells run under `pytest tests/conformance`; `proxy` is week 2 (`FaultSpec` refuses it by name). |
+| `inject`/`chaos --mode hook\|shim\|proxy` | §25.3 | Mode is a property of the **spec file** (`mode: shim`), where it is validated — it decides which fault vocabulary is legal, and a CLI override would be a second source of truth for exactly the field that must not have one. `hook` cells run under `pytest tests/conformance`; `shim` and `proxy` specs run through `chaos`/`bench` unchanged, the mode deciding where the injector sits (`bench/specs/tier1p.yaml` is the proxy twin of matrix v0 and tier1a). |
 | `inject --trial-dir D` | §25.3 | `--out` already names where the trial directory goes, and the trial id inside it is `t-<seed>` by rule. |
 | `bench --tier screening\|confirmation` | §25.3 | The confirmation tier at n = 300 on fresh seeds is week 3. Today the whole of it is `--seeds 300 --base-seed <fresh>`; the flag arrives when the *selection* rule does — every non-unanimous cell and every cell under a claimed difference (§15.3). |
 | `verify --claims F` | §25.3 | Claims are an **adapter declaration** (§13.3), not an input. A claims file would let the thing being judged pick its own bar, which is the one property the Jepsen rule cannot survive. |

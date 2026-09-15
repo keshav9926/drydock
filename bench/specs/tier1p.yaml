@@ -1,0 +1,48 @@
+# tier1p — the same windows, seen from the network edge (§11.2, §27.7).
+#
+# `proxy` mode puts the injector between the SUT and the World instead of inside the SUT. The
+# three tool boundaries are the shim's, one process further out, and the correspondence table in
+# §11.2 says what precision that loses: `before:tool_call` fires on a request that has already
+# left the SUT, and `after:tool_return` lands before the SUT parses the bytes rather than inside
+# its checkpoint write. A cell here that agrees with its `shim` twin (matrix v0, tier1a) says the
+# window is real and not an artefact of where the instrument sat; one that disagrees is a finding
+# about the instrument, printed beside both.
+#
+# Two faults exist only here, because a shim sits inside the client and cannot do to a socket what
+# a network does: `tool_dropped_response` (the World applied and answered; the socket closes with
+# nothing written) and `tool_malformed` (a 200 whose body is not JSON). Both are "applied, then
+# the answer went wrong", and the honest disposal is the timeout's: EXTERNAL ⇒ AMBIGUOUS ⇒ probe.
+#
+# No model faults: model traffic does not cross the proxy in the scripted configuration, and a
+# spec naming a model boundary is refused with that reason rather than firing nothing.
+workload: tool_chain_1_effect
+mode: proxy
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, L1, L2]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - kill@before:tool_call
+  - kill@after:tool_effect
+  - kill@after:tool_return
+  - pause_past_ttl@before:tool_call
+  - tool_timeout@before:tool_call
+  - tool_500@after:tool_effect
+  - tool_dropped_response@after:tool_effect
+  - tool_malformed@after:tool_effect
+
+adapters:
+  - name: keel
+    key_source: framework
+    configs:
+      - {id: default}
+  - name: langgraph
+    key_source: none
+    configs:
+      - {id: sync, durability: sync}

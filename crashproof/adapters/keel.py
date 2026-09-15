@@ -114,16 +114,24 @@ def _build_tool(
         from crashproof.faults.injectors.base import FaultResponse
         from keel.core.errors import Rejected, UnknownOutcome
 
+        from crashproof.world.client import WorldError
+
         key = tctx.effect_key if sends_key else None
         try:
             if shim is not None:
                 return await shim.tool_call(decl.name, endpoint, args, effect_key=key)
             return await world.acall(endpoint, args, effect_key=key)
-        except FaultResponse as exc:
+        except (FaultResponse, WorldError) as exc:
             # Translating the harness's fault into the runtime's own vocabulary is the adapter's
             # job and the limit of it: which status means "unknown" and which means "no" is the
-            # receiver's semantics, not a favour to the runtime.
+            # receiver's semantics, not a favour to the runtime. The same translation whether the
+            # status was raised by the shim or arrived over the wire from the proxy.
             raise (Rejected if 400 <= exc.status < 500 else UnknownOutcome)(str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            # A dropped connection, a reset, a body that is not JSON: the receiver failed to
+            # *answer*, and nothing is known about the effect — §8.5's transport ambiguity, which
+            # the class disposes of exactly as it disposes of a timeout.
+            raise UnknownOutcome(f"{type(exc).__name__}: {exc}") from exc
 
     if decl.resolution == "probe":
 
@@ -632,16 +640,21 @@ async def _worker() -> None:  # pragma: no cover - subprocess
     world = WorldClient(os.environ[ENV_WORLD])
     role = os.environ.get(ENV_ROLE, "worker")
 
+    # The only process that knows its own pid for certain says so — a launcher shim can make
+    # `Popen.pid` the wrong process, and the proxy aims kills and freezes by this file (§11.7).
+    (trial.path / "sut" / f"pid-{cursor.recovery_index}").write_text(str(os.getpid()), encoding="utf8")
+
     # Every SUT process carries a shim; only the one under test may fire. The successor observes
     # so that its model and tool calls are counted at the wire like anybody else's, and cannot
-    # match, so it can never freeze the very process it exists to take over from.
+    # match, so it can never freeze the very process it exists to take over from. In `proxy`
+    # mode nobody in the SUT fires: the proxy is the firing site, and the shim only counts.
     shim = ToolShim(
         trial,
         Schedule.read(trial.schedule_path),
         trial_id=cursor.trial_id,
         recovery_index=cursor.recovery_index,
         world=world,
-        observe_only=role != "worker",
+        observe_only=role != "worker" or os.environ.get("CRASHPROOF_MODE") == "proxy",
     )
 
     app = build_app(workload, variant, world, shim, os.environ[ENV_DSN])
