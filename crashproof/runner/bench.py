@@ -57,6 +57,9 @@ class Matrix:
     #: A fault aimed at a model boundary needs a model landmark. Aiming a model fault at a
     #: tool landmark is a trigger that can never match, which is a silently empty cell.
     model_landmark: str = "model:*"
+    #: How long the harness-as-human waits before granting under `approval_delay` (W5). Pinned in
+    #: the matrix file and printed, like every other number that could move a result.
+    approval_delay_ms: float = 500.0
 
     @classmethod
     def load(cls, path: Path | str) -> "Matrix":
@@ -110,19 +113,34 @@ class Matrix:
         base["faults"] = [
             self._fault(f"f{i + 1}", part) for i, part in enumerate(trigger.split("+"))
         ]
+        if any(part.startswith("approval_expiry") for part in trigger.split("+")):
+            # A human who never answers changes what "correct" looks like: the gated effect must
+            # *not* happen, and a run that completes without it has done the right thing. Stated on
+            # the spec, so it is hashed into the cell's identity rather than assumed by the verifier.
+            base["expected_effects"] = []
+            base["expected_world_state"] = {}
         return from_doc(base)
 
     def _fault(self, fault_id: str, part: str) -> dict[str, Any]:
         fault_type, _, boundary = part.rpartition("@")
         boundary = boundary or part
         fault_type = fault_type or "kill"
-        landmark = self.model_landmark if "model" in boundary else self.landmark
+        if boundary == "supervisor":
+            # The human-in-the-loop faults are addressed at the wait itself, which the workload
+            # declares as an `approval:` landmark. `*` because a matrix pins one landmark per
+            # kind and a workload gates one call; a second gate would earn a second knob.
+            landmark = "approval:*"
+        else:
+            landmark = self.model_landmark if "model" in boundary else self.landmark
         trigger: dict[str, Any] = {"boundary": boundary, "landmark": landmark, "occurrence": 1}
         if fault_type in MODIFIERS:
             # The whole point of a modifier: it addresses a *later incarnation*, so it is exempt
             # from the reachability bound and invisible to a runtime that never produces one.
             trigger["recovery_index"] = 1
-        return {"id": fault_id, "type": fault_type, "trigger": trigger}
+        fault: dict[str, Any] = {"id": fault_id, "type": fault_type, "trigger": trigger}
+        if fault_type == "approval_delay":
+            fault["params"] = {"delay_ms": self.approval_delay_ms}
+        return fault
 
 
 async def run_matrix(

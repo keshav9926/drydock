@@ -113,11 +113,28 @@ async def create_issue_idempotent(args: dict[str, Any], tctx: ToolCtx) -> dict[s
 async def tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     task = args.get("task", "file an issue")
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
-    for _ in range(6):
+    for _ in range(8):
         resp = await ctx.model(messages, name="decide")
         if not resp.tool_calls:
             return {"answer": resp.text}
+        # Calls the model wants made *before* it asks a human (W5-pre). Ordinary steps: each is
+        # memoized on its own, which is the whole difference the tier-2 cell measures.
+        for pre in resp.provider_meta.get("before_approval") or []:
+            result = await ctx.tool(pre["name"], **pre["args"])
+            messages = [*messages, {"role": "tool_result", "content": {"tool": pre["name"], "result": result}}]
         call = resp.tool_calls[0]
+        gate = resp.provider_meta.get("approval")
+        if gate:
+            # The wait, bound to the call it authorises. The decision is a value the program reads,
+            # never an exception; a refusal simply is not followed by the call. `expires_in` comes
+            # from the run's input because the deadline a cell measures is the trial's, not the
+            # program's. The approval adds no `tool_result`: the script is keyed on tools answered,
+            # and a question to a human is not one.
+            decision = await ctx.approve(
+                dict(gate), expires_in=args.get("expires_in"), gates=(call.name, dict(call.args))
+            )
+            if decision["decision"] != "granted":
+                return {"answer": f"not done: approval {decision['decision']}", "decision": decision}
         result = await ctx.tool(call.name, **call.args)
         messages = [
             *messages,

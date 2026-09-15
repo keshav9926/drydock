@@ -436,9 +436,10 @@ class StepEngine:
         """
         from uuid import uuid4
 
-        payload = dict(intent.args or {})
-        expires_in = payload.pop("expires_in", None)
-        binds = payload.pop("binds_effect_key", None)
+        args = dict(intent.args or {})
+        payload = dict(args.get("payload") or {})
+        expires_in = args.get("expires_in")
+        binds = args.get("binds_effect_key")
         approval_id = uuid4()
         hooks.at("before:intent_commit", **_where(intent))
         async with self.journal.append(self.lease) as tx:

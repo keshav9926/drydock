@@ -129,6 +129,18 @@ class RuntimeAdapter(Protocol):
 
     async def collect(self, handle: SutHandle) -> CanonicalResult: ...
 
+    async def approve(self, handle: SutHandle, *, by: str = "harness", decision: str = "approve") -> bool:
+        """The harness playing the human (W5). Called when `status()` reports WAITING and the
+        schedule's `approval_delay` has elapsed; never called under `approval_expiry`.
+
+        Optional: an adapter without it cannot run a gated workload, and the trial says so rather
+        than timing out. Whatever it does must be the framework's *documented* resume primitive and
+        nothing more — a Keel signal row, a LangGraph `Command(resume=...)` — because the arm is
+        being measured on how it waits, and an adapter that helped it wait would be measuring
+        itself.
+        """
+        ...
+
     async def replay_check(self, handle: SutHandle, result: CanonicalResult) -> dict[str, Any] | None:
         """C1: does the runtime's own replay reproduce this journal? (§15, §10.9)
 

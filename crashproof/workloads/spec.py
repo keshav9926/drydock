@@ -56,11 +56,31 @@ class WorldDecl(Frozen):
 
 class ScriptNode(Frozen):
     """`key` is the ordered (tool_name, occurrence) pairs answered in the request — never a
-    counter. A re-asked request after a restart produces the same key, so the same node."""
+    counter. A re-asked request after a restart produces the same key, so the same node.
+
+    A decision may carry two optional members beyond `tool_calls` / `final`, and both are
+    runtime-neutral statements about *when a human is asked* (W5, §29.1):
+
+        approval: {payload}      ask before the first tool call in this node; the call is gated
+        before_approval: [...]   tool calls fired in the same node, *before* the question is asked
+
+    `before_approval` exists for one measurement. Every runtime documents what happens to work done
+    before a wait when the wait is resumed; §13.4 records LangGraph's — pre-interrupt code re-runs —
+    as a caveat. A node that fires an effect and then asks is how that caveat becomes a cell, and it
+    lives in its own tier-2 variant so nobody mistakes it for the headline.
+    """
 
     key: tuple[tuple[str, int], ...] = ()
     decision: dict[str, Any]
     alternate: dict[str, Any] | None = None
+
+    @property
+    def gated(self) -> bool:
+        return bool(self.decision.get("approval")) and bool(self.decision.get("tool_calls"))
+
+    def all_tool_calls(self) -> list[dict[str, Any]]:
+        """Every call this node makes, in execution order: the pre-approval ones, then the gated."""
+        return [*self.decision.get("before_approval", []), *self.decision.get("tool_calls", [])]
 
 
 class Variant(Frozen):
@@ -76,6 +96,9 @@ class Variant(Frozen):
 class Expected(Frozen):
     status: str = "COMPLETED"
     result: dict[str, Any] = Field(default_factory=dict)
+    #: The submitted arguments, identical for every arm. Declared with the expectation because the
+    #: two are one contract: *this* input yields *that* end state.
+    input: dict[str, Any] = Field(default_factory=lambda: {"task": "file an issue"})
 
 
 class Workload(Frozen):
@@ -162,18 +185,35 @@ class Workload(Frozen):
             nodes = self.script if name in ("*", "") else [n for n in self.script if _node_id(n) == name]
             return len(nodes)
         if kind == "tool":
-            calls = [c for node in self.script for c in node.decision.get("tool_calls", [])]
+            calls = [c for node in self.script for c in node.all_tool_calls()]
             if name in ("*", ""):
                 return len(calls)
             return sum(1 for c in calls if c.get("name") == name)
+        if kind == "approval":
+            return sum(1 for node in self.script if node.gated)
         return 0
 
     def landmarks(self) -> tuple[str, ...]:
         """Every landmark a fault may be aimed at, which is also what a spec is checked against."""
-        tools = {c.get("name") for node in self.script for c in node.decision.get("tool_calls", [])}
+        tools = {c.get("name") for node in self.script for c in node.all_tool_calls()}
+        gates = [f"approval:{_node_id(n)}" for n in self.script if n.gated]
         return tuple(
-            [f"model:{_node_id(n)}" for n in self.script] + [f"tool:{t}" for t in sorted(tools) if t]
+            [f"model:{_node_id(n)}" for n in self.script]
+            + [f"tool:{t}" for t in sorted(tools) if t]
+            + gates
         )
+
+    def gated_tools(self) -> tuple[str, ...]:
+        """The tools a human stands in front of. S7 is judged on these and on nothing else."""
+        return tuple(
+            c["name"] for node in self.script if node.gated for c in node.decision["tool_calls"][:1]
+        )
+
+    @property
+    def input(self) -> dict[str, Any]:
+        """What every arm submits. Declared beside the expectation because the two are one
+        contract: *this* input yields *that* end state."""
+        return dict(self.expected.input)
 
 
 def _node_id(node: ScriptNode) -> str:

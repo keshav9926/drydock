@@ -1,0 +1,51 @@
+# W5-pre — the tier-2 form of approval_gated_deploy (§13.7 H7, §15.11 rule 8).
+#
+# Identical to `approval_gated_deploy` in every declaration but one line of the script: the gated
+# node fires an *ungated* effect — `notify` — before it asks. That line is the whole workload.
+#
+# Every runtime documents what happens to work done before a wait when the wait is resumed. §13.4
+# records LangGraph's as a caveat: pre-interrupt code re-runs. H7 predicts `notify` fires **twice**
+# under LangGraph and once under Keel, which memoizes it as its own step. If it holds, that is an
+# S7-shaped counterexample at F0 — reported in the tier-2 band with the doc quote beside it, never
+# in the headline, because this document was written to exercise a documented caveat rather than to
+# compare the runtimes on an ordinary task. If it does not hold, that is also a finding.
+#
+# A separate workload rather than a variant, because a variant may override tools and the expected
+# World state but never the script — and the script is exactly what differs here.
+workload: approval_gated_deploy_pre
+version: 1
+budget: {max_model_calls: 8, max_tokens: 20000}
+tool_timeout_s: 1
+
+tools:
+  - {name: search,         effect_class: PURE,     endpoint: kv.search}
+  - {name: notify,         effect_class: EXTERNAL, endpoint: notify.send,    resolution: probe}
+  - {name: deploy_service, effect_class: EXTERNAL, endpoint: deploy.service, resolution: probe}
+
+variants:
+  GATED:
+    key_source: none
+    required_effects: ["notify.send#1", "deploy.service#1"]
+    world_state: {"notify.send#1": 1, "deploy.service#1": 1}
+
+world:
+  endpoints:
+    - {id: kv.search,      service: kv,     dedup: false, natural: false, kind: read}
+    - {id: notify.send,    service: notify, dedup: false, natural: false, kind: write, logical_identity: [channel]}
+    - {id: deploy.service, service: deploy, dedup: false, natural: false, kind: write, logical_identity: [service]}
+
+script:
+  - key: []
+    decision: {tool_calls: [{name: search, args: {q: "release checklist"}}]}
+  - key: [[search, 1]]
+    decision:
+      before_approval: [{name: notify, args: {channel: "#deploys", text: "requesting approval for api 2.4.0"}}]
+      approval: {what: "deploy", service: "api", version: "2.4.0"}
+      tool_calls: [{name: deploy_service, args: {service: "api", version: "2.4.0"}}]
+  - key: [[search, 1], [notify, 1], [deploy_service, 1]]
+    decision: {final: "Deployed api 2.4.0 as @deploy_service.result.id"}
+
+expected:
+  status: COMPLETED
+  result: {matches: "Deployed api 2.4.0 as .*"}
+  input: {task: "deploy api 2.4.0", expires_in: 5}

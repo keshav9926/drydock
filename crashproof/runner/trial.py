@@ -106,6 +106,11 @@ async def run_trial(
             is_terminal=lambda: _terminal(adapter, handle, workload),
             worker_count=worker_count,
             secondary_env={"CRASHPROOF_KEEL_ROLE": "successor"},
+            # W5: the harness is the human. An adapter without `approve` cannot run a gated
+            # workload, and the trial then times out with WAITING in the row rather than
+            # pretending — `on_waiting` is None and the supervisor never grants.
+            status=lambda: adapter.status(handle),
+            on_waiting=(lambda: adapter.approve(handle)) if hasattr(adapter, "approve") else None,
         )
         sup = await supervisor.run(lambda: adapter.submit(handle))
 
@@ -137,7 +142,13 @@ async def run_trial(
             journal=_journal(result.export),
             status=result.status,
             expected_status=workload.expected.status,
-            required_effects=workload.variant(variant).required_effects,
+            # The spec may say what "correct" looks like under *this* fault (`approval_expiry`:
+            # nothing deployed); otherwise the workload's variant does.
+            required_effects=(
+                tuple(spec.expected_effects)
+                if spec.expected_effects is not None
+                else workload.variant(variant).required_effects
+            ),
             claims=adapter.claims,
             effect_class=_class_under_test(workload, variant),
             faults=fault_rows,
@@ -172,7 +183,11 @@ async def run_trial(
             required_effects=facts.required_effects,
             status=result.status,
             expected_status=workload.expected.status,
-            expected_world_state=workload.variant(variant).world_state,
+            expected_world_state=(
+                dict(spec.expected_world_state)
+                if spec.expected_world_state is not None
+                else workload.variant(variant).world_state
+            ),
             faults=fault_rows,
             t_restarts=sup.t_restarts,
             wall_ms=sup.wall_ms,

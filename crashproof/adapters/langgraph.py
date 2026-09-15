@@ -28,6 +28,7 @@ asymmetry is itself the `exit` finding.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -77,6 +78,8 @@ def build_graph(workload: Workload, variant: str, world: WorldClient, shim: Tool
         return await world.acall(endpoints[name], args)
 
     async def agent(state: State) -> dict[str, Any]:
+        from langgraph.types import interrupt
+
         answered = list(state.get("tools_answered") or [])
         key = Workload.node_key(answered)
         node = workload.node_for(key)
@@ -91,13 +94,58 @@ def build_graph(workload: Workload, variant: str, world: WorldClient, shim: Tool
             if not calls:
                 return {"answer": _resolve_text(str(decision.get("final", "")), results), "pending": None}
             call = calls[0]
-            return {"pending": {"name": call["name"], "args": _resolve(call.get("args", {}), results)}}
+            return {
+                "pending": {"name": call["name"], "args": _resolve(call.get("args", {}), results)},
+                "approval": decision.get("approval"),
+                "before_approval": [
+                    {"name": c["name"], "args": _resolve(c.get("args", {}), results)}
+                    for c in decision.get("before_approval") or []
+                ],
+            }
 
-        return (
+        decided = (
             await shim.model_call(node_id, decide, prompt=dict(state))
             if shim is not None
             else decide()
         )
+        if not decided.get("pending"):
+            return decided
+
+        answered_now = list(answered)
+        results_now = dict(state.get("results") or {})
+        # W5-pre: effects the script fires in this node *before* asking. Deliberately not wrapped in
+        # `@task` and deliberately in the same node as the `interrupt()` below — that is the
+        # documented caveat the tier-2 workload exists to measure ("pre-interrupt code re-runs",
+        # §13.4), and wrapping it would measure the adapter's care instead of the framework's
+        # resume semantics. The headline workload has no such calls, so this loop runs only where
+        # the workload asked for it.
+        for pre in decided.get("before_approval") or []:
+            result = await world.acall(endpoints[pre["name"]], pre["args"]) if shim is None else (
+                await shim.tool_call(pre["name"], endpoints[pre["name"]], pre["args"])
+            )
+            answered_now.append(pre["name"])
+            results_now[pre["name"]] = result
+
+        gate = decided.get("approval")
+        if gate:
+            # The framework's documented human-in-the-loop primitive, and nothing else. The graph
+            # stops here; the checkpoint holds the state; resumption is a fresh `ainvoke` with
+            # `Command(resume=...)` on the same thread — from outside, by the harness, which is
+            # what `recovery_mechanism = harness` means.
+            decision = interrupt(dict(gate))
+            if not isinstance(decision, dict) or decision.get("decision") != "granted":
+                verdict = decision.get("decision") if isinstance(decision, dict) else str(decision)
+                return {
+                    "answer": f"not done: approval {verdict}",
+                    "pending": None,
+                    "tools_answered": answered_now,
+                    "results": results_now,
+                }
+        return {
+            "pending": decided["pending"],
+            "tools_answered": answered_now,
+            "results": results_now,
+        }
 
     async def tools(state: State) -> dict[str, Any]:
         pending = state["pending"]
@@ -245,8 +293,24 @@ class LangGraphAdapter:
         handle.run_ref = thread_id
         (handle.trial_dir / "sut" / "thread_id").write_text(thread_id, encoding="utf8")
         (handle.trial_dir / "sut" / "input.json").write_text(
-            json.dumps({"task": "file an issue"}), encoding="utf8"
+            json.dumps(self.workload.input), encoding="utf8"
         )
+
+    async def approve(self, handle: SutHandle, *, by: str = "harness", decision: str = "approve") -> bool:
+        """The harness plays the human: it records the decision where the worker can find it.
+
+        The framework's resume primitive is `ainvoke(Command(resume=...))` on the same thread, and
+        it has to be called *by a process* — so the worker calls it, on this instruction. The
+        instruction is a file rather than an IPC channel for the same reason the fault log is: a
+        worker that dies and comes back has to be able to find it again. It is written once and
+        never deleted, because it is the human's decision and the decision stands; whether the
+        framework needs it twice is the framework's finding.
+        """
+        verdict = "granted" if decision == "approve" else "rejected"
+        (handle.trial_dir / "sut" / "resume").write_text(
+            json.dumps({"decision": verdict, "by": by}), encoding="utf8"
+        )
+        return True
 
     async def on_worker_restart(self, handle: SutHandle) -> None:
         """The re-invoke happens inside the restarted worker, which reads the thread id from the
@@ -323,6 +387,24 @@ async def _worker() -> None:  # pragma: no cover - subprocess
             (trial.path / "sut" / "input.json").read_text(encoding="utf8")
         )
         state = await graph.ainvoke(payload, config=config, durability=durability)
+
+        # W5. An interrupted graph returns with `__interrupt__` set and the checkpoint holding the
+        # parked state. The worker reports WAITING, waits for the harness to record the human's
+        # decision, and resumes with the framework's own primitive on the same thread. A restarted
+        # worker whose thread is already parked lands here too: `ainvoke(None, ...)` on an
+        # interrupted thread re-raises the interrupt, which is how the arm answers "what happens
+        # to a wait when the process holding it dies" — the question §13.7's H7 asks.
+        from langgraph.types import Command
+
+        resume = trial.path / "sut" / "resume"
+        status = trial.path / "sut" / "status"
+        while state.get("__interrupt__"):
+            status.write_text("WAITING", encoding="utf8")
+            while not resume.exists():
+                await asyncio.sleep(0.05)
+            decision = json.loads(resume.read_text(encoding="utf8"))
+            status.write_text("RUNNING", encoding="utf8")
+            state = await graph.ainvoke(Command(resume=decision), config=config, durability=durability)
 
     (trial.path / "sut" / "answer.json").write_text(
         json.dumps({"answer": state.get("answer")}), encoding="utf8"

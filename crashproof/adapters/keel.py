@@ -194,13 +194,25 @@ class WorkloadProvider:
         text = _resolve_text(str(decision.get("final", "")), results) if not calls else str(decision.get("text", ""))
         prompt = len(json.dumps(req.model_dump(mode="json"), sort_keys=True)) // 4
         self.tokens += prompt
+        # The gate travels as provider metadata rather than as a tool call, because it is not one:
+        # it is a statement about *when a human is asked*, and the reference program turns it into
+        # `ctx.approve(gates=...)` on the call that follows. `before_approval` rides the same way —
+        # the calls a node makes before it asks, which W5-pre exists to measure (§13.7 H7).
+        meta: dict[str, Any] = {"provider": self.name, "model": "scripted-1", "node": node_id}
+        if decision.get("approval"):
+            meta["approval"] = dict(decision["approval"])
+        if decision.get("before_approval"):
+            meta["before_approval"] = [
+                {"name": c["name"], "args": _resolve(c.get("args", {}), results)}
+                for c in decision["before_approval"]
+            ]
         return ModelResponse(
             text=text,
             tool_calls=calls,
             stop_reason="tool_use" if calls else "end_turn",
             usage=Usage(input_tokens=prompt, output_tokens=len(text) // 4),
             message=Message(role="assistant", content=text),
-            provider_meta={"provider": self.name, "model": "scripted-1", "node": node_id},
+            provider_meta=meta,
         )
 
     async def stream(self, req: Any):  # pragma: no cover - STREAMS is week 3
@@ -425,7 +437,7 @@ class KeelAdapter:
         world = WorldClient(handle.world_url)
         app = build_app(self.workload, self.variant, world, None, handle.dependency.dsn or "")
         try:
-            run = await app.start("tool_chain", {"task": "file an issue"})
+            run = await app.start("tool_chain", self.workload.input)
             handle.run_ref = str(run.run_id)
             (handle.trial_dir / "sut" / "run_id").write_text(handle.run_ref, encoding="utf8")
         finally:
@@ -442,11 +454,29 @@ class KeelAdapter:
             return "UNKNOWN"
         if row.terminal_at is not None:
             return _status_of(row.phase)
-        return _status_of(row.phase) if row.phase == "SUSPENDED" else "RUNNING"
+        # A parked run is not running. It holds no lease and nothing polls it, and the harness has
+        # to be able to see that — it is the moment the harness plays the human (W5), and it is
+        # the state a `kill_while_waiting` cell aims at.
+        if row.phase == "SUSPENDED" or _status_of(row.phase) == "WAITING":
+            return _status_of(row.phase)
+        return "RUNNING"
 
     async def on_worker_restart(self, handle: SutHandle) -> None:
         """A no-op, and that is the finding: the restarted process finds its own work."""
         return None
+
+    async def approve(self, handle: SutHandle, *, by: str = "harness", decision: str = "approve") -> bool:
+        """The harness plays the human: one `approve` row in the inbox and nothing else (W5).
+
+        Nothing is handed to a worker. The row makes the run claimable, whichever worker is alive
+        claims it, and the decision is journaled by *that* holder at its drain — which is why a
+        kill during the wait followed by a grant still yields exactly one gated effect: the grant
+        was never in a process's memory to lose.
+        """
+        run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()
+        return await self._client(handle).signal(
+            uuid.UUID(run_ref), decision, {"by": by}, source="api:harness"
+        )
 
     async def collect(self, handle: SutHandle) -> CanonicalResult:
         run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()

@@ -1,0 +1,50 @@
+# W5 — approval_gated_deploy: a human stands in front of the one dangerous call (§29.1, §13.7 H7).
+#
+# The same document runs against every arm. What it adds to W1 is one runtime-neutral statement:
+# `approval:` on a script node means "ask before the first tool call in this node". How each
+# runtime waits — Keel parks with no lease and no runnable_at, LangGraph `interrupt()`s — is the
+# adapter's business and is what the cell measures.
+#
+# This is the headline form: the gated effect sits *after* the wait. §13.7's H7 predicts one
+# applied effect for every arm, LangGraph included — and if that holds it is the honest result: no
+# difference. The tier-2 form, which fires an ungated effect in the same node *before* asking, is a
+# separate workload (`approval_gated_deploy_pre`), because a variant may override tools and the
+# expected World state but never the script — and the two forms differ in exactly the script.
+workload: approval_gated_deploy
+version: 1
+budget: {max_model_calls: 8, max_tokens: 20000}
+tool_timeout_s: 1
+
+tools:
+  - {name: search,         effect_class: PURE,     endpoint: kv.search}
+  - {name: deploy_service, effect_class: EXTERNAL, endpoint: deploy.service, resolution: probe}
+
+variants:
+  GATED:
+    key_source: none
+    required_effects: ["deploy.service#1"]
+    world_state: {"deploy.service#1": 1}
+
+world:
+  endpoints:
+    - {id: kv.search,      service: kv,     dedup: false, natural: false, kind: read}
+    - {id: deploy.service, service: deploy, dedup: false, natural: false, kind: write, logical_identity: [service]}
+
+# The gate is on the node that would call `deploy_service`: it asks, then calls.
+script:
+  - key: []
+    decision: {tool_calls: [{name: search, args: {q: "release checklist"}}]}
+  - key: [[search, 1]]
+    decision:
+      approval: {what: "deploy", service: "api", version: "2.4.0"}
+      tool_calls: [{name: deploy_service, args: {service: "api", version: "2.4.0"}}]
+  - key: [[search, 1], [deploy_service, 1]]
+    decision: {final: "Deployed api 2.4.0 as @deploy_service.result.id"}
+
+expected:
+  status: COMPLETED
+  result: {matches: "Deployed api 2.4.0 as .*"}
+  # `expires_in` is a property of the trial, not of the program: 5 s is long enough that a human
+  # who answers (the harness grants in 0.5 s) never reaches it, and short enough that a cell
+  # where nobody answers resolves inside the trial's timeout rather than as an L1 failure.
+  input: {task: "deploy api 2.4.0", expires_in: 5}

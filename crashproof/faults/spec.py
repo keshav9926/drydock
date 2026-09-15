@@ -47,11 +47,24 @@ HOOK_BOUNDARIES = (
 BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")
 
 #: Fault types that end the process, so the supervisor must have restarts left for them.
-RESTART_CAUSING = frozenset({"kill", "sigterm_grace_ok", "sigterm_grace_too_short", "pause_past_ttl"})
+RESTART_CAUSING = frozenset(
+    {"kill", "sigterm_grace_ok", "sigterm_grace_too_short", "pause_past_ttl", "kill_while_waiting"}
+)
 #: Types the supervisor must not treat as a restart request: the worker is still alive.
 NON_FATAL = frozenset(
-    {"tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500", "model_reask_alternate"}
+    {
+        "tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500",
+        "model_reask_alternate", "approval_delay", "approval_expiry",
+    }
 )
+
+#: The human-in-the-loop faults (W5, §29.1). Executed by the *supervisor*, because the harness is
+#: the human: `approval_delay` grants after `delay_ms`; `approval_expiry` never grants and lets the
+#: workload's `expires_in` decide; `kill_while_waiting` ends the process while the run is parked and
+#: grants afterwards — §13.7's H7, "killing during the approval wait and then granting yields exactly
+#: one gated effect". None of them fires inside the SUT, so a shim has nothing to do with them, and
+#: all three are addressed at the `approval:<node>` landmark the workload declares.
+SUPERVISOR_FAULT_TYPES = frozenset({"approval_delay", "approval_expiry", "kill_while_waiting"})
 
 #: A modifier, not a cell of its own (§14.2). It only fires when a *later* incarnation re-asks a
 #: question, so a spec that carries it without something to cause that incarnation describes a
@@ -78,6 +91,11 @@ SHIM_FAULT_TYPES = frozenset(
         "sigterm_grace_ok",
         "sigterm_grace_too_short",
         "model_reask_alternate",
+        # Supervisor-executed, but legal in a `shim` spec: the cell is still a black-box cell, and
+        # the harness standing in for the human is part of the trial, not part of the runtime.
+        "approval_delay",
+        "approval_expiry",
+        "kill_while_waiting",
     }
 )
 
@@ -90,6 +108,9 @@ FAULT_BOUNDARIES = {
     "model_timeout": {"before:model_call"},
     "model_500": {"before:model_call"},
     "model_reask_alternate": {"before:model_call"},
+    "approval_delay": {"supervisor"},
+    "approval_expiry": {"supervisor"},
+    "kill_while_waiting": {"supervisor"},
 }
 
 
@@ -162,6 +183,13 @@ class FaultSpec(Frozen):
     max_recoveries: int = 3
     timeout: float = 120.0
     faults: tuple[Fault, ...] = ()
+    #: What the World must show *under this fault*, when that differs from the workload's own
+    #: expectation. A human who never answers is a fault (`approval_expiry`), and the correct end
+    #: state under it is "COMPLETED, nothing deployed" — a run that deploys anyway has failed S7,
+    #: and a run that refuses has not failed S3. `None` means the workload's variant decides, which
+    #: is every other cell. Part of the spec, so part of `spec_hash`: it changes the claim.
+    expected_effects: tuple[str, ...] | None = None
+    expected_world_state: dict[str, int] | None = None
     spec_hash: str = ""
 
     def model_post_init(self, _: Any) -> None:
@@ -170,7 +198,9 @@ class FaultSpec(Frozen):
         # A mode is a *vocabulary*, and mixing them silently is how a cell ends up firing nothing:
         # a hook boundary named in a shim spec never matches, and the trial runs green.
         allowed_types = SHIM_FAULT_TYPES | (HOOK_FAULT_TYPES if self.mode == "hook" else frozenset())
-        allowed_boundaries = HOOK_BOUNDARIES if self.mode == "hook" else SHIM_BOUNDARIES
+        # `supervisor` is legal in every mode: it is the one boundary that is not in the SUT, so
+        # no vocabulary owns it (§11.9). The human-in-the-loop faults fire there.
+        allowed_boundaries = (*(HOOK_BOUNDARIES if self.mode == "hook" else SHIM_BOUNDARIES), "supervisor")
         for f in self.faults:
             if f.type not in allowed_types:
                 raise CrashproofSpecError(

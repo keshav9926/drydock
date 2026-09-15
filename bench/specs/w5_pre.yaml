@@ -1,0 +1,37 @@
+# W5-pre — the tier-2 form of approval_gated_deploy (§13.7 H7, §15.11 rule 8).
+#
+# One line of script differs from `w5.yaml`: the gated node fires an ungated `notify` *before* it
+# asks. H7 predicts LangGraph's documented pre-interrupt re-run fires it twice on resume and Keel,
+# which memoizes it as its own step, fires it once. Published in the tier-2 band with the doc quote
+# beside it, never unioned with the headline: this document was written to exercise a documented
+# caveat, not to compare the runtimes on an ordinary task. If the prediction does not hold, that is
+# a finding too, and it is marked so.
+#
+# Fewer triggers on purpose. The baseline cell — no fault at all, just a human who answers — is the
+# one H7 is about: whether the wait itself, resumed, re-fires what came before it.
+workload: approval_gated_deploy_pre
+mode: shim
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+landmark: tool:deploy_service
+approval_delay_ms: 500
+verifier: [S1, S2, S3, S4, S5, S7, L1, L2]
+
+variants:
+  - {id: GATED, endpoint_dedup: false, resolution: probe}
+
+triggers:
+  - approval_delay@supervisor
+  - kill_while_waiting@supervisor
+
+adapters:
+  - name: keel
+    key_source: framework
+    configs:
+      - {id: default}
+  - name: langgraph
+    key_source: none
+    configs:
+      - {id: sync,  durability: sync}
+      - {id: async, durability: async}

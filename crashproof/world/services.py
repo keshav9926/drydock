@@ -293,6 +293,18 @@ class World:
         decision script cannot tell the two apart (§13.2)."""
         number = int(label.rsplit("#", 1)[1])
         ident = hashlib.sha256(label.encode()).hexdigest()[:12]
+        if ep.service != "issues":
+            # Any other write service. The shape is the same on purpose: an id derived from the
+            # logical identity, so a duplicate re-fire returns the identical object, plus the
+            # `external_ref` S2 and C3 join on. `deploy.service` and `notify.send` need nothing
+            # more than this; a service that did would earn its own branch when it arrived.
+            return {
+                "id": ident,
+                "number": number,
+                "external_ref": label,
+                "logical_identity": label,
+                **{k: v for k, v in args.items() if isinstance(v, (str, int, float, bool))},
+            }
         if ep.service == "issues":
             return {
                 "id": ident,

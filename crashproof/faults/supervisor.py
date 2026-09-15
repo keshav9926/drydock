@@ -69,6 +69,8 @@ class Supervisor:
         is_terminal: Any,
         worker_count: int = 1,
         secondary_env: dict[str, str] | None = None,
+        status: Any = None,
+        on_waiting: Any = None,
     ) -> None:
         self.trial = trial
         self.schedule = schedule
@@ -78,11 +80,18 @@ class Supervisor:
         self.is_terminal = is_terminal
         self.worker_count = worker_count
         self.secondary_env = secondary_env or {}
+        #: The harness as the human (W5). `status()` is how it notices the run is parked;
+        #: `on_waiting()` is the grant. Both optional: a workload that gates nothing never parks.
+        self.status = status
+        self.on_waiting = on_waiting
         self.result = SupervisorResult()
         self._sut: subprocess.Popen | None = None
         self._others: list[subprocess.Popen] = []
         self._seen_faults: set[str] = set()
         self._logs: list[Any] = []
+        self._waiting_since: float | None = None
+        self._granted = False
+        self._waiting_faults = [e for e in schedule.entries if e.boundary == "supervisor"]
 
     # --- the loop ------------------------------------------------------------
     async def run(self, submit: Any) -> SupervisorResult:
@@ -108,6 +117,7 @@ class Supervisor:
                 if await self.is_terminal():
                     self.result.terminal = True
                     break
+                await self._play_the_human()
                 await asyncio.sleep(POLL_S)
             else:
                 self.result.timed_out = True  # L1 FAIL
@@ -115,6 +125,76 @@ class Supervisor:
             self._stop_all()
             self.result.ended_at = time.time()
         return self.result
+
+    # --- the human (W5) --------------------------------------------------------
+    async def _play_the_human(self) -> None:
+        """When the run is parked on an approval, the harness is the person it is waiting for.
+
+        Three supervisor-executed faults decide what that person does, and they are executed here
+        rather than by a shim because they happen *outside* the runtime — a kill while parked lands
+        in a process that is, for Keel, not even holding the run (§13.7 H7):
+
+            kill_while_waiting   end the process while parked, then grant to whoever comes back
+            approval_expiry      never grant; the workload's `expires_in` decides the run's fate
+            approval_delay       grant after `delay_ms`
+
+        With none of them scheduled the grant is immediate. It is made exactly once per trial: a
+        human clicks once, and whether a runtime needs the click twice is the runtime's finding.
+        """
+        if self.status is None or self.on_waiting is None or self._granted:
+            return
+        if await self.status() != "WAITING":
+            return
+        now = time.time()
+        if self._waiting_since is None:
+            self._waiting_since = now
+            # Only the first time the park is observed: a `kill_while_waiting` fires once, on the
+            # incarnation that parked, and the successor that comes back is the one that is granted.
+            for entry in self._waiting_faults:
+                if entry.type == "kill_while_waiting" and entry.fault_id not in self._seen_faults:
+                    self._fire_from_outside(entry)
+                    if self._sut is not None and self._sut.poll() is None:
+                        process.kill(self._sut.pid)
+                    return
+        expiry = [e for e in self._waiting_faults if e.type == "approval_expiry"]
+        if expiry:
+            # The human never answers, and that is a fault that *fired* the moment the park was
+            # observed: without its row the trial has no fault rows and is voided as "the schedule
+            # never fired", which is the opposite of what happened.
+            for entry in expiry:
+                if entry.fault_id not in self._seen_faults:
+                    self._fire_from_outside(entry)
+            return
+        delay = max(
+            (float(e.params.get("delay_ms", 0.0)) for e in self._waiting_faults if e.type == "approval_delay"),
+            default=0.0,
+        )
+        if (now - self._waiting_since) * 1000.0 < delay:
+            return
+        for entry in self._waiting_faults:
+            if entry.type == "approval_delay" and entry.fault_id not in self._seen_faults:
+                self._fire_from_outside(entry)
+        self._granted = True
+        await self.on_waiting()
+
+    def _fire_from_outside(self, entry: Any) -> None:
+        """A supervisor fault leaves the same row a shim fault would, in the same file, so the
+        verifier and the placement view read one log. `sut_pid` is the incarnation the fault landed
+        on; `executed` is stamped later by `executed_flags`, like every other kill."""
+        row = FaultFired(
+            fault_id=entry.fault_id,
+            trial_id=self.trial_id,
+            recovery_index=self.result.restarts,
+            type=entry.type,
+            boundary=entry.boundary,
+            landmark=entry.landmark,
+            occurrence=entry.occurrence,
+            params=dict(entry.params),
+            trigger_observed_at=time.time(),
+            sut_pid=self._sut.pid if self._sut is not None else 0,
+        )
+        self.trial.append_fault(row)
+        self._seen_faults.add(entry.fault_id)
 
     # --- processes -----------------------------------------------------------
     def _spawn(self, recovery_index: int) -> None:
@@ -217,7 +297,7 @@ class Supervisor:
         flags: dict[str, bool] = {}
         by_incarnation = {inc.recovery_index: inc for inc in self.result.incarnations}
         for row in self.trial.faults():
-            if row.type == "kill":
+            if row.type in ("kill", "kill_while_waiting"):
                 inc = by_incarnation.get(row.recovery_index)
                 flags[row.fault_id] = bool(inc and inc.exit_code is not None)
             elif row.type == "pause_past_ttl":

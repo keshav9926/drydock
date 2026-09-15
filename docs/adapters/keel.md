@@ -71,6 +71,25 @@ two bands comparable rather than two different programs.
    IDEMPOTENT re-fires under the same key, EXTERNAL goes `STEP_AMBIGUOUS` → probe →
    `STEP_RESOLVED`. Never a guess.
 
+## W5 — the human in the loop
+
+The wait is `ctx.approve(payload, gates=(tool, args))`, one transaction — INTENT, STARTED,
+`APPROVAL_REQUESTED`, `RUN_WAITING` — followed by a release with **both** `lease_expires_at` and
+`runnable_at` NULL. The first NULL is why the wait costs no compute; the second is why it costs no
+ticks: nothing polls a parked run, and a worker looking for work finds none. The harness grants by
+inserting one `approve` row in the inbox and nothing else; whichever worker is alive claims the run
+and journals the decision at its own drain — which is why `kill_while_waiting` yields exactly one
+gated effect: the grant was never in a process's memory to lose.
+
+`binds_effect_key = effect_key(run_root_id, i+1, tool, args)` is computed before anyone decides,
+because the runtime owns the step counter, so the approval names the effect it authorises rather
+than "whatever happens next". The gate is read before STARTED; a refusal writes `attempt_no=0` and a
+`DENIED` effects row, so no attempt began and no effect was reachable (S7). Expiry is judged by the
+store's clock at drain time and outranks arrival order: an `approve` drained after `expires_at` is
+ignored and the approval expires. Under `approval_expiry` the run completes with `not done: approval
+expired` and nothing deployed — the correct end state, declared on the cell's spec so S3 does not
+mistake a refusal for a phantom completion.
+
 ## Pins
 
 `tool.timeout = 1 s`, `lease_ttl = 2 s`, heartbeat `≈ 0.67 s`, `attempt_deadline = started_at + 1 s`,
