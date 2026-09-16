@@ -651,9 +651,14 @@ class Sim:
         row = self.run(self.journal.run_row(w.lease.run_id))
         parked = [h for h in self.held if h.worker is w and h.awaited]
         w.state = "paused"
-        self.log.append({"rule": "lease_expiry", "landmark": parked[0].landmark if parked else "lease:*",
-                         "tool": bool(parked and parked[0].decl is not None),
-                         "occurrence": parked[0].attempt if parked else 1})
+        if parked:
+            where = {"landmark": parked[0].landmark, "tool": parked[0].decl is not None,
+                     "occurrence": parked[0].attempt}
+        else:  # parked on a backoff: the pause lands before the next attempt of the step it last touched
+            kind, name = w.at.get("kind"), w.at.get("name")
+            where = {"landmark": f"{kind}:{name}" if kind else "lease:*", "tool": kind == "tool",
+                     "occurrence": int(w.at.get("attempt_no") or 0) + 1}
+        self.log.append({"rule": "lease_expiry", **where})
         deadlines = [d for d in (row.lease_expires_at, row.attempt_deadline) if d is not None]
         if deadlines:
             self.tick_to(max(deadlines))

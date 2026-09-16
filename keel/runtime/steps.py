@@ -224,6 +224,11 @@ class StepEngine:
         #: §16.6. A paused run woken for a `resume` or `cancel` stays paused until its drain lifts
         #: the pause, and a drain that finds neither parks it again rather than running on.
         self._paused = state.phase == "PAUSED"
+        #: A park lost the release guard (§5.4 (4)): `runnable_at` is set and the next drain must clear
+        #: it even when the inbox is empty. The reaper's ORPHANED mark on a lease that lapsed and was
+        #: never taken sets it with no signal behind it, and a drain that only opened for signals left
+        #: it set — every park after that raced it again, for ever.
+        self._wake_pending = False
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
@@ -299,7 +304,7 @@ class StepEngine:
         if not self.allow_live or not hasattr(self.journal, "pending_signals"):
             return
         peek = await self.journal.pending_signals(self.lease.run_id)
-        if not peek and not force:
+        if not peek and not force and not self._wake_pending:
             return
 
         cancel = telling_children = False
@@ -341,6 +346,7 @@ class StepEngine:
                 await tx.clear_wake()
             if park is not None:
                 await tx.release_park(phase=park, wake_at=None, paused=park == "PAUSED")
+        self._wake_pending = False
         if peek:
             hooks.at("after:signal_consume", step_index=step_index, signals=len(peek))
         # Raised after the commit, so the journal is already durable when the program is told.
@@ -482,6 +488,7 @@ class StepEngine:
                 await tx.release_park(phase=phase, wake_at=wake_at)
         except WakeRaced:
             await self._refold()
+            self._wake_pending = True
             return False
         self.state.wake_at = wake_at
         return True
