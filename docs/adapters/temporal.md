@@ -80,10 +80,14 @@ Nothing, from the worker's side, and that is the point of `engine`.
 3. The RetryPolicy schedules attempt 2 after its 1 s initial interval; whichever worker polls the task
    queue runs it — the restarted one, spawned with the same argv.
 4. A workflow task that was bound for the dead worker's sticky queue waits out
-   `sticky_queue_schedule_to_start_timeout` (SDK default 10 s: "How long a workflow task is allowed to
-   sit on the sticky queue before it is timed out and moved to the non-sticky queue") and is then
-   replayed from history on the new worker. That 10 s, not the activity timeouts, dominates the wall
-   time of every kill cell in the smoke (one `WORKFLOW_TASK_TIMED_OUT` in each kill history).
+   `sticky_queue_schedule_to_start_timeout` ("How long a workflow task is allowed to sit on the sticky
+   queue before it is timed out and moved to the non-sticky queue where it may be picked up by any
+   worker", `temporalio.worker.Worker`, 1.33.0) and is then replayed from history on the new worker.
+   **Pinned to 2 s, the heartbeat.** At the SDK's 10 s default the first smoke's every kill history has
+   one `WORKFLOW_TASK_TIMED_OUT` and the kill cells ran ~21 s against a 6 s baseline: a Temporal kill
+   cell was measuring an SDK default hiding behind the pinned detection timeout, which §13.4 and H6
+   say is what detection latency is supposed to be. It is a documented worker option, so pinning it
+   is configuration, not help.
 
 **Who starts the workflow.** The adapter, once, at `submit`, with workflow id
 `crashproof-<trial dir name>` (each trial has its own server). In Temporal a client starts a workflow
@@ -109,7 +113,7 @@ attempt out on *heartbeat* and retries it.
 | Client-side retries | none | Pydantic docs: "it's recommended to not use transport retries and to turn off your provider API client's own retry logic". The provider is a `FunctionModel` with no HTTP client, and the World client never retries — so there is nothing to multiply |
 | Heartbeat throttle | SDK default, `0.8 × heartbeat_timeout` | how stale the server's last beat can be when the freeze lands |
 | Workflow task timeout | 10 s (default) | printed |
-| Sticky queue schedule-to-start | 10 s (SDK default) | see "What a restart does", step 4 |
+| Sticky queue schedule-to-start | 2 s (SDK default 10 s) | `Worker(sticky_queue_schedule_to_start_timeout=...)`, documented; the 10 s default put ~10 s on every kill cell that was not detection — see "What a restart does", step 4 |
 | `pause_past_ttl` pause | 3 s (supervisor default) | 1.5 × the heartbeat timeout — past it, but not §13.4's `[2×, 4×]` draw, which the harness does not implement for any arm yet |
 
 ## W5 — the human in the loop

@@ -67,6 +67,12 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")  # a banner in every worker 
 # --- pins from §13.4: detection is the pinned timeout, so the timeouts are seconds ------------------
 START_TO_CLOSE_S = 5.0
 HEARTBEAT_S = 2.0
+#: A documented `Worker` option: "How long a workflow task is allowed to sit on the sticky queue before
+#: it is timed out and moved to the non-sticky queue where it may be picked up by any worker." At the
+#: SDK's 10 s default, every workflow task bound for a killed worker waited 10 s — one
+#: WORKFLOW_TASK_TIMED_OUT in every kill history of the first smoke — so a kill cell measured an SDK
+#: default rather than the pinned detection timeout (§13.4, H6). Pinned to the heartbeat for that reason.
+STICKY_SCHEDULE_TO_START_S = HEARTBEAT_S
 #: Temporal's documented default policy, spelled out so the row prints it rather than implying it:
 #: 1 s initial interval, ×2 backoff, 100 s cap, unlimited attempts. `TemporalDurability` appends
 #: its own non-retryable error types (UserError & co.), which the pin records too.
@@ -222,7 +228,9 @@ class TemporalAdapter:
                 "client_retries": "none (FunctionModel has no provider client; the World client does not retry)",
                 "heartbeat_throttle": "SDK default: 0.8 x heartbeat_timeout",
                 "workflow_task_timeout_s": 10.0,
-                "sticky_queue_schedule_to_start_timeout_s": 10.0,
+                # Worker option, pinned (SDK default 10 s): a workflow task bound for a dead worker's
+                # sticky queue moves to the shared queue after this long.
+                "sticky_queue_schedule_to_start_timeout_s": STICKY_SCHEDULE_TO_START_S,
                 "world_client_timeout_s": DEFAULT_TIMEOUT_S,
                 **extra,
             },
@@ -491,6 +499,7 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         workflows=[ReActWorkflow],
         plugins=[AgentPlugin(agent)],
         workflow_runner=_workflow_runner(),
+        sticky_queue_schedule_to_start_timeout=timedelta(seconds=STICKY_SCHEDULE_TO_START_S),
     )
     await worker.run()
 
