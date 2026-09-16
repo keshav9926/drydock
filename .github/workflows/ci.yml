@@ -1,14 +1,15 @@
 # Two jobs, because two of this repository's claims need checking on every commit and they need
 # different things to run.
 #
-# `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 36 white-box
-# conformance cells, the golden diff of the demo's printed lines — which is §28.7's named
-# mitigation for "a demo that only works on the author's machine" — and every published page
-# re-rendered from its committed rows. It installs the LangGraph, DBOS and Temporal extras, because a
-# change to the shared harness that breaks an arm should fail here and not in an overnight bench. (The
-# Temporal arm's unit test needs no server; its dev-server trial is opt-in, CRASHPROOF_TEMPORAL_TESTS=1.)
+# `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 56 white-box
+# conformance cells (44 run, 12 N/A with the reason), the golden diff of the demo's printed lines —
+# which is §28.7's named mitigation for "a demo that only works on the author's machine" — and every
+# published page re-rendered from its committed rows. It installs the LangGraph, DBOS and Temporal extras,
+# because a change to the shared harness that breaks an arm should fail here and not in an overnight
+# bench. (The Temporal arm's unit test needs no server; its dev-server trial is opt-in,
+# CRASHPROOF_TEMPORAL_TESTS=1.)
 #
-# `integration` needs Postgres, because the four control-plane statements are the one place the
+# `integration` needs Postgres, because the five control-plane statements are the one place the
 # MemoryJournal tests and the real store could disagree, and a durability claim checked only against
 # an in-memory fake is not checked.
 #

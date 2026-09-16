@@ -18,7 +18,7 @@ wins.
 ## One command
 
 ```bash
-uv sync --extra dev && docker compose up -d postgres
+uv sync --extra dev --extra langgraph && docker compose up -d postgres
 uv run crashproof demo
 ```
 
@@ -80,9 +80,9 @@ the rest. LangGraph's zombie column is 0 for a different reason — with no succ
 over while it is frozen, so nothing races it.
 
 Beside it, and never unioned with it:
-**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 41 white-box cells firing
-faults *inside* Keel's own write path and its inbox drain, where no shim can reach. A boundary only
-one runtime exposes is not a fair column.
+**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 56 white-box cells (44 run,
+12 N/A with the reason) firing faults *inside* Keel's own write path, its inbox drain, its approval
+park and its spawn, where no shim can reach. A boundary only one runtime exposes is not a fair column.
 
 How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/keel.md`](docs/adapters/keel.md) ·
@@ -95,53 +95,147 @@ Week 2 of §29.1. Everyone who is *not* the lease holder — a human with a deci
 result, a network with an opinion — now influences a run through one table, applied by the holder
 at a step boundary inside its own fenced transaction, without ever becoming a second writer.
 
-- **The inbox** (§4.10). `keel cancel|pause|resume|approve|reject|signal` are each one row in
-  `signals` and nothing else; the holder drains at every step boundary, `SIGNAL_RECEIVED` ‖ what was
-  done ‖ `consumed_seq` in one transaction. The MVP's direct `runnable_at` path is deleted.
+- **The inbox** (§4.10). `keel cancel|pause|resume|approve|reject|signal|rebind`, and
+  `Keel.pause|cancel|approve|reject|rebind` in the Python client (§24.1), are each one row in `signals`
+  and nothing else; the holder drains at every step boundary, `SIGNAL_RECEIVED` ‖ what was done ‖
+  `consumed_seq` in one transaction. The MVP's direct `runnable_at` path is deleted. A park — on an
+  approval, on children, a suspended re-park, a retry backoff — releases its lease as the last
+  statement of its own `RUN_WAITING` transaction, guarded by `runnable_at IS NULL`, so a signal that
+  landed since the last drain rolls the park back instead of being erased by it; the claim also takes
+  a run with an unconsumed signal. A pause sets `paused_at` and holds until a resume or a cancel, and
+  the resume appends `RUN_PAUSE_LIFTED`. A SUSPENDED run can be cancelled, and one woken without a
+  resume drains and parks again without re-executing. A `rebind` is journaled as
+  `MODEL_BINDING_CHANGED` and reaches live MODEL steps only (§16.7).
 - **Approvals** (§7.5). `ctx.approve(gates=(tool, args))` parks with no lease **and** no `runnable_at`
-  — zero compute, zero ticks — and binds the effect key it authorises before anyone decides; a
-  refused call costs no attempt (`attempt_no=0`, `DENIED`). Expiry is judged by the store's clock and
-  outranks arrival order. **W5** runs the same gated script against Keel and LangGraph's
-  `interrupt()`, with the harness as the human; §13.7's H7 held on both arms
-  ([`docs/adapters/langgraph.md`](docs/adapters/langgraph.md), citation from `langgraph 1.2.11`'s
-  own `interrupt()` docstring).
+  — zero compute, zero ticks — and binds the effect key it authorises before anyone decides. The step
+  after it must be that bound call, or it fails with `ApprovalBindingError` before an attempt starts;
+  a refused call costs no attempt (`attempt_no=0`, `DENIED`). A decision from `keel approve|reject` or
+  the Python client names its `approval_id` — the CLI resolves the open one and writes it into the
+  row — so a stale or repeated click is `SIGNAL_IGNORED{approval_terminal}`, never a decision for
+  whichever gate is open by then. Expiry is judged by the store's clock and outranks arrival order.
 - **Children** (§17). `ctx.delegate_many` commits the spawn as one fact (INTENT + STARTED +
   N×`CHILD_SPAWNED` + each child's row, `RUN_CREATED` and contract + the park); a child's terminal
   event co-commits its parent's `child_result` row; the parent grades the result against the contract
   at the drain; cancel is asked first and forced by lease takeover after `cancel_grace` — the fifth
-  control-plane statement, pinned epoch, grace by the store's clock, open non-PURE attempts honoured.
-  The reaper collects strays of a terminal parent the same way (S8). `deadline_s` is journaled, not
-  yet enforced.
+  control-plane statement, pinned epoch, grace by the store's clock, open non-PURE attempts honoured,
+  depth-first, so a child is taken over only once its own children are terminal. The reaper collects
+  strays of a terminal parent the same way (S8). A child's `run_root_id` is its own; a cancelled child
+  stays charged at its full slice; a retry is admitted against the slices already promised to
+  ordinals still waiting for a slot; `fail_parent` cancels the open siblings in the same transaction.
+  `deadline_s` is journaled, not yet enforced.
+- **Retries and outages** (§8, §11.5). A retry the policy will make is journaled with the failure,
+  `STEP_FAILED{next_attempt_at}`, so a successor that finds it retries instead of failing the run.
+  `keel/runtime/breaker.py` is the per-provider circuit breaker. A retry wait of a second or more
+  parks as `RUN_WAITING{retry_backoff}` at zero compute instead of being slept under the lease; the
+  Keel arm's pinned policy (three attempts from a 0.1 s base) never waits that long on its own, and an
+  open breaker's cooldown does. `provider_outage` is built in shim mode; no published cell runs it.
+- **The verifier.** S7 is judged against the World through the effect ledger and can now fail: two
+  applications under one approval, an application under an approval rejected, expired or never
+  decided, or a gated tool applied with nothing granted. S6 (cancel honoured, judged by journal order)
+  is a grid column on every page and N/A in every published cell, because no tier-1 cell cancels.
+  `approval_binding_violations`, `wait_durability` and `cancel_latency_ms` are computed on every new
+  row; the published rows predate them and no page prints them yet.
 - **Fifteen of seventeen hook boundaries**, with cells: [`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)
-  is 44 cells, 12 N/A, S7 and S8 judged from the whole tree of journals.
-- **Proxy mode** (§11.2). The black-box injector at the network edge — no harness code in the SUT.
+  is 56 cells, 44 run and 12 N/A, S7 and S8 judged from the whole tree of journals.
+  `during:approval_wait` and `during:child_wait` fire with the lease already released.
+- **Proxy mode** (§11.2). The black-box injector at the network edge: the proxy is the only firing
+  site, and the shim inside the SUT rides along observe-only to count calls at the wire.
   [`bench/reports/tier1p.md`](bench/reports/tier1p.md): 36 cells × 30 seeds, **1 080 trials**, every
   safety invariant PASS; Keel applies once under kill-after-effect, 5xx, dropped, malformed and timeout
   (the probe finds COMMITTED), LangGraph sync twice in each (PASS against at-least-once, printed raw).
+  Two of its triggers need a re-run. Keel's `pause_past_ttl` froze the process named by `sut/pid-0`,
+  which the successor wrote too, and in 41 of its 60 trials that was the idle successor: the worker
+  holding the run was never frozen, timed out on its own parked request, re-attempted, and the parked
+  request applied again at the thaw. The duplicates are on the page either way; the mechanism the cell
+  exists to show ran in 19 of the 60. And 34 of the 120 `kill@after:tool_return` trials record no
+  restart — the run finished before the kill landed — which current scoring makes a void trial.
   [`bench/reports/agreement_tier1p.md`](bench/reports/agreement_tier1p.md) pairs the same cells with
-  their shim twins: **23 of 28 agree**, and the five that differ are two findings about the
-  *instrument* — `taskkill` lands the proxy's `after:tool_return` kill after the SUT has parsed (and
-  often finished), so the shim's T3 window is not reachable from the edge; and the proxy parks a
-  frozen worker's request, turning `pause_past_ttl`'s timing-dependent 11/30 residual into a
-  deterministic 30/30. Both are what §11.2's precision-lost column said.
+  their shim twins and counts **0 comparable**: all 28 twins pair rows from different commits, and
+  most Keel twins different retry, claim-poll and reaper pins, so no difference on the page can be put
+  down to the instrument. (It read 23 of 28 agree before twins were checked for matching commits and
+  pins.)
 - **W5 at thirty seeds** ([`bench/reports/w5.md`](bench/reports/w5.md), 450 trials;
-  [`w5_pre.md`](bench/reports/w5_pre.md), 270): H7 held on every arm, 30/30 — the gated deploy fires
-  once whoever holds the wait and whoever is killed while holding it. What separates the arms is the
-  wait itself: LangGraph re-runs the interrupting node on every re-entry (+1 model call on resume, +2
-  when killed while parked; in the tier-2 form an ungated `notify` before the gate fires 2× and 3×,
-  120 extra effects in 270 trials, PASS against at-least-once and printed), and `interrupt()` has no
-  deadline, so under `approval_expiry` it is still WAITING at 60 s in 60 of 60 trials (L1 FAIL by
-  design) where Keel expires by the store's clock and completes with nothing deployed, 30/30.
-- **Not built, named:** the DBOS and Pydantic AI arms wait on a word from the owner before any
-  framework is installed; W4 is cut (third in §29.1's own cut order: it needs TRANSACTIONAL, the
-  effect-table bridge and a DBOS arm to be a comparison).
+  [`w5_pre.md`](bench/reports/w5_pre.md), 270), the harness as the human, against Keel and LangGraph's
+  `interrupt()` in its `sync` and `async` configs. The clauses of §13.7's H7 that ran held 30/30 on
+  every arm: killed while waiting and then granted, the gated deploy fires once. LangGraph re-runs the
+  interrupting node on every re-entry — 4 model calls to Keel's 3 on resume, 5 when killed while
+  parked — and in the tier-2 form an ungated `notify` before the gate fires 2× on resume and 3× when
+  killed while parked: 240 extra effects in LangGraph's 180 trials (120 per config), PASS against
+  at-least-once and printed. `interrupt()` has no deadline, so under `approval_expiry` LangGraph is
+  still WAITING at 60 s in 60 of 60 trials (L1 FAIL by design) where Keel expires by the store's
+  clock and completes with nothing deployed, 30/30. The wait is not the only difference: under
+  `kill@after:tool_effect` LangGraph applies the gated deploy twice in 30 of 30 trials per config,
+  Keel once.
+  What did not run: the `langgraph.exit` arm; `kill @ landmark:approval_decided`, where H7 predicts a
+  duplicate for every at-least-once arm; and the rest of §14.2's 21 tier-1 W5 pairs — the day-4
+  faults, the reask arm, `pause_past_ttl` and the other kill locations. H7 calls the tier-2 re-fire
+  an S7 counterexample at F0; the verifier scores S7 N/A for LangGraph, which has no journal to bind
+  an effect to, so that clause is a printed count and not a verdict. W5-pre is tier-2 (V2) in §14.2,
+  built ahead of its stage because it is the only cell that reaches H7's pre-interrupt clause, and it
+  stays in its own band. **Both pages need a re-run:** `approval_delay` now sends §11.4-C's duplicate
+  click and `approval_expiry` forbids the deploy by name — new `spec_hash`es for both cells — and the
+  Keel arm's approve now names the approval it decides.
+- **In progress, not merged:** the DBOS arm (native, and Pydantic AI on DBOS), the Temporal arm
+  (Pydantic AI) and the Restate arm, which runs under WSL because `restate-sdk` has no Windows wheel.
+  The `dbos` and `temporal` extras are in `pyproject.toml`; no adapter for any of the three is.
+
+### Post-phase-8 audit
+
+After `2313613`, ten auditors each took one area of the repository — the inbox, fencing, delegation,
+the proxy, the verifier, the reports, the kill criteria, scope against §29.1, the docs, hygiene — and
+every finding was re-checked adversarially before it counted. **103 were confirmed** (12 blocker, 39
+major, 43 minor, 9 nit) and 2 rejected. By kind: 48 code bugs, 22 stale documents, 13 report
+mismatches, 11 scope gaps, 4 CI, 3 hygiene, 2 kill criteria.
+
+- **Keel's wake path could lose a signal.** A park released its lease in a second, unguarded update
+  that erased an approve, a child's result or a resume landing in between; any signal lifted a pause;
+  a SUSPENDED run could not be cancelled; an approve naming one approval decided whichever was open;
+  `ApprovalBindingError` was declared and never raised. Delegation gave children their parent's
+  `run_root_id`, so a retried child died on `DuplicateEffectKey`, settled a cancelled child at zero,
+  and forced cancels out of depth order.
+- **The harness and its pages claimed more than they measured.** The proxy froze the wrong process in
+  41 of 60 `pause_past_ttl` trials; a kill that never landed scored as executed; S7's applied check
+  could never match, so a gated effect applied twice under one approval passed; LangGraph's IDEMPOTENT
+  rows said `key_source=framework` though it sends no key (960 rows relabelled `none`, no other field
+  changed); `keel_commit` was read from `HEAD` once per bench, so some rows name a commit that is not
+  the code that ran; `verify --recheck` exited 0 having re-verified nothing; every page claimed an
+  n = 300 confirmation tier nobody had run; the agreement page paired twins across commits; the
+  placement view compared two clocks.
+- **Week-2 scope was missing and unnamed:** `provider_outage`, the circuit breaker, S6 and three
+  metrics, the §24.1 control calls and `keel rebind`, §11.4-C's duplicate click, the §19.5 placement
+  histogram, `tool_duplicate_response`, `partition_worker_world`, and the K1/K3/K5 checkpoint. All but
+  the two proxy faults are now built or recorded; those two are named [below](#not-yet-built-and-when).
+- **Published cells it invalidated**, kept and marked rather than deleted: tier1p's Keel
+  `pause_past_ttl` and its `kill@after:tool_return` cells; all of W5 and W5-pre; the agreement page.
+  matrix v0, tier1a and reask_alternate have no `facts.json`, so `verify --recheck` exits 9 on them and
+  K3 cannot be computed from them. A full re-run at one commit, with the engine arms added, is the
+  week-2 matrix.
+
+Fixes: the Keel runtime in `41f6ca0` and `652d8e6`; the harness, verifier, reports and CI in
+`22f53d9`..`cd8665e`; the week-2 gaps in `3e70a9f`, `9a6e1ae` and `182994a`; the documents in the
+commit that added this section.
+
+### Kill criteria at the end of week 2
+
+§29.1 checks K1, K3 and K5 here (§30).
+
+- **K1 (everyone passes) has not fired** on what is published: in matrix v0 every LangGraph config
+  applies the `EXTERNAL` issue twice at `after:tool_effect` and at `after:tool_return`, 30 of 30. Its
+  week-2 half reads the week-2 matrix, which has not run.
+- **K3 (unfair triggers) is undecided** — a gap, not a pass. `crashproof placement` prints *not
+  computable* for every published cell: matrix v0, tier1a and reask_alternate have no `facts.json`;
+  the W5 trials predate the `sut_ref` join it reads for Keel and the checkpoint snapshot it reads for
+  LangGraph, and a supervisor-fired fault has no K3 window at all. The shim pages are published
+  without the check K3 gates them on, and the week-2 re-run is what decides it.
+- **K5 (adapter infeasible)** is checked as adapters land, and no adapter merged in week 2. The
+  LangGraph W5 binding is `interrupt()` + `Command(resume=)`, cited from the version under test.
 
 ### Phase 7: the artifact other people see
 
 `crashproof demo` above, read off the artefacts rather than scripted, with CI diffing its printed
-lines on every commit. `keel events --follow` — §25.2's one unbuilt MVP flag — in place of the
-`keel watch` TUI, which is cut: what the TUI was for is the BEFORE CRASH / AFTER RESTART split, and
-that split already lives in the event stream. Every rendered report now carries the MDD tables and
+lines on every commit. `keel events --follow` — an MVP flag of §25.2's that phase 7 built, where
+`keel effects --class` is still not — in place of the `keel watch` TUI, which is cut: what the TUI
+was for is the BEFORE CRASH / AFTER RESTART split, and that split already lives in the event stream. Every rendered report now carries the MDD tables and
 the "you only ran this thirty times" FAQ, because an answer that needs a second command to produce
 is an answer a reader will not find.
 
@@ -231,7 +325,8 @@ uv run crashproof compare bench/results/tier1a --a 'keel.*' --b 'langgraph.sync.
 ```
 
 **[`bench/reports/tier1a.md`](bench/reports/tier1a.md)** — 32 cells, 30 seeds, **960 trials**, none
-void, seven faults that never touch the process. Duplicate *applied* effects, `EXTERNAL` band
+void: five faults that never touch the process, and two that SIGTERM it and end it when the grace
+runs out. Duplicate *applied* effects, `EXTERNAL` band
 (`issues.create`, `dedup: false`, no key), out of 30 seeds:
 
 | (fault, boundary) | keel | langgraph sync |
@@ -244,7 +339,7 @@ void, seven faults that never touch the process. Duplicate *applied* effects, `E
 | `model_timeout@before:model_call` | 0 | 0 |
 | `model_500@before:model_call` | 0 | 0 |
 
-None of these faults kills anything. In the first two the request left the process, the World applied
+None of the other five kills anything. In the first two the request left the process, the World applied
 it, and the answer never came — and LangGraph's tool task re-runs on resume and files the issue again,
 every trial. Keel's step is `RUNNING` with an EXTERNAL effect and no outcome, which the recovery table
 calls `STEP_AMBIGUOUS` rather than a retry; the declared resolution asks the receiver what happened
@@ -268,10 +363,12 @@ re-issuing under the same key is the correct response to an ambiguity, and it is
 made it safe. Both columns are printed so the distinction cannot be blurred.
 
 **[`bench/reports/compare_tier1a_keel_vs_langgraph_sync.md`](bench/reports/compare_tier1a_keel_vs_langgraph_sync.md)**
-— 480 paired trials: `duplicate_effects` 0 vs 120, `logical_correctness` A better at p < 0.0001 over
-120 discordant pairs. Four of nine rows decline to claim anything, including one that would have
-flattered Keel — median recovery latency 143 ms against 2 326 ms is tagged *not claimable*, because
-the arm it beats has a supervisor re-invoking it and therefore no detection time to spend.
+— 480 paired trials, one comparison per `(location, fault)` cell: `duplicate_effects` 0 vs 120, and
+`logical_correctness` A better in four `EXTERNAL` cells — `tool_timeout`, `tool_500` and both
+`sigterm_grace_*` — each 30 discordant pairs to 0, Holm p < 0.0001. Every recovery-latency row declines
+to claim anything, including the ones that would have flattered Keel — `tool_500@after:tool_effect`
+at a median 37.5 ms against 2 722.2 ms is tagged *not claimable*, because the arm it beats has a
+supervisor re-invoking it and therefore no detection time to spend.
 
 Tokens are counted by the harness at `before:model_call`, in every arm, by one function — charged when
 the request is sent, not when it returns, because an attempt that never came back was still billed.
@@ -340,34 +437,54 @@ while quietly re-firing a side effect looks identical, from the inside, to one t
 ## Running it yourself
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra langgraph                    # the LangGraph arm; a sync without the extra uninstalls it
 docker compose up -d postgres                            # Docker Desktop first, on Windows
 uv run keel db migrate --app keel.agents.demo:app
 
 uv run crashproof demo                                   # the one command, in under a minute
 uv run python scripts/day2_demo.py                       # the same window, narrated step by step
-uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --out out/mine   # ~1 h, serial
+uv run crashproof bench --matrix bench/specs/matrix_v0.yaml --out out/mine   # ~2 h, serial
 uv run crashproof bench --matrix bench/specs/tier1p.yaml   --out out/proxy  # the same windows, from the network edge
 uv run crashproof verify out/mine/results.jsonl --recheck                    # the publication gate
+uv run crashproof placement out/mine                                         # §19.5's histogram and K3's two numbers
 ```
 
 **The rows behind every published report are in this repository**, one JSON object per trial, each
-carrying its own `(spec_hash, seed, keel_commit, adapter_commit, framework_versions, config_pin)`:
-[`bench/results/matrix_v0/results.jsonl`](bench/results/matrix_v0/results.jsonl),
-[`tier1a`](bench/results/tier1a/results.jsonl),
-[`reask_alternate`](bench/results/reask_alternate/results.jsonl). `report` and `compare` are pure
-functions over them, so you can regenerate any page here without running a trial:
+carrying its own `(spec_hash, seed, keel_commit, config_pin)`, the framework versions inside the pin:
+[`matrix_v0`](bench/results/matrix_v0/results.jsonl), [`tier1a`](bench/results/tier1a/results.jsonl),
+[`reask_alternate`](bench/results/reask_alternate/results.jsonl),
+[`tier1p`](bench/results/tier1p/results.jsonl), [`w5`](bench/results/w5/results.jsonl),
+[`w5_pre`](bench/results/w5_pre/results.jsonl). `report`, `compare` and `agree` are pure functions
+over them, and every page names the results directory, the row count and each `keel_commit` it was
+rendered from, and the last trial's end rather than the time it was rendered, so a re-render is
+byte-identical. [`scripts/render_reports.py`](scripts/render_reports.py) is the one list of which rows
+back which of the twelve pages, as the exact commands; CI runs it and fails on any diff under
+`bench/reports`:
 
 ```bash
+uv run python scripts/render_reports.py && git diff --exit-code -- bench/reports
 uv run crashproof report bench/results/matrix_v0 --out /tmp/check.md   # byte-identical to the published one
-uv run crashproof compare bench/results/matrix_v0 --a 'keel.*' --b 'langgraph.sync.*'
 ```
+
+**The commit on a row is approximate in three places**, all from before `keel_commit` was read at
+the start of each trial and marked `-dirty` on an edited tree. Matrix v0's 360 LangGraph rows stamped
+`7c4c2be` started before the LangGraph adapter was committed (`b46547d`). Its 60 Keel `pause_past_ttl`
+rows stamped `cefd652` — the rows behind the `11` in the headline table — finished a minute before
+`490807e` committed changes to the Keel adapter and the injector, and that commit's message credits
+one of those changes with moving the zombie rate to 11 of 30 from 3. tier1p's 78 rows stamped
+`426b7df` are a resumed run that started seven seconds before `ac9a849` was committed and kept the
+stamp past `8ee372d`; its Keel `EXTERNAL` `kill@after:tool_return` and `pause_past_ttl` cells each mix
+those rows with another commit's.
 
 The per-trial directories — journals, receipt logs, fault logs, one `facts.json` each — are hundreds
 of megabytes and are *not* committed. That is the one thing a clone cannot re-check: `--recheck`
-re-runs the verifier over each trial's own recorded facts and fails if a verdict moved or if the
-results file has drifted from the directories it summarises, so it runs against a directory you
-generated. Against a clone's rows it reports, correctly, that it has no facts to re-verify from.
+re-runs the verifier over each trial's own recorded facts and fails (exit 7) if a verdict moved or
+the results file has drifted from the directories it summarises, so it runs against a directory you
+generated. A row with no `facts.json` behind it exits 9 — a clone's rows, and matrix v0, tier1a and
+reask_alternate even on the machine that ran them, because those trials predate the file. Since
+`182994a`, rechecking the tier1p, W5 and W5-pre directories on that machine exits 7: every row's
+fresh verdicts differ from its published ones by one added `S6: N/A` and nothing else, because the
+rows predate S6.
 
 **`bench` is serial on purpose, and parallelism is sharding.** One run owns one `results.jsonl` and
 one `cursor.json`, which is what makes `--resume` safe and a re-taken void trial unambiguous; two
@@ -458,7 +575,7 @@ written and `fsync`ed **before** the effect is applied or a response computed. I
 ## Tests
 
 ```bash
-uv run pytest tests/unit tests/property -q                    # no database needed
+uv run pytest tests/unit tests/property tests/conformance -q  # no database; rewrites bench/keel_conformance/table.md
 KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
   uv run pytest tests/integration -q                          # the control-plane statements, trial clones
 ```
@@ -484,7 +601,7 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
 | `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
-| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 44 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 12 N/A with reasons; S8 judged from the whole tree of journals |
+| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 56 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 44 run and 12 N/A with reasons; S8 judged from the whole tree of journals |
 | `tests/unit/test_delegation.py` | children under contracts: the spawn as one transaction, results that wake the parent, the parent grading the result, cancel asked then forced by takeover, the reaper collecting a stray, fan-out bounded by slots |
 | `tests/unit/test_proxy.py` | the black-box injector: the shim's three instants one process out, what the World did versus what the SUT was told under a dropped, 5xx, malformed or never-sent answer, real kills aimed at the pid the SUT wrote, a freeze that forwards nothing until the thaw |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
@@ -505,8 +622,11 @@ fair column. A fault this mode cannot deliver is `N/A` with the reason named, ne
 themselves through `core/protocols.py`); `keel/state` has no I/O imports. `tests/unit/test_layering.py`
 enforces all of that, including that `crashproof` touches `keel` in two modules only.
 
-Deliberate departures from the file list in §23.1, each because the split would be boilerplate before it is
-structure. Adding a file that only re-exports is worse than a documented merge:
+Deliberate departures from the file list in §23.1, each with its reason. Several are merges, because
+the split would be boilerplate before it is structure and a file that only re-exports is worse than a
+documented merge. Three of the four phase 8 added keep APPROVAL, DELEGATE and the inbox drain inside
+the step engine, because each is a transaction the engine owns; the fourth gives the forced cancel a
+module of its own:
 
 | §23.1 says | Here | Why |
 |---|---|---|
@@ -519,34 +639,51 @@ structure. Adding a file that only re-exports is worse than a documented merge:
 | `world/services/{issues,kv}.py` | `world/services.py` | §11.1's own component table says `services.py`; the two services are one endpoint table and forty lines of semantics |
 | `crashproof compare a.jsonl b.jsonl --paired` (§25.2) | `crashproof compare <results-dir> --a <cell glob> --b <cell glob>` | a store is one append-only `results.jsonl`, not one file per cell, so a shell glob over filenames has nothing to match. The globs select cells instead, which is the same selection expressed against the thing that exists. `--paired` is not a flag because pairing is the only mode: an unpaired comparison of two runtimes is not a weaker claim, it is a different one |
 | `verifier/{invariants,metrics}.py` | plus `verifier/views.py` | §19.5's placement view and effect ledger are *views* over the same `TrialFacts` the verdicts are computed from, not verdicts. Putting them in `invariants.py` would mix "what is true" with "how to read it", and `crashproof verify --placement` needs them without needing a verdict |
-| §25.2 / §25.3 command trees | three commands differ | `crashproof export` is declared and not built; `crashproof workloads` and `keel reap` are built and declared nowhere. Those, and every flag-level difference in both directions, are in [`docs/cli-ledger.md`](docs/cli-ledger.md) — a command tree is a contract, and an undocumented gap in one is the same defect as an `N/A` printed as `PASS` |
-| §25.2 exit codes | same, now wired | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. A harness whose failure mode is red text in a log nobody reads is not a CI gate |
+| `approvals/approvals.py`, registering `StepExecutor(APPROVAL)` | `runtime/ctx.py` (`ctx.approve`) + `runtime/steps.py` (`_park_for_approval`, the binding check, the decision at the drain) | a `StepExecutor` runs one attempt to one outcome (`execute(intent, sctx) -> StepOutcome`). An APPROVAL step has no outcome in its attempt: it commits INTENT, STARTED, `APPROVAL_REQUESTED`, `RUN_WAITING` and the lease release in one fenced transaction and is completed by a later drain — the engine's transaction, fence and drain. An executor registered from outside would need that protocol widened into a second copy of the park, so the engine dispatches the kind itself and `StepExecutor` is unchanged |
+| `orchestration/{contracts,children}.py`, registering `StepExecutor(DELEGATE)` | `runtime/delegation.py` (the contract, its validation and schema grading, the `child_result` and `cancel` rows) + `runtime/steps.py` (`_spawn_children`, the drain's child results, fan-out slots) | the same reason as APPROVAL: the spawn is one fenced transaction ending in a park, and a child's result is applied at the parent's drain |
+| `runtime/signals.py` | `runtime/steps.py` (`StepEngine._drain_inbox`) | the drain runs at every step boundary inside the engine's own append transaction and acts on the engine's fold — a cancel acknowledged at step *i*, the decision for the approval that parked — so everything it reads and writes is the engine's |
+| `runtime/reaper.py`'s force-cancel takeover | `runtime/takeover.py` | two callers — the parent's step engine after `cancel_grace`, and the reaper for a stray whose parent is terminal — share one depth-first path, and neither owns it |
+| §25.2 / §25.3 command trees | seven commands differ | declared and not built: `crashproof export`, `keel watch` (cut), `keel fork` (cut from phase 5). Built and in neither tree: `crashproof workloads`, `crashproof agree`, `crashproof placement`, `keel reap`. Those, and every flag-level difference in both directions, are in [`docs/cli-ledger.md`](docs/cli-ledger.md) — a command tree is a contract, and an undocumented gap in one is the same defect as an `N/A` printed as `PASS` |
+| §25.2 exit codes | same, now wired, plus one | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. `verify` exits **9** when a row cannot be re-verified, a code §25.1 does not name ([ledger](docs/cli-ledger.md)). A harness whose failure mode is red text in a log nobody reads is not a CI gate |
 
 One platform note: psycopg's async mode cannot run on Windows' default ProactorEventLoop, so every entry
 point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-Week 2 is the signals inbox and delegation: approvals, `keel approve`, `RECOVERY_STARTED{cause=WAKE}`
-— which is also the missing half of §26.3's demo script, and the demo says so where those lines
-would go rather than printing a sequence the runtime cannot produce. Week 3 is the confirmation tier
-at n = 300 on fresh seeds, the HTML report, and segments and streaming. `keel watch` is **cut**, not
-pending: `keel events --follow` shows the same BEFORE CRASH / AFTER RESTART split, in the event
-stream where it already lives.
+**Week 3 (§29.2) is depth.** The confirmation tier at n = 300 on fresh seeds — every page says it is
+the screening tier only — and the rest of §29.2's statistics hardening; the HTML report (`report --fmt
+html` refuses with the reason and exit 2); continuation segments with C2 and `before:segment_write`;
+streaming with `during:stream(chunk=k)`; the full `KeelMachine` rule set; a `Policy` implementation and
+`Sandbox`; `ambiguity_window_width`; and FORK, cut from phase 5 by §28.5's own cut line and last in
+week 3's cut order. The two hook boundaries are absent rather than stubbed, so a spec naming one is
+refused rather than firing nothing; §29.2's *all seventeen* is the honest completion date. `keel watch`
+is **cut**, not pending: `keel events --follow` shows the same BEFORE CRASH / AFTER RESTART split, in
+the event stream where it already lives.
 
-Inside phase 4, two things are still named rather than stubbed: `max_usd` and `max_wall_clock` (they
-need a pinned price table and a deadline every waiting kind respects), and backoff longer than the
-lease (it needs `RUN_WAITING` and the signals inbox, both v1).
+**Named, not built:**
 
-Two of the seventeen hook boundaries are absent rather than stubbed, so a spec naming one is
-refused rather than firing nothing: `before:segment_write` and `during:stream(chunk=k)`, week 3.
-The inbox and approvals brought `before/after:signal_consume` and `during:approval_wait`, and
-delegation brought `before:child_spawn` and `during:child_wait`; all five have cells in the
-conformance table. §29.2's *all seventeen* is the honest completion date. §27 is the binding
-staging table; nothing here is ahead of it.
+- `max_usd` and `max_wall_clock` (phase 4): they need a pinned price table and a deadline every
+  waiting kind respects.
+- A retry policy's own backoff is still capped at half the lease (`keel/runtime/retry.py`). The park a
+  longer one needs now exists — a wait of a second or more is `RUN_WAITING{retry_backoff}` — and the
+  cap has not been lifted.
+- A delegation's `deadline_s` is journaled in the contract and not enforced by the parent: a child
+  that never reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full
+  slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one
+  parent-cancel already uses, and arrives with the first cell that measures it.
+- `keel signal --resolve STEP=… [--evidence S]` and `--compensate STEP` (§25.2, v1), and
+  `Keel.compensate`. A run SUSPENDED on a `RESOLVED_UNKNOWN` step has no way out today but
+  `keel cancel`: `keel resume` replays to that step and suspends again.
+- `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:
+  close`, one response per request, and §11.5's own caveat is that the late bytes reach the SUT only
+  when the transport outlives the app-level timeout — a cell for a sync-tool variant that does not
+  exist yet.
+- `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
+- W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
+  effect-table bridge and a DBOS arm to be a comparison.
+- The engine arms are in progress ([above](#status--phase-8-of-8-outside-the-holder)); §29.1's week-2
+  matrix is the full re-run at one commit with them added, and it has not run.
 
-Delegation (§17) is built to the constitution's shape and one corner is named rather than hidden:
-`deadline_s` is journaled in the contract and not yet enforced by the parent — a child that never
-reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full slice, until
-someone cancels it. The timer → cancel → takeover path that closes it is the same mechanism the
-parent-cancel path already uses, and arrives with the first cell that measures it.
+§27 is the binding staging table. One published page is ahead of it: W5-pre, a tier-2 cell built in
+week 2 for the reason given above.

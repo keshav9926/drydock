@@ -47,7 +47,10 @@ The IDEMPOTENT band is still measured honestly at F0, because the `issues.upsert
 `natural: true`: it deduplicates on `logical_identity` rather than on a presented key. Natural
 idempotency is a property of the **receiver**, and the caller gets no credit for it. That is why the
 matrix prints `duplicate_receipts` beside `duplicate_effects`: the gap between them is exactly what
-the receiver bought.
+the receiver bought. A row records the key source in effect, so LangGraph's IDEMPOTENT rows say
+`key_source=none`; the 960 published before that rule (matrix v0, tier1a, tier1p) said `framework`,
+copied from the variant, and were relabelled with no other field changed (`deab7e9`), which is why
+those pages head the band `key_source=framework, none`.
 
 ## What a restart does
 
@@ -85,34 +88,51 @@ the cell clean — which is the whole reason `replay_divergence` exists as a col
 
 The wait primitive is `interrupt()`; resumption is a fresh `ainvoke(Command(resume=...))` on the
 same thread, made by the worker on the harness's instruction (a file in the trial directory — the
-human's decision, written once and never deleted). Thirty seeds per cell, both LangGraph configs
-([`bench/reports/w5.md`](../../bench/reports/w5.md), [`w5_pre.md`](../../bench/reports/w5_pre.md));
-every row below held 30/30, and each is a printed count beside a declared `at_least_once`, not a
-failure:
+human's decision, written once and never deleted). Thirty seeds per cell, the `sync` and `async`
+configs ([`bench/reports/w5.md`](../../bench/reports/w5.md), [`w5_pre.md`](../../bench/reports/w5_pre.md)).
+Every row below held 30/30 in both configs; the `sync` column is printed. Each is a raw count beside a
+declared `at_least_once` — none of them fails S1 — and the one verdict that fails is named in its row:
 
 | cell | LangGraph sync | Keel | what it says |
 |---|---|---|---|
-| `approval_delay` (headline) | deploy **1** | deploy **1** | H7 held: the gated effect after `interrupt()` fires once. No difference, and that is the honest result. |
-| `kill_while_waiting` (headline) | deploy **1**, 5 model calls | deploy **1**, 3 model calls | H7 held: `interrupt()` is checkpointed, so the successor is granted once. The interrupting node re-ran on the restart — the `+1` model call §13.7 predicted. |
-| `approval_expiry` | **still WAITING at 60 s**, L1 FAIL, nothing deployed | expired at 5 s, COMPLETED `not done`, nothing deployed | There is no deadline on `interrupt()`. A human who never answers is a run that never ends. S3/S7 hold either way — nothing was deployed. |
+| `approval_delay` (headline) | deploy **1**, 4 model calls | deploy **1**, 3 model calls | The gated effect after `interrupt()` fires once. No difference in effects, and that is the honest result; the resume re-runs the interrupting node, one model call. |
+| `kill_while_waiting` (headline) | deploy **1**, 5 model calls | deploy **1**, 3 model calls | H7 held: `interrupt()` is checkpointed, so the successor is granted once. The interrupting node re-ran on the restart as well as on the resume. |
+| `kill@after:tool_effect` | deploy **2** | deploy **1** | The day-3 window behind the gate: after the decision and the deploy, before the checkpoint. The node re-runs and deploys again, in 30 of 30 trials in both configs — the at-least-once cost, printed. |
+| `approval_expiry` | **still WAITING at 60 s**, **L1 FAIL** (by design), nothing deployed | expired at 5 s, COMPLETED `not done`, nothing deployed | There is no deadline on `interrupt()`. A human who never answers is a run that never ends. S3 holds either way — nothing was deployed. S7 is N/A for LangGraph: it has no journal to bind an applied effect to an approval. |
 | **tier-2** baseline (`notify` before the gate) | notify **2**, deploy 1 | notify **1**, deploy 1 | H7 held: pre-interrupt code re-runs on resume. |
-| **tier-2** `kill_while_waiting` | notify **3**, deploy 1 | notify **1**, deploy 1 | Every re-entry of the interrupting node re-runs what came before the interrupt: original, restart, resume — 120 extra `notify` effects across the 270 tier-2 trials, none of them a deploy. |
+| **tier-2** `kill_while_waiting` | notify **3**, deploy 1 | notify **1**, deploy 1 | Every re-entry of the interrupting node re-runs what came before the interrupt: original, restart, resume. Across W5-pre's 180 LangGraph trials that is 240 extra `notify` effects — 120 per config, 30 + 30 + 60 from baseline, `approval_delay` and `kill_while_waiting` — none of them a deploy. |
+
+What these rows do not cover. The `exit` config did not run. Neither did `kill @
+landmark:approval_decided`, the clause of H7 that predicts a duplicate gated effect for every
+at-least-once arm, nor the rest of §14.2's tier-1 W5 pairs (the day-4 faults, the reask arm,
+`pause_past_ttl`, the other kill locations). H7 also calls the tier-2 re-fire an S7 counterexample at
+F0; with S7 N/A for this arm the verifier cannot score it, so here it is a count and not a verdict.
+`approval_delay` in the matrix files now sends §11.4 spec C's duplicate click: a second, unkeyed
+approve right after the first. The second click rewrites the same decision to the same `sut/resume`
+file — LangGraph's resume primitive carries no approval id, so it reaches the framework only if the
+graph interrupts again. The published rows predate the second click, and the `approval_expiry` spec
+now names `deploy.service#1` as forbidden; both changed their cells' `spec_hash`, so both pages are
+due a re-run.
 
 The tier-2 rows are in their own band because the workload was *constructed* to exercise a
 documented caveat — §13.4: "pre-interrupt code re-runs" — and the adapter honours that on purpose:
 the pre-gate call is deliberately not `@task`-wrapped, because wrapping it would measure the
-adapter's care rather than the framework's resume semantics. The citation the upstream template
-requires — the sentence from the version under test, not from memory — is the framework's own
-docstring, `langgraph.types.interrupt.__doc__` at `langgraph 1.2.11`:
+adapter's care rather than the framework's resume semantics. It is a tier-2 (V2) cell in §14.2, built
+in week 2 because it is the only cell that reaches H7's pre-interrupt clause. The citation the upstream
+template requires — the sentence from the version under test, not from memory — is the framework's
+own docstring, `langgraph.types.interrupt.__doc__` at `langgraph 1.2.11`, verbatim, its own emphasis:
 
-> A client resuming the graph must use the `Command` primitive to specify a value for the interrupt
-> and continue execution. **The graph resumes from the start of the node, re-executing all logic.**
+> A client resuming the graph must use the [`Command`][langgraph.types.Command]
+> primitive to specify a value for the interrupt and continue execution.
+> The graph resumes from the start of the node, **re-executing** all logic.
 
 So the tier-2 rows *sharpen* rather than contradict: the docs say the node re-executes, and the
 rows say what that costs when the re-executed logic has a side effect — one extra `notify` per
 re-entry, and three re-entries when the process holding the wait is killed. That is a docs-grade
 finding by the template's own distinction (a documented behaviour with an undocumented consequence
-a user would act on), not a bug report.
+a user would act on), not a bug report. `crashproof demo` cannot reproduce it — the demo runs
+`tool_chain_1_effect` only — so its repro is the W5-pre form in
+[the template](../upstream-report-template.md#the-report).
 
 ## Adapter rules obeyed
 
@@ -130,5 +150,11 @@ process exits, the supervisor restarts it, and the task — whose result was nev
 re-runs and re-fires the effect. `tool_500`, `tool_dropped_response` and `tool_malformed` each
 show two applied effects on the `dedup:false` endpoint, with one restart. That is the documented
 at-least-once for an un-wrapped effect, PASS against the declared claim, printed raw beside Keel's
-one — and it is the same finding the shim's `tool_500` row already made, now made without any
-harness code in the SUT.
+one — and it is the same finding the shim's `tool_500` row already made, now made with no harness
+code firing inside the SUT: the shim rides along observe-only (`CRASHPROOF_MODE=proxy`), counting
+calls at the wire, and the worker writes `sut/pid-<n>` so the proxy can aim a kill.
+
+`kill@after:tool_return` is the cell the edge cannot reach the way the shim does: 14 of its 30
+`EXTERNAL` trials and 3 of its 30 `IDEMPOTENT` trials record no restart, because the run had finished
+before the kill landed. Under the current scoring a kill that never landed makes the trial void, so
+that cell is due a re-run before either count means anything.

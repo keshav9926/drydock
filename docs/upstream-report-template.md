@@ -31,7 +31,11 @@ sharpening is the contribution, filed as a docs issue rather than as a bug.
       unless something *else* is also true.
 - [ ] **The repro is one command from a clean clone**, and it has been run from one.
 - [ ] **The counterexample is a specific `(spec_hash, seed, trial_id)`**, not a rate.
-- [ ] **`crashproof verify <dir>/results.jsonl --recheck` is green** on the rows being cited.
+- [ ] **`crashproof verify <dir>/results.jsonl --recheck` exits 0** on the rows being cited. 7 is a
+      verdict that drifted from its row or a verifier that answered twice; 9 is a row with no
+      `facts.json` behind it, which is a row nobody can re-check — cite neither.
+- [ ] **The cited rows are not due a re-run.** The README's status section names the published cells
+      that are; a finding from one of them is re-measured before it is filed.
 
 ## The report
 
@@ -49,12 +53,24 @@ sharpening is the contribution, filed as a docs issue rather than as a bug.
 >
 > **Reproduction.**
 > ```bash
-> git clone <repo> && cd <repo> && uv sync --extra dev
+> git clone <repo> && cd <repo> && uv sync --extra dev --extra langgraph   # the arm's extra; Keel needs none
 > docker compose up -d postgres
 > uv run crashproof demo --adapter <arm> --config <config> --fault <fault> --seed <n>
 > ```
 > Paste the printed BEFORE CRASH / AFTER RESTART pair. It is read off the trial's own artefacts, so
 > a maintainer who runs it and gets different lines has found something we want to know about.
+>
+> `demo` runs `tool_chain_1_effect` only. A finding from another workload — W5's approval wait, say —
+> is reproduced from its matrix file, one cell and one seed, with the trial's effect ledger as the
+> evidence to paste:
+> ```bash
+> uv run crashproof bench --matrix bench/specs/<matrix>.yaml --cells '<cell id>' --seeds 1 --base-seed <n> --out out/repro
+> uv run crashproof verify out/repro/<cell dir>/t-<n> --effects
+> ```
+> For the LangGraph tier-2 `notify` re-fire that is `--matrix bench/specs/w5_pre.yaml --cells
+> 'langgraph.sync.GATED.baseline'`, and the ledger's `notify.send` row shows 2 receipts and 2 applied.
+> `<cell dir>` is the cell id with every character outside `A-Za-z0-9._-` replaced by `_` (so `@` and
+> `:` become `_`); `langgraph.sync.GATED.baseline` is its own.
 >
 > **What this is not a claim about.** Name it explicitly: the harness kills processes at a window a
 > random production crash would reach rarely; the numbers are from n seeds with the interval

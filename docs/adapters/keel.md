@@ -74,28 +74,42 @@ two bands comparable rather than two different programs.
 ## W5 — the human in the loop
 
 The wait is `ctx.approve(payload, gates=(tool, args))`, one transaction — INTENT, STARTED,
-`APPROVAL_REQUESTED`, `RUN_WAITING` — followed by a release with **both** `lease_expires_at` and
-`runnable_at` NULL. The first NULL is why the wait costs no compute; the second is why it costs no
-ticks: nothing polls a parked run, and a worker looking for work finds none. The harness grants by
-inserting one `approve` row in the inbox and nothing else; whichever worker is alive claims the run
-and journals the decision at its own drain — which is why `kill_while_waiting` yields exactly one
-gated effect: the grant was never in a process's memory to lose.
+`APPROVAL_REQUESTED`, `RUN_WAITING`, and as its last statement the release, which leaves **both**
+`lease_expires_at` and `runnable_at` NULL. The first NULL is why the wait costs no compute; the second
+is why it costs no ticks: nothing polls a parked run, and a worker looking for work finds none. The
+release is guarded by `runnable_at IS NULL`, so a signal that landed since the holder's last drain
+rolls the whole park back and the engine drains and parks again — a grant can arrive at any instant
+and never be erased by the park it arrived beside.
+
+The harness grants by inserting one `approve` row in the inbox and nothing else, naming the approval
+it decides: the open one, or once nothing is open the most recent. Whichever worker is alive claims
+the run and journals the decision at its own drain — which is why `kill_while_waiting` yields exactly
+one gated effect: the grant was never in a process's memory to lose. Under `approval_delay` the human
+clicks twice (§11.4 spec C, `approval_duplicate_gap_ms: 0` in the W5 matrices), and the second row
+names the same approval, unkeyed; the drain journals it `SIGNAL_IGNORED{approval_terminal}` rather
+than granting anything a second time. The published W5 rows predate the second click and the named
+approval, so those cells are due a re-run.
 
 `binds_effect_key = effect_key(run_root_id, i+1, tool, args)` is computed before anyone decides,
 because the runtime owns the step counter, so the approval names the effect it authorises rather
-than "whatever happens next". The gate is read before STARTED; a refusal writes `attempt_no=0` and a
-`DENIED` effects row, so no attempt began and no effect was reachable (S7). Expiry is judged by the
-store's clock at drain time and outranks arrival order: an `approve` drained after `expires_at` is
-ignored and the approval expires. Under `approval_expiry` the run completes with `not done: approval
-expired` and nothing deployed — the correct end state, declared on the cell's spec so S3 does not
-mistake a refusal for a phantom completion.
+than "whatever happens next". The step after the approval must be that call: anything else fails with
+`ApprovalBindingError` before an attempt starts. The gate is read before STARTED; a refusal writes
+`attempt_no=0` and a `DENIED` effects row, so no attempt began and no effect was reachable (S7, which
+the verifier judges against the World's applied counts). Expiry is judged by the store's clock at
+drain time and outranks arrival order: an `approve` drained after `expires_at` is ignored and the
+approval expires. Under `approval_expiry` the run completes with `not done: approval expired` and
+nothing deployed — the correct end state, declared on the cell's spec as `deploy.service#1` applied
+zero times, so S3 does not mistake a refusal for a phantom completion and a deploy under an expired
+wait fails `logical_correctness` for any arm.
 
 ## Pins
 
 `tool.timeout = 1 s`, `lease_ttl = 2 s`, heartbeat `≈ 0.67 s`, `attempt_deadline = started_at + 1 s`,
 `pause_past_ttl` pause 3 s (pinned, not drawn), `worker_count = 2` in `pause_past_ttl` cells and 1
-elsewhere. Every one of them travels in `config_pin` on every row, because "Keel recovers faster" is
-a claim about timeouts unless both arms' timeouts are printed beside it.
+elsewhere, retry `max_attempts = 3` with exponential backoff and full jitter, and the circuit breaker's
+`n_open = 5`, `cooldown_s = 30` (rows written before `182994a` do not carry the breaker). Every one of
+them travels in `config_pin` on every row, because "Keel recovers faster" is a claim about timeouts
+unless both arms' timeouts are printed beside it.
 
 `lease_ttl > max(registered tool.timeout)` is an operator rule, not a suggestion: the pre-dispatch
 check refuses to dispatch any non-PURE effect unless `lease_valid_until − now ≥ tool.timeout`, and
@@ -121,8 +135,19 @@ or an unparseable body is `UnknownOutcome` too (§8.5's transport ambiguity). Th
 EXTERNAL becomes AMBIGUOUS, the probe finds COMMITTED, and the effect is not re-fired — which is
 what the `tool_dropped_response` and `tool_malformed` rows show, one applied effect each.
 
-The one cell whose proxy realisation differs from its shim twin is `pause_past_ttl@before:tool_call`:
-the frozen worker's request is parked *at the proxy* and forwarded at the thaw, by which time the
-successor has already probed (ABSENT), re-attempted and applied — so the thawed request lands
-second and the World applies twice on the `dedup:false` endpoint. That is the zombie residual of
-§8.4 by a different road, at-least-once against the declared claim, and the raw count is printed.
+`pause_past_ttl@before:tool_call` is the cell whose proxy realisation is meant to differ from its
+shim twin: the worker's request is parked *at the proxy* and the worker itself is frozen past its
+lease, so the successor takes over, probes (ABSENT — the request is still parked), re-attempts and
+applies, and the parked request is forwarded at the thaw and lands second — the zombie residual of
+§8.4 by a different road, at-least-once against the declared claim.
+
+**The published tier1p rows mostly did not measure that.** The proxy freezes the process named by
+`sut/pid-<n>`, and until `22f53d9` the successor wrote `pid-0` as well, so whichever of the two wrote
+last was frozen. Read from the trial journals, in 41 of the 60 Keel trials (23 of 30 `EXTERNAL`, 18 of
+30 `IDEMPOTENT`) the idle successor was frozen and the worker holding the run kept appending: its own
+1 s tool timeout fired on the parked request, it probed (ABSENT), re-attempted and completed the run,
+and the parked request applied again at the thaw. The duplicate counts on the page (30 of 30
+`EXTERNAL`) come out the same either way, but the mechanism above ran in 19 of the 60, and the cell's
+`lat 1.0s` is the tool timeout. Only the worker under test now writes `pid-<n>` (the successor writes
+`pid-successor-<n>`), and a proxy that stops drops a request still parked instead of forwarding it
+after the trial. The cell is due a re-run.
