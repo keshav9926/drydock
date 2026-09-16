@@ -1,0 +1,30 @@
+# smoke — the Temporal arm through matrix v0's windows, one seed (§13.7's Temporal row).
+#
+# Not a published matrix: one seed per cell is a check that every cell runs and lands where it was
+# aimed, and a first look at §13.7's predictions — T1 0 dup, T2 1, T3 1, T4 (the frozen worker) 1 —
+# before anything is spent on n=30.
+workload: tool_chain_1_effect
+mode: shim
+seeds: {count: 1, base: 7}
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, L1, L2]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - before:tool_call
+  - after:tool_effect
+  - after:tool_return
+  - pause_past_ttl@before:tool_call
+
+adapters:
+  # `agent_code` is §13.5's axis. `pydantic_ai` is the only value V1 builds; a native Temporal
+  # adapter is V2. The key source is the documented `{workflow_run_id}:{activity_id}` (F1).
+  - name: temporal
+    key_source: framework
+    configs:
+      - {id: pydantic_ai, agent_code: pydantic_ai}

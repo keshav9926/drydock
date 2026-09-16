@@ -1,0 +1,23 @@
+# smoke — the Temporal arm through W5-pre, one seed (§13.7 H7, tier 2). Same knobs as `w5_pre.yaml`.
+workload: approval_gated_deploy_pre
+mode: shim
+seeds: {count: 1, base: 7}
+max_recoveries: 3
+timeout: 60
+landmark: tool:deploy_service
+approval_delay_ms: 500
+approval_duplicate_gap_ms: 0
+verifier: [S1, S2, S3, S4, S5, S7, L1, L2]
+
+variants:
+  - {id: GATED, endpoint_dedup: false, resolution: probe}
+
+triggers:
+  - approval_delay@supervisor
+  - kill_while_waiting@supervisor
+
+adapters:
+  - name: temporal
+    key_source: none
+    configs:
+      - {id: pydantic_ai, agent_code: pydantic_ai}
