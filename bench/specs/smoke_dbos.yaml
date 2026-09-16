@@ -1,0 +1,29 @@
+# Smoke for the DBOS arm — W1, one seed, both `agent_code` rows (§13.5, §13.7).
+#
+# Not a published matrix: one seed says whether the arm runs and which way each cell falls, which is
+# what §13.7's DBOS row predicts (T1 0 dup, T2 1, T3 1 at F0; F1 applied ≤ 1). The W5 forms are
+# `smoke_dbos_w5.yaml` and `smoke_dbos_w5_pre.yaml`, because a matrix names one workload.
+workload: tool_chain_1_effect
+mode: shim
+seeds: {count: 1, base: 7}
+max_recoveries: 3
+timeout: 60
+verifier: [S1, S2, S3, S4, S5, L1, L2]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - before:tool_call
+  - after:tool_effect
+  - after:tool_return
+
+adapters:
+  # `workflow_id:step_id` — persisted and restored by DBOS itself, so F1 (§13.6). The EXTERNAL
+  # variant asks for no key, and its rows say `none`.
+  - name: dbos
+    key_source: framework
+    configs:
+      - {id: native, agent_code: native}
+      - {id: pydantic_ai, agent_code: pydantic_ai}
