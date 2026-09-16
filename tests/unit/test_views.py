@@ -304,3 +304,21 @@ def test_recheck_gates_on_drift_not_on_a_fail_that_reproduces(tmp_path) -> None:
 
     drifted = _published(tmp_path / "b", {7: stuck}, verdicts={"L1": "PASS"})
     assert runner.invoke(app, ["verify", drifted, "--recheck"]).exit_code == EXIT_INVARIANT_FAIL
+
+
+def test_an_invariant_newer_than_the_row_is_not_drift_while_it_is_na(tmp_path) -> None:
+    """S6 arrived after tier1p and W5 were published; every one of those rows lacks the key, and the
+    recheck went red on 1800 rows for an N/A the rows could not have carried. A newer key that is
+    anything but N/A, or a changed old one, is still drift."""
+    from typer.testing import CliRunner
+
+    from crashproof.cli.main import EXIT_INVARIANT_FAIL, app
+
+    runner = CliRunner()
+    f = facts()
+    verdicts = invariants.verify(f).as_dict()
+    assert verdicts.get("S6") == "N/A"
+    older = {k: v for k, v in verdicts.items() if k != "S6"}
+    assert runner.invoke(app, ["verify", _published(tmp_path / "a", {7: f}, verdicts=older), "--recheck"]).exit_code == 0
+    changed = {**older, "S1": "FAIL" if older["S1"] != "FAIL" else "PASS"}
+    assert runner.invoke(app, ["verify", _published(tmp_path / "b", {7: f}, verdicts=changed), "--recheck"]).exit_code == EXIT_INVARIANT_FAIL

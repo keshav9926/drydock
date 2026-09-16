@@ -86,7 +86,9 @@ park and its spawn, where no shim can reach. A boundary only one runtime exposes
 
 How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/keel.md`](docs/adapters/keel.md) ·
-[`docs/adapters/langgraph.md`](docs/adapters/langgraph.md). What a finding has to clear before it
+[`docs/adapters/langgraph.md`](docs/adapters/langgraph.md) ·
+[`docs/adapters/dbos.md`](docs/adapters/dbos.md) ·
+[`docs/adapters/temporal.md`](docs/adapters/temporal.md). What a finding has to clear before it
 goes to someone else's issue tracker: [`docs/upstream-report-template.md`](docs/upstream-report-template.md).
 
 ## Status — phase 8 of 8: outside the holder
@@ -175,9 +177,11 @@ at a step boundary inside its own fenced transaction, without ever becoming a se
   stays in its own band. **Both pages need a re-run:** `approval_delay` now sends §11.4-C's duplicate
   click and `approval_expiry` forbids the deploy by name — new `spec_hash`es for both cells — and the
   Keel arm's approve now names the approval it decides.
-- **In progress, not merged:** the DBOS arm (native, and Pydantic AI on DBOS), the Temporal arm
-  (Pydantic AI) and the Restate arm, which runs under WSL because `restate-sdk` has no Windows wheel.
-  The `dbos` and `temporal` extras are in `pyproject.toml`; no adapter for any of the three is.
+- **Engine arms.** DBOS (`native`, and Pydantic AI under `DBOSDurability`; `recovery_mechanism = self`,
+  F1 `workflow_id:step_id`) and Temporal (Pydantic AI under `TemporalDurability`; `engine`, F1
+  `workflow_run_id:activity_id`) are merged, each with a one-seed smoke of W1, W5 and W5-pre in its
+  adapter page — smokes, not results. The Restate arm is in progress; `restate-sdk` has no Windows
+  wheel, so that arm runs the harness under WSL.
 
 ### Post-phase-8 audit
 
@@ -227,8 +231,13 @@ commit that added this section.
   the W5 trials predate the `sut_ref` join it reads for Keel and the checkpoint snapshot it reads for
   LangGraph, and a supervisor-fired fault has no K3 window at all. The shim pages are published
   without the check K3 gates them on, and the week-2 re-run is what decides it.
-- **K5 (adapter infeasible)** is checked as adapters land, and no adapter merged in week 2. The
-  LangGraph W5 binding is `interrupt()` + `Command(resume=)`, cited from the version under test.
+- **K5 (adapter infeasible) has not fired** for the arms merged so far. DBOS ×2 and Temporal express
+  W1, W5 and W5-pre in cited primitives with no counter, pre-send lookup, retry or dedup of the
+  adapter's own, and both F1 formulas carry a doc citation ([dbos](docs/adapters/dbos.md),
+  [temporal](docs/adapters/temporal.md)). What they cannot express is N/A with the reason: S7 (no
+  approval id binds a decision to an effect), S4/S5 (no write-ahead step record), W6 (no cited child
+  mechanism). The LangGraph W5 binding is `interrupt()` + `Command(resume=)`, cited from the version
+  under test. Restate is checked when it lands.
 
 ### Phase 7: the artifact other people see
 
@@ -682,8 +691,8 @@ the event stream where it already lives.
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
 - W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
   effect-table bridge and a DBOS arm to be a comparison.
-- The engine arms are in progress ([above](#status--phase-8-of-8-outside-the-holder)); §29.1's week-2
-  matrix is the full re-run at one commit with them added, and it has not run.
+- The Restate arm is in progress ([above](#status--phase-8-of-8-outside-the-holder)); §29.1's week-2
+  matrix is the full re-run at one commit with every engine arm added, and it has not run.
 
 §27 is the binding staging table. One published page is ahead of it: W5-pre, a tier-2 cell built in
 week 2 for the reason given above.

@@ -2,8 +2,9 @@
 
 A `shim` cell and its `proxy` twin are one trigger, one landmark, one set of seeds, with the
 injector one process further out. §11.2's correspondence table says what precision that loses —
-`before:tool_call` fires on a request that has already left the SUT, `after:tool_return` lands
-before the SUT parses the bytes. This page says whether it changed anything. A cell where the two
+`before:tool_call` fires on a request that has already left the SUT, and `after:tool_return` is
+meant to land before the SUT parses the bytes — but a kill from outside arrives only after
+`taskkill`'s latency, often after the parse. This page says whether it changed anything. A cell where the two
 agree on every safety verdict and every raw count is a window that is real and not an artefact of
 where the instrument sat. A cell where they differ is a finding about the *instrument*, printed
 with both numbers and never resolved in favour of either.
@@ -274,9 +275,11 @@ def render(a: Agreement, *, sources: list[tuple[str, list[dict[str, Any]]]] = ()
         ),
         "",
         "What the proxy realisation loses, per §11.2: `before:tool_call` fires on a request that",
-        "has already left the SUT (the shim's fires with nothing sent); `after:tool_return` lands",
-        "before the SUT parses the bytes (the shim's lands inside the checkpoint write, via",
-        "`call_soon`); a freeze parks the request at the proxy and forwards it at the thaw, and the",
+        "has already left the SUT (the shim's fires with nothing sent); `after:tool_return` is meant",
+        "to land before the SUT parses the bytes, but a kill from outside the process arrives only",
+        "after `taskkill`'s latency — often after the parse, sometimes after the run has finished,",
+        "which is what a proxy cell with fewer restarts than its shim twin shows (the shim's lands",
+        "inside the checkpoint write, via `call_soon`); a freeze parks the request at the proxy and forwards it at the thaw, and the",
         "process frozen is the one named by `sut/pid-<n>` — which, in rows from before a Keel",
         "successor wrote its pid under its own name, may have been the idle successor rather than the",
         "worker holding the run. The `after:tool_effect` window — applied, receipted, nobody told —",

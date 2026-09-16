@@ -124,16 +124,19 @@ def world(
 @app.command()
 def workloads() -> None:
     """List the canonical workloads and what each variant is measured against."""
-    wl = load_named("tool_chain_1_effect")
+    from crashproof.workloads.spec import SCRIPTS
+
     table = Table(box=None)
     for col in ("workload", "variant", "key_source", "tool", "class", "endpoint", "required"):
         table.add_column(col)
-    for name, variant in wl.variants.items():
-        for tool in wl.tools_for(name):
-            table.add_row(
-                wl.workload, name, variant.key_source, tool.name, tool.effect_class,
-                tool.endpoint, ",".join(variant.required_effects),
-            )
+    for script in sorted(SCRIPTS.glob("*.yaml")):
+        wl = load_named(script.stem)
+        for name, variant in wl.variants.items():
+            for tool in wl.tools_for(name):
+                table.add_row(
+                    wl.workload, name, variant.key_source, tool.name, tool.effect_class,
+                    tool.endpoint, ",".join(variant.required_effects),
+                )
     out.print(table)
 
 
@@ -526,8 +529,11 @@ def verify(
         if recheck and first != canonical(facts):
             unstable.append(f"{row['cell_id']}/{row['trial_id']}")
         fresh = invariants.verify(facts)
-        if fresh.as_dict() != row["verdicts"]:
-            drifted.append(f"{row['cell_id']}/{row['trial_id']}: {row['verdicts']} -> {fresh.as_dict()}")
+        # An invariant added after the row was written, and N/A for it, is not drift: the row could
+        # not have carried it. Anything else it says differently is.
+        now = {k: v for k, v in fresh.as_dict().items() if k in row["verdicts"] or v != "N/A"}
+        if now != row["verdicts"]:
+            drifted.append(f"{row['cell_id']}/{row['trial_id']}: {row['verdicts']} -> {now}")
         if fresh.failed and row.get("valid", True):
             failed.append(f"{row['cell_id']}/{row['trial_id']}: {fresh.failed}")
 

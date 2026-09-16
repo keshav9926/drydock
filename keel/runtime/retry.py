@@ -10,11 +10,11 @@ Two rules keep it from becoming a duplicate machine:
 because the request left the process and retrying is precisely how systems duplicate effects (§8.5).
 A definite refusal from the receiver — it said no — is `retryable=False` and ends the step.
 
-**The backoff stays inside the lease.** A delay shorter than the lease TTL is served in-process with
-the heartbeat still running (§4.3). Longer delays are supposed to release the lease and set
-`wake_at`, which needs `RUN_WAITING` — a v1 event with the signals inbox. So the cap is the lease
-instead, and a policy that would exceed it is clamped rather than quietly holding a lease it cannot
-renew. That ceiling is real and named, not hidden.
+**The policy's own backoff stays inside the lease.** A delay shorter than the lease TTL is served
+in-process with the heartbeat still running (§4.3), and a policy that would exceed half the lease is
+clamped rather than quietly holding a lease it cannot renew. The long waits — a provider whose
+circuit breaker is open, a journaled `next_attempt_at` past `PARK_BACKOFF_AFTER_S` — park instead:
+`RUN_WAITING{retry_backoff}` releases the lease and sets `wake_at` (`runtime/steps.py`).
 """
 
 from __future__ import annotations
