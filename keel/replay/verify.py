@@ -179,7 +179,15 @@ async def verify(
         # already records as FAILED. Anywhere else it is a failure of the pass, and saying
         # otherwise would be the worst bug this module could have — a VERIFY that reports PASS
         # because the program blew up before it could disagree with anything.
-        if state.phase == "FAILED":
+        #
+        # The one other case: a cancel acknowledged past the last journaled step — a takeover closes
+        # a run at `next_step_index` (§7.6.2) — when the program, replayed, issued every journaled
+        # step and then raised before reaching that index. The original never got there either; the
+        # cancel won. Returning at that point already passes, and raising must not be the difference.
+        cancelled_past_the_end = (
+            state.cancel_acknowledged_at is not None and ctx.step_index >= state.next_step_index
+        )
+        if state.phase == "FAILED" or cancelled_past_the_end:
             out.error = f"{type(exc).__name__}: {exc}"
         else:
             out.ok = False
