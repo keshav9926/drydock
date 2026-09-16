@@ -32,6 +32,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from keel.runtime.breaker import DEFAULT_COOLDOWN_S, DEFAULT_N_OPEN
 from crashproof.adapters.base import CanonicalResult, ConfigPin, Dependency, SutHandle
 from crashproof.faults.injectors.shim import ToolShim
 from crashproof.faults.log import TrialDir
@@ -350,7 +351,11 @@ class KeelAdapter:
             claim_poll_s=CLAIM_POLL_S,
             reaper_period_s=REAPER_PERIOD_S,
             retry=f"max_attempts={MAX_ATTEMPTS}, backoff=exponential+jitter",
-            extra={"model_timeout_s": MODEL_TIMEOUT_S, "world_client_timeout_s": DEFAULT_TIMEOUT_S, **extra},
+            extra={
+                "model_timeout_s": MODEL_TIMEOUT_S, "world_client_timeout_s": DEFAULT_TIMEOUT_S,
+                # The per-provider breaker (§8): it pushes a MODEL retry out, which changes a number.
+                "breaker": f"n_open={DEFAULT_N_OPEN}, cooldown_s={DEFAULT_COOLDOWN_S:g}", **extra,
+            },
             worker_count=worker_count,
             pause_ms=PAUSE_MS,
         )

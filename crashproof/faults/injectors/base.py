@@ -28,6 +28,8 @@ from crashproof.faults.schedule import Entry, Schedule
 from crashproof.faults.triggers import Matcher
 
 DEFAULT_DELAY_MS = 2000.0
+#: §11.5 `provider_outage`: how many model calls in a row fail when a spec does not say.
+DEFAULT_OUTAGE_CONSECUTIVE = 3
 #: The two `sigterm_grace_*` types differ only in whether the grace covers the open step, so the
 #: grace is a property of the type rather than a parameter every spec has to remember to set. Both
 #: are pinned by the harness and printed in `config_pin`: 3 s is longer than any step timeout any
@@ -107,11 +109,20 @@ class Injector:
             )
             if self.observe_only:
                 return
-            entry = self.matcher.match(landmark, boundary)
-            if entry is None:
-                return
-            self.matcher.spend(entry)
-            self._record(entry)
+            # An outage in progress fails this call too: one fault row, `consecutive` failures,
+            # counted in the trial directory so a restart does not end the outage early (§11.5).
+            remaining = self.trial.outage_remaining() if boundary == "before:model_call" else 0
+            if remaining > 0:
+                self.trial.set_outage_remaining(remaining - 1)
+                entry = None
+            else:
+                entry = self.matcher.match(landmark, boundary)
+                if entry is None:
+                    return
+                self.matcher.spend(entry)
+                self._record(entry)
+        if entry is None:
+            raise FaultResponse("provider_outage", 503)
         self._execute(entry)
 
     def _record(self, entry: Entry) -> None:
@@ -156,6 +167,11 @@ class Injector:
             time.sleep(float(entry.params.get("delay_ms", DEFAULT_DELAY_MS)) / 1000.0)
         elif entry.type in ("tool_500", "model_500"):
             raise FaultResponse(entry.type, entry.params.get("status", 500))
+        elif entry.type == "provider_outage":
+            # This call is the first failure; the marker fails the next `consecutive - 1`.
+            consecutive = int(entry.params.get("consecutive", DEFAULT_OUTAGE_CONSECUTIVE))
+            self.trial.set_outage_remaining(consecutive - 1)
+            raise FaultResponse("provider_outage", int(entry.params.get("status", 503)))
         elif entry.type == "tool_timeout":
             pass  # armed at the World by the shim, which knows which endpoint (§11.5)
         elif entry.type == "model_reask_alternate":

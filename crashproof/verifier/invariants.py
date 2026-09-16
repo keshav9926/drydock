@@ -33,6 +33,10 @@ MVP_INVARIANTS = ("S1", "S2", "S3", "S4", "S5", "L1", "L2")
 #: a cell that ran before the column existed is not missing it, and a workload with no approvals in
 #: it prints N/A rather than a free PASS.
 APPROVAL_INVARIANTS = ("S7",)
+#: S6 arrives with cancellation (v1, week 2). Judged by journal order, never by the clock: a World
+#: receipt for an effect whose attempt STARTED after CANCEL_ACKNOWLEDGED is a cancel not honoured.
+#: No tier-1 cell issues a cancel (§14.3), so it prints N/A there with that reason.
+CANCEL_INVARIANTS = ("S6",)
 #: S8 arrives with delegation (v1, week 2): no child receipt after the parent's terminal event, and
 #: every child terminal before its parent. It needs the *children's* journals beside the parent's,
 #: and the collector reads one journal per trial — so the matrix prints N/A with that reason, and
@@ -143,10 +147,91 @@ def verify(facts: TrialFacts) -> Verdicts:
     _s5_monotonic_step_state(facts, v)
     _l1_recovery_completes(facts, v)
     _l2_bounded_recoveries(facts, v)
+    _s6_cancel_honoured(facts, v)
     _s7_approval_binding(facts, v)
     _s8_children_before_parent(facts, v)
     _c1_replay_determinism(facts, v)
     return v
+
+
+def cancel_ordering(f: TrialFacts) -> dict[str, Any] | None:
+    """§14.3 S6: each receipt placed against the first CANCEL_ACKNOWLEDGED by journal order. A
+    receipt maps to its effect through the runtime's ledger (World label -> step), and the step's
+    latest STEP_ATTEMPT_STARTED seq decides: after the acknowledgement is a violation, before it is
+    `in_flight_at_cancel` -- allowed, and printed raw. None when there is nothing to order."""
+    if f.journal is None:
+        return None
+    acks = [e["seq"] for e in f.journal if e["type"] == "CANCEL_ACKNOWLEDGED"]
+    if not acks:
+        return None
+    ack = min(acks)
+    step_of = {row["external_ref"]: row["step_index"] for row in f.sut_effects or [] if row.get("external_ref")}
+    started: dict[int, int] = {}
+    for e in f.journal:
+        if e["type"] == "STEP_ATTEMPT_STARTED" and e.get("step_index") is not None:
+            started[e["step_index"]] = max(started.get(e["step_index"], 0), e["seq"])
+    after, in_flight, unplaced = [], [], []
+    for r in f.world_receipts:
+        step = step_of.get(r["logical_identity"])
+        if step is None or step not in started:
+            unplaced.append(r["logical_identity"])
+        elif started[step] > ack:
+            after.append(r["logical_identity"])
+        else:
+            in_flight.append(r["logical_identity"])
+    return {"ack_seq": ack, "after": after, "in_flight_at_cancel": in_flight, "unplaced": unplaced}
+
+
+def _s6_cancel_honoured(f: TrialFacts, v: Verdicts) -> None:
+    """No World receipt for an effect whose STARTED seq is greater than the CANCEL_ACKNOWLEDGED seq
+    (§12.4). Receipts whose attempt started before the acknowledgement were in flight when the run
+    was told, and are allowed. N/A for a runtime that exposes no acknowledgement ordering, and for a
+    trial in which nothing was cancelled."""
+    if f.journal is None:
+        v.add("S6", "N/A", "the runtime exposes no cancel-acknowledgement ordering")
+        return
+    order = cancel_ordering(f)
+    if order is None:
+        v.add("S6", "N/A", "nothing was cancelled in this trial")
+        return
+    if order["after"]:
+        v.add("S6", "FAIL", "an effect started after the cancel was acknowledged reached the World", order)
+        return
+    v.add("S6", "PASS", f"{len(order['in_flight_at_cancel'])} receipt(s) in flight at cancel, none after it")
+
+
+def approval_binding_violations(f: TrialFacts) -> int | None:
+    """§14.3 ABV = sum over approvals of max(0, applied_gated(a) - 1), plus the gated effects applied
+    with no GRANTED approval. The count S7 judges, as a number. None where S7 has nothing to count."""
+    if f.journal is None:
+        return None
+    requested = [e for e in f.journal if e["type"] == "APPROVAL_REQUESTED"]
+    gated = set(f.gated_tools.values())
+    if not requested and not gated:
+        return None
+    decisions: dict[str, str] = {}
+    for e in f.journal:
+        if e["type"] == "APPROVAL_DECIDED":
+            decisions.setdefault(str(e["body"]["approval_id"]), str(e["body"].get("decision")))
+    labels = {row.get("effect_key"): row.get("external_ref") for row in f.sut_effects or []}
+    violations, bound, grants_unlabelled = 0, set(), 0
+    for e in requested:
+        key = e["body"].get("binds_effect_key")
+        if not key:
+            continue
+        granted = decisions.get(str(e["body"]["approval_id"])) == "granted"
+        label = labels.get(key)
+        if label is None:
+            grants_unlabelled += granted
+            continue
+        bound.add(label)
+        applied = f.world_applied.get(label, 0)
+        violations += max(0, applied - 1) if granted else applied
+    stray = sum(
+        n for label, n in f.world_applied.items()
+        if n >= 1 and label not in bound and str(label).rpartition("#")[0] in gated
+    )
+    return violations + max(0, stray - grants_unlabelled)
 
 
 def _s8_children_before_parent(f: TrialFacts, v: Verdicts) -> None:

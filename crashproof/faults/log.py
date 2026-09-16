@@ -118,6 +118,7 @@ class TrialDir:
         for stale in self.path.glob("thawed-*"):
             _truncate(stale)
         _truncate(self.alternate_marker())
+        _truncate(self.outage_marker())
         for leftover in (self.path / "sut").glob("*"):
             _truncate(leftover)
 
@@ -157,6 +158,21 @@ class TrialDir:
 
     def announce_pid(self, recovery_index: int, role: str = "worker") -> None:
         self.pid_path(recovery_index, role).write_text(str(os.getpid()), encoding="utf8")
+
+    def outage_marker(self) -> Path:
+        """`provider_outage`: how many more model calls fail (§11.5). Trial-owned for the same reason
+        the fault log is — a worker killed or restarted mid-outage must not end the outage early."""
+        return self.path / "provider_outage"
+
+    def outage_remaining(self) -> int:
+        marker = self.outage_marker()
+        try:
+            return int(marker.read_text(encoding="utf8").strip() or 0) if marker.exists() else 0
+        except ValueError:
+            return 0
+
+    def set_outage_remaining(self, n: int) -> None:
+        _durably_write(self.outage_marker(), str(max(0, n)))
 
     def alternate_marker(self) -> Path:
         """`model_reask_alternate`: the trial-owned flag the scripted provider consults (§13.3).

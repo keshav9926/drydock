@@ -7,8 +7,8 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | (location, fault) | `keel.default` | `langgraph.async` | `langgraph.sync` |
 |---|---|---|---|
 |  | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
-| `kill@after:tool_effect+model_reask_alternate@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 2 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>+calls 0 · diverged 30/30 |
+| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
+| `kill@after:tool_effect+model_reask_alternate@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 2 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>+calls 0 · diverged 30/30 |
 
 ## Counterexamples
 

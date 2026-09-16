@@ -222,6 +222,8 @@ async def run_trial(
             applied_identities=world.applied_identities(),
             valid=valid,
             baseline=baseline,
+            journal=facts.journal,
+            approval_binding_violations=invariants.approval_binding_violations(facts),
         )
 
         row = TrialRow(

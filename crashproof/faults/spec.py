@@ -66,7 +66,7 @@ RESTART_CAUSING = frozenset(
 #: Types the supervisor must not treat as a restart request: the worker is still alive.
 NON_FATAL = frozenset(
     {
-        "tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500",
+        "tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500", "provider_outage",
         "model_reask_alternate", "approval_delay", "approval_expiry",
     }
 )
@@ -123,6 +123,9 @@ SHIM_FAULT_TYPES = frozenset(
         "tool_delay",
         "model_timeout",
         "model_500",
+        # §11.5: `params.consecutive` model calls fail in a row, starting at the trigger — an outage
+        # a retry storm would hammer, and the breaker is what stops (§8, §27.5).
+        "provider_outage",
         "sigterm_grace_ok",
         "sigterm_grace_too_short",
         "model_reask_alternate",
@@ -142,6 +145,7 @@ FAULT_BOUNDARIES = {
     "tool_delay": {"before:tool_call", "after:tool_effect"},
     "model_timeout": {"before:model_call"},
     "model_500": {"before:model_call"},
+    "provider_outage": {"before:model_call"},
     "model_reask_alternate": {"before:model_call"},
     "approval_delay": {"supervisor"},
     "approval_expiry": {"supervisor"},

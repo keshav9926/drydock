@@ -313,3 +313,69 @@ def test_a_wrong_world_is_not_partially_correct() -> None:
     )
     assert m.logical_correctness == 0
     assert m.lost_effects is None, "an unexposed committed set is not zero lost effects"
+
+
+# --- S6 and the week-2 metrics (§12.4, §14.3 #19-#21) -----------------------------------------
+def _cancelled(started_seq: int, *, labelled: bool = True) -> TrialFacts:
+    """A cancel acknowledged at seq 10; the deploy's attempt STARTED at `started_seq`."""
+    journal = [
+        {"seq": 8, "type": "SIGNAL_RECEIVED", "ts": 50.0, "step_index": None, "body": {"signal_type": "cancel"}},
+        {"seq": 10, "type": "CANCEL_ACKNOWLEDGED", "ts": 50.1, "step_index": 4, "body": {"step_index": 4}},
+        {"seq": started_seq, "type": "STEP_ATTEMPT_STARTED", "ts": 49.0, "step_index": 4, "body": {}},
+        {"seq": 20, "type": "RUN_CANCELLED", "ts": 51.0, "step_index": None, "body": {}},
+    ]
+    return facts(
+        journal=journal, status="CANCELLED", required_effects=(),
+        world_receipts=[{"logical_identity": "deploy.service#1", "ts": 50.5, "endpoint": "deploy.service"}],
+        world_applied={"deploy.service#1": 1},
+        sut_effects=[{"effect_key": "k", "step_index": 4, "external_ref": "deploy.service#1" if labelled else None}],
+    )
+
+
+def test_s6_allows_an_effect_in_flight_at_cancel_and_fails_one_started_after_it() -> None:
+    before = verify(_cancelled(started_seq=7)).findings["S6"]
+    assert before.verdict == "PASS" and "1 receipt(s) in flight" in before.detail
+    after = verify(_cancelled(started_seq=12)).findings["S6"]
+    assert after.verdict == "FAIL" and after.counterexample["after"] == ["deploy.service#1"]
+
+
+def test_s6_is_n_a_with_no_journal_and_with_no_cancel() -> None:
+    assert verify(facts(journal=None)).findings["S6"].verdict == "N/A"
+    no_cancel = verify(facts()).findings["S6"]
+    assert no_cancel.verdict == "N/A" and "nothing was cancelled" in no_cancel.detail
+
+
+def test_approval_binding_violations_counts_what_s7_judges() -> None:
+    from crashproof.verifier.invariants import approval_binding_violations as abv
+
+    assert abv(gated()) == 0
+    assert abv(gated(applied=3)) == 2, "two deploys beyond the one approved"
+    assert abv(gated(decision="rejected")) == 1, "an applied deploy nobody granted"
+    assert abv(gated(decision=None, requested=False, label=None)) == 1, "a gated deploy with no approval at all"
+    assert abv(facts()) is None, "a workload that gates nothing has nothing to count"
+    assert abv(facts(journal=None, gated_tools={"deploy_service": "deploy.service"})) is None
+
+
+def _compute(**kw) -> metrics.Metrics:
+    base = dict(
+        world_applied={"deploy.service#1": 1}, world_receipts=[], sut_committed=None, required_effects=(),
+        status="COMPLETED", expected_status="COMPLETED", expected_world_state={"deploy.service#1": 1},
+        faults=[], t_restarts=[], wall_ms=1, model_calls=None, tokens=None, storage_bytes=None,
+        detect_ms=None, verdicts={},
+    )
+    return metrics.compute(**{**base, **kw})
+
+
+def test_wait_durability_is_the_wait_surviving_a_kill_and_nothing_else() -> None:
+    killed = [{"type": "kill_while_waiting", "executed": True, "trigger_observed_at": 1.0}]
+    assert _compute().wait_durability is None, "no kill during a wait: nothing to measure"
+    assert _compute(faults=killed, t_restarts=[2.0]).wait_durability == 1
+    wrong_world = _compute(faults=killed, t_restarts=[2.0], world_applied={"deploy.service#1": 2})
+    assert wrong_world.wait_durability == 0, "survived, but deployed twice"
+
+
+def test_cancel_latency_runs_from_the_drain_to_the_later_of_terminal_and_last_receipt() -> None:
+    f = _cancelled(started_seq=7)
+    m = _compute(journal=f.journal, world_receipts=f.world_receipts)
+    assert m.cancel_latency_ms == 1000.0, "drained at 50.0, cancelled at 51.0, last receipt at 50.5"
+    assert _compute(journal=[]).cancel_latency_ms is None

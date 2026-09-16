@@ -146,3 +146,25 @@ def test_tokens_are_counted_by_one_function_for_every_arm() -> None:
     assert ToolShim.count_tokens({"a": 1, "b": 2}) == ToolShim.count_tokens({"b": 2, "a": 1})
     # A bigger prompt costs more, which is the only monotonicity the column relies on.
     assert ToolShim.count_tokens({"messages": ["x" * 400]}) > ToolShim.count_tokens({"messages": []})
+
+
+def test_a_provider_outage_fails_its_consecutive_calls_across_a_restart(tmp_path, killed) -> None:
+    """§11.5 `provider_outage`: one fault row, then `consecutive` model calls fail in a row. The
+    count lives in the trial directory, so a worker restarted mid-outage is still inside it."""
+    from crashproof.faults.injectors.base import FaultResponse
+
+    doc = {
+        "name": "outage", "workload": "tool_chain_1_effect", "mode": "shim", "max_recoveries": 3,
+        "faults": [{"id": "o1", "type": "provider_outage", "params": {"consecutive": 3},
+                    "trigger": {"boundary": "before:model_call", "landmark": "model:start"}}],
+    }
+    first = _injector(tmp_path, doc)
+    for _ in range(2):
+        with pytest.raises(FaultResponse):
+            first.at("model:start", "before:model_call")
+    restarted = _injector(tmp_path, doc, recovery_index=1)
+    with pytest.raises(FaultResponse):
+        restarted.at("model:start", "before:model_call")
+    restarted.at("model:start", "before:model_call")  # the provider is back
+    assert [r.type for r in restarted.trial.faults()] == ["provider_outage"], "one row, three failures"
+    assert killed == []

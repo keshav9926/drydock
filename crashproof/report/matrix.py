@@ -23,6 +23,7 @@ from typing import Any
 from crashproof.stats.ci import wilson
 from crashproof.verifier.invariants import (
     APPROVAL_INVARIANTS,
+    CANCEL_INVARIANTS,
     CONSISTENCY_INVARIANTS,
     MVP_INVARIANTS,
 )
@@ -100,7 +101,7 @@ def _summarise(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:
         return s
 
     # --- safety: a single violation is a FAIL, and it names itself -----------
-    for name in (*MVP_INVARIANTS, *APPROVAL_INVARIANTS, *CONSISTENCY_INVARIANTS):
+    for name in (*MVP_INVARIANTS, *CANCEL_INVARIANTS, *APPROVAL_INVARIANTS, *CONSISTENCY_INVARIANTS):
         seen = [r["verdicts"].get(name, "N/A") for r in valid]
         if all(v == "N/A" for v in seen):
             s.verdicts[name] = "N/A"

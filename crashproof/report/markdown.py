@@ -91,7 +91,7 @@ def _cell(cell: CellSummary | None) -> str:
         f"{name}{'✓' if cell.verdicts.get(name) == 'PASS' else '✗' if cell.verdicts.get(name) == 'FAIL' else '·'}"
         # §15.11 rule 3: never omitted from the grid. S7 prints `·` for a workload that gates
         # nothing, which is a different statement from a workload that gates something and passed.
-        for name in ("S1", "S2", "S3", "S4", "S5", "S7", "C1")
+        for name in ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "C1")
     )
     lo, hi = wilson(*cell.recovery_rate)
     live = f"L1 {cell.recovery_rate[0]}/{cell.recovery_rate[1]} [{lo:.2f}–{hi:.2f}]"

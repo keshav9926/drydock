@@ -42,6 +42,14 @@ class Metrics:
     #: `None` without a baseline — "did it diverge" has no answer without something to diverge from.
     replay_divergence: int | None = None
     restart_latency_ms: float | None = None  # harness-owned; printed, never compared across arms
+    #: §14.3 #21: the count S7 judges. None where the runtime exposes no approval binding to count.
+    approval_binding_violations: int | None = None
+    #: §14.3 #20: 1 when the worker was killed during the wait, the decision arrived after the
+    #: restart, and the run still ended logically correct. None in a trial with no such kill.
+    wait_durability: int | None = None
+    #: §14.3 #19: max(t_terminal, t_last_receipt) - t_cancel, from the journal; None with no cancel.
+    #: The cancel's instant is its drain (SIGNAL_RECEIVED), because the insert time is not exported.
+    cancel_latency_ms: float | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -73,6 +81,8 @@ def compute(
     applied_identities: list[list[Any]] | None = None,
     valid: bool = True,
     baseline: "Metrics | None" = None,
+    journal: list[dict[str, Any]] | None = None,
+    approval_binding_violations: int | None = None,
 ) -> Metrics:
     receipts_by_label: dict[str, int] = {}
     for r in world_receipts:
@@ -97,6 +107,10 @@ def compute(
     )
     m.recovery_rate = int(verdicts.get("L1") == "PASS" and verdicts.get("L2") == "PASS")
     m.void_rate = 0 if valid else 1
+    m.approval_binding_violations = approval_binding_violations
+    if any(f.get("type") == "kill_while_waiting" and f.get("executed", True) for f in faults):
+        m.wait_durability = int(bool(t_restarts) and m.logical_correctness == 1)
+    m.cancel_latency_ms = _cancel_latency_ms(journal, world_receipts)
 
     t_fault = max((f["trigger_observed_at"] for f in faults), default=None)
     t_live = _first_live(list(world_receipts) + list(world_probes or []), faults)
@@ -137,6 +151,20 @@ def compute(
         "world_probes": len(world_probes or []),
     }
     return m
+
+
+def _cancel_latency_ms(journal: list[dict[str, Any]] | None, receipts: list[dict[str, Any]]) -> float | None:
+    if not journal:
+        return None
+    from crashproof.verifier.invariants import iso
+
+    cancels = [iso(e["ts"]) for e in journal
+               if e["type"] == "SIGNAL_RECEIVED" and e["body"].get("signal_type") == "cancel"]
+    terminal = [iso(e["ts"]) for e in journal if e["type"] == "RUN_CANCELLED"]
+    if not cancels or not terminal:
+        return None
+    last_receipt = max((float(r["ts"]) for r in receipts), default=terminal[-1])
+    return (max(terminal[-1], last_receipt) - min(cancels)) * 1000
 
 
 def _first_live(requests: list[dict[str, Any]], faults: list[dict[str, Any]]) -> float | None:
