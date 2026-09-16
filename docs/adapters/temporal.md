@@ -114,7 +114,7 @@ attempt out on *heartbeat* and retries it.
 | Heartbeat throttle | SDK default, `0.8 × heartbeat_timeout` | how stale the server's last beat can be when the freeze lands |
 | Workflow task timeout | 10 s (default) | printed |
 | Sticky queue schedule-to-start | 2 s (SDK default 10 s) | `Worker(sticky_queue_schedule_to_start_timeout=...)`, documented; the 10 s default put ~10 s on every kill cell that was not detection — see "What a restart does", step 4 |
-| `pause_past_ttl` pause | 3 s (supervisor default) | 1.5 × the heartbeat timeout — past it, but not §13.4's `[2×, 4×]` draw, which the harness does not implement for any arm yet |
+| `pause_past_ttl` pause | seeded `pause_factor ∈ [2, 4]` × `detection_timeout_s` = the 2 s heartbeat (§13.4) | the supervisor's draw; the applied pause is on the fault row (`pause_ms`). Seed 7 applied 7.10 s (EXTERNAL) and 7.08 s (IDEMPOTENT) |
 
 ## W5 — the human in the loop
 
@@ -165,38 +165,51 @@ decision is the workflow code's, and it reads the first.
 
 `bench/specs/smoke_temporal.yaml`, `smoke_temporal_w5.yaml`, `smoke_temporal_w5_pre.yaml`, seed 7, 18
 trials, every one valid, COMPLETED, S1/S2/S3/L1/L2/C1 PASS. One seed is a check that each cell runs and
-lands where it was aimed, not a rate.
+lands where it was aimed, not a rate. Run on the shared agent with the sticky queue pinned to 2 s and
+§13.4's pause draw; where a number moved from the first smoke (sticky queue at the 10 s default, a flat
+3 s pause) the old value is in brackets.
 
-| cell | applied / receipts | model calls (baseline 3) | restarts | what re-dispatched | §13.7 predicted |
-|---|---|---|---|---|---|
-| EXTERNAL `before:tool_call` (T1) | 1 / 1 | 3 | 1 | attempt 2 after "activity Heartbeat timeout" | 0 dup / +0 — **held** |
-| EXTERNAL `after:tool_effect` (T2) | **2** / 2 | 3 | 1 | same | 1 / +0 — **held** |
-| EXTERNAL `after:tool_return` (T3) | **2** / 2 | 3 | 1 | same | 1 / +0 — **held** (H1: T2 ≡ T3) |
-| EXTERNAL `pause_past_ttl@before:tool_call` (T4) | **2** / 2 | 3 | **0** | the frozen worker's own attempt timed out on heartbeat; after the thaw it sent its request *and* ran the retry | 1 / +0, "2 receipts, 2 applied" — **held** |
-| IDEMPOTENT T1 | 1 / 1 | 3 | 1 | heartbeat timeout | — |
-| IDEMPOTENT T2, T3, T4 | **1 / 2** each | 3 | 1, 1, 0 | heartbeat timeout; both receipts carry the same `<run_id>:4` key | H3: one applied at F1 — **held** |
-| W5 `approval_delay` (duplicate click) | deploy 1 | 3 | 0 | two `WORKFLOW_EXECUTION_SIGNALED`; the second reached nothing | H7: 1 — **held** |
-| W5 `kill_while_waiting` | deploy 1 | 3 | 1 | the grant waited out the dead worker's 10 s sticky queue | H7: 1 / +0 — **held** |
-| W5 `approval_expiry` | deploy 0 | 2 | 0 | the 5 s timer fired: `not done: approval expired` | nothing deployed, COMPLETED |
-| W5 `kill@after:tool_effect` | deploy **2** | 3 | 1 | heartbeat timeout | T2 behind a gate: 1 dup |
-| W5-pre `approval_delay`, `kill_while_waiting` | notify **1**, deploy 1 | 3 | 0, 1 | the continuation skips the `notify` that already ran | tier-2 H7 predicts 2 only for pre-interrupt re-run; Pydantic AI's deferred-tool continuation does not re-run — **1**, like Keel |
+| cell | applied / receipts | model calls (baseline 3) | restarts | wall s (baseline 6.1) | what re-dispatched | §13.7 predicted |
+|---|---|---|---|---|---|---|
+| EXTERNAL `before:tool_call` (T1) | 1 / 1 | 3 | 1 | 12.8 [22.8] | attempt 2 after "activity Heartbeat timeout" | 0 dup / +0 — **held** |
+| EXTERNAL `after:tool_effect` (T2) | **2** / 2 | 3 | 1 | 12.6 [20.7] | same | 1 / +0 — **held** |
+| EXTERNAL `after:tool_return` (T3) | **2** / 2 | 3 | 1 | 12.3 [21.6] | same | 1 / +0 — **held** (H1: T2 ≡ T3) |
+| EXTERNAL `pause_past_ttl@before:tool_call` (T4), pause **7.10 s** [3 s] | **3 / 3** [2 / 2] | 3 | **0** | 13.4 [10.8] | the completed attempt is **3** [2]; all three requests landed within 90 ms of the thaw | 1 dup, "2 receipts, 2 applied" — **held at 3 s, not at 7.1 s: 2 dups** |
+| IDEMPOTENT T1 | 1 / 1 | 3 | 1 | 12.7 | heartbeat timeout | — |
+| IDEMPOTENT T2, T3 | **1 / 2** each | 3 | 1, 1 | 12.5, 13.0 | heartbeat timeout; both receipts carry the same `<run_id>:4` key | H3: one applied at F1 — **held** |
+| IDEMPOTENT T4, pause 7.08 s | **1 / 3** [1 / 2] | 3 | 0 | 13.4 | three receipts, one key | H3 — **held** |
+| W5 `approval_delay` (duplicate click) | deploy 1 | 3 | 0 | 6.6 | two `WORKFLOW_EXECUTION_SIGNALED`; the second reached nothing | H7: 1 — **held** |
+| W5 `kill_while_waiting` | deploy 1 | 3 | 1 | 11.7 [17.9] | the grant's workflow task left the dead worker's sticky queue after 2 s [10 s] | H7: 1 / +0 — **held** |
+| W5 `approval_expiry` | deploy 0 | 2 | 0 | 10.9 | the 5 s timer fired: `not done: approval expired` | nothing deployed, COMPLETED |
+| W5 `kill@after:tool_effect` | deploy **2** | 3 | 1 | 14.0 [20.6] | heartbeat timeout | T2 behind a gate: 1 dup |
+| W5-pre `approval_delay`, `kill_while_waiting` | notify **1**, deploy 1 | 3 | 0, 1 | 6.5, 11.4 [—, 17.0] | the continuation skips the `notify` that already ran | tier-2 H7 predicts 2 only for pre-interrupt re-run; Pydantic AI's deferred-tool continuation does not re-run — **1**, like Keel |
 
-Two things the rows say that the prediction table does not:
+Three things the rows say that the prediction table does not:
 
 - **Detection is the heartbeat, every time** — `last_failure` is "activity Heartbeat timeout" on every
-  retried attempt, never start-to-close. `recovery_latency_ms` is 4.4–5.8 s
-  for kills (≤ 2 s heartbeat + 1 s retry interval + worker start) and 3.1 s for the freeze. The trial's
-  wall time is ~21 s against a 6 s baseline because the completed retry's workflow task sits on the dead
-  worker's sticky queue for the SDK's 10 s `sticky_queue_schedule_to_start_timeout`
-  (`WORKFLOW_TASK_TIMED_OUT` in each kill history) — not the workflow task timeout §13.4 names.
-- **`kill_while_waiting` decided a grant after its deadline had passed on the server, and granted.**
-  The grant signal arrived 0.6–0.7 s into the park; the workflow task carrying it waited 10 s on
-  the dead worker's sticky queue; the 5 s expiry timer fired in the meantime (`TIMER_FIRED` after the
-  signal in both histories). The one activation that saw both delivered the signal first, so
-  `wait_condition` was satisfied and the deploy ran. By arrival order that is right; it is not what
-  Keel does, which judges expiry by the store's clock at drain time. Whether a run resolves an approval
-  that arrived on time but was processed late in favour of the human is a semantic the two arms differ
-  on — printed, not scored.
+  retried attempt, never start-to-close. `recovery_latency_ms` is 4.1–4.6 s for the W1 kills
+  (≤ 2 s heartbeat + 1 s retry interval + worker start) [4.4–5.8 s]. Kill-cell wall time fell from
+  ~21 s to ~12.5 s when the sticky queue was pinned: the ~8 s difference was the SDK default, not the
+  engine. Every kill history still has one `WORKFLOW_TASK_TIMED_OUT`, now 2 s after it was scheduled.
+- **The zombie count grows with the pause.** §13.7 predicts one duplicate: the timed-out attempt
+  completes after the thaw and the retry fires too. That is what a 3 s freeze did. A 7.1 s freeze
+  spans more than one heartbeat-plus-backoff cycle, and the attempt that completed is attempt 3: attempt
+  1 and attempt 2 both timed out while the worker was frozen, and after the thaw the worker sent three
+  requests within 90 ms. History records only the attempt that closed, so which frozen attempts reached
+  the worker is inferred from the receipts, not read from Temporal. At F0 on `dedup: false` that is two
+  duplicates, within `at_least_once`; at F1 all three carry one key and the receiver applies once. The
+  duplicate count at T4 is a function of `pause / (heartbeat + backoff)` — the reason §13.4 draws the
+  pause rather than fixing it, and the reason a 30-seed run of this cell will show a spread.
+- **`kill_while_waiting` still decides a grant after its deadline fired on the server, and grants.**
+  The grant signal arrives 0.65–0.77 s into the park. With the sticky queue at 2 s the grant's workflow
+  task is available to any worker 2.7 s into the park [10.7 s], but the restarted worker is not polling
+  yet — Python plus Temporal plus Pydantic AI import in ~5 s — so the 5 s expiry timer fires first
+  (`TIMER_FIRED` 0.4–0.9 s before the worker's next workflow-task completion in both histories). The one
+  activation that sees both delivers the signal first, `wait_condition` is satisfied, and the deploy
+  runs. The race is no longer the SDK default; it is worker start time against `expires_in`. By arrival
+  order the grant is right; Keel judges expiry by the store's clock at drain time. Whether an approval
+  that arrived on time but was processed late resolves in the human's favour is a semantic the two arms
+  differ on — printed, not scored.
 
 ## Adapter rules obeyed
 
