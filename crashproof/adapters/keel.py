@@ -335,6 +335,7 @@ class KeelAdapter:
         self._admin_dsn: str | None = None
         self._db_name: str | None = None
         self._app: Any = None  # one connection pool per trial, shared by submit/status/collect
+        self._clock_at_start: dict[str, float] | None = None
 
     # --- declarations --------------------------------------------------------
     def config_pin(self, *, worker_count: int = 1, **extra: Any) -> ConfigPin:
@@ -379,6 +380,7 @@ class KeelAdapter:
             await journal.migrate()
         finally:
             await journal.close()
+        self._clock_at_start = await store_clock_offset(dsn)
         return Dependency(name="postgres", dsn=dsn, env={ENV_DSN: dsn})
 
     def _client(self, handle: SutHandle) -> Any:
@@ -539,12 +541,18 @@ class KeelAdapter:
         view = await app.get(run_id)
         events = await app.events(run_id)
         recoveries = await journal.recoveries(run_id)
+        clock = {"start": self._clock_at_start, "end": await store_clock_offset(handle.dependency.dsn or "")}
+        samples = [c["offset_s"] for c in clock.values() if c]
+        clock["offset_s"] = sum(samples) / len(samples)
         export = handle.trial_dir / "sut" / "journal.json"
         export.write_text(
             json.dumps(
                 {
                     "run_id": run_ref,
                     "phase": view.phase,
+                    # Event `ts` is Postgres's clock; receipts are the host's. The facts shift one
+                    # onto the other with this, and the raw events here stay as Keel wrote them.
+                    "store_clock": clock,
                     "events": [
                         {
                             "seq": e.seq,
@@ -654,6 +662,30 @@ async def _storage_bytes(journal: Any) -> int | None:
             return int(row[0]) if row else None
     except Exception:  # noqa: BLE001 - a missing number is N/A, never a failed trial
         return None
+
+
+async def store_clock_offset(dsn: str) -> dict[str, float]:
+    """Postgres's clock minus the host's, from the fastest of three round trips; `rtt_s` bounds the
+    error. Docker Desktop's VM clock drifts by seconds against Windows', so a journal timestamp and a
+    World receipt are two clocks until this is applied.
+
+    ponytail: two samples per trial (start, collect) and their mean; a VM clock that steps mid-trial
+    shows up as start and end disagreeing, which the export keeps."""
+    import time
+
+    import psycopg
+
+    best: tuple[float, float] | None = None
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        for _ in range(3):
+            t0 = time.time()
+            cur = await conn.execute("SELECT extract(epoch FROM clock_timestamp())")
+            db = float((await cur.fetchone())[0])
+            t1 = time.time()
+            if best is None or t1 - t0 < best[1]:
+                best = (db - (t0 + t1) / 2, t1 - t0)
+    assert best is not None
+    return {"offset_s": best[0], "rtt_s": best[1]}
 
 
 def _db_name_for(trial_dir: Path) -> str:

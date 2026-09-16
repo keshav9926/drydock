@@ -163,6 +163,9 @@ async def run_trial(
         # fault row recorded for a fault that did not happen, or a schedule that never fired at
         # all — which would otherwise read as a clean recovery from a crash that never occurred.
         valid = all(row["executed"] for row in fault_rows) and bool(fault_rows or spec.is_baseline)
+        # A third way: the store's clock moved against the host's during the trial, so every
+        # journal-vs-receipt comparison is on a clock that was not one clock. Void, and re-taken.
+        valid = valid and store_clock_steady(_export(result.export, "store_clock"))
 
         facts = invariants.TrialFacts(
             world_receipts=[_receipt(r) for r in world.receipts],
@@ -322,8 +325,31 @@ def _receipt(r: Any) -> dict[str, Any]:
     }
 
 
+#: How far the store's clock may move against the host's within one trial. A healthy Docker VM
+#: stays within a few ms over a minute; WSL's time sync fighting systemd-timesyncd moved it by
+#: 100 ms a second, with 0.8 s steps.
+STORE_CLOCK_TOLERANCE_S = 0.05
+
+
+def store_clock_steady(clock: dict[str, Any] | None) -> bool:
+    if not clock or not clock.get("start") or not clock.get("end"):
+        return True  # a runtime with no store clock, or rows from before it was measured
+    return abs(clock["end"]["offset_s"] - clock["start"]["offset_s"]) <= STORE_CLOCK_TOLERANCE_S
+
+
 def _journal(export: Path | None) -> list[dict[str, Any]] | None:
-    return _export(export, "events")
+    """The runtime's journal on the host's clock. An export that measured its store's offset
+    (`store_clock.offset_s`) has every event `ts` shifted by it here, once, so S4, the placement
+    views and `cancel_latency` compare a journal event with a World receipt on one clock."""
+    events = _export(export, "events")
+    offset = (_export(export, "store_clock") or {}).get("offset_s")
+    if not events or not offset:
+        return events
+    from datetime import UTC, datetime
+
+    from crashproof.verifier.invariants import iso
+
+    return [{**e, "ts": datetime.fromtimestamp(iso(e["ts"]) - offset, UTC).isoformat()} for e in events]
 
 
 def _effects(export: Path | None) -> list[dict[str, Any]] | None:

@@ -322,3 +322,30 @@ def test_an_invariant_newer_than_the_row_is_not_drift_while_it_is_na(tmp_path) -
     assert runner.invoke(app, ["verify", _published(tmp_path / "a", {7: f}, verdicts=older), "--recheck"]).exit_code == 0
     changed = {**older, "S1": "FAIL" if older["S1"] != "FAIL" else "PASS"}
     assert runner.invoke(app, ["verify", _published(tmp_path / "b", {7: f}, verdicts=changed), "--recheck"]).exit_code == EXIT_INVARIANT_FAIL
+
+
+def test_the_journal_is_moved_onto_the_hosts_clock_before_anything_compares_it(tmp_path) -> None:
+    """Postgres ran 1.4 s ahead of Windows in Docker's VM, so a baseline's first STARTED looked later
+    than the receipt it wrote ahead of: S4 FAIL with nothing wrong. The export measures the offset,
+    and the facts apply it once."""
+    from crashproof.runner.trial import _journal
+
+    receipt = {"logical_identity": "kv.search#1", "ts": 1000.050}
+    started = {"seq": 5, "type": "STEP_ATTEMPT_STARTED", "ts": "1970-01-01T00:16:41.400000+00:00", "body": {}}
+    export = tmp_path / "journal.json"
+    export.write_text(json.dumps({"events": [started], "store_clock": {"offset_s": 1.4}}), encoding="utf8")
+
+    raw = facts(journal=[started], world_receipts=[receipt])
+    shifted = facts(journal=_journal(export), world_receipts=[receipt])
+    assert invariants.verify(raw).as_dict()["S4"] == "FAIL"
+    assert invariants.verify(shifted).as_dict()["S4"] == "PASS"
+    export.write_text(json.dumps({"events": [started]}), encoding="utf8")
+    assert _journal(export) == [started], "an export without an offset is read as written"
+
+
+def test_a_trial_whose_store_clock_moved_is_void() -> None:
+    from crashproof.runner.trial import store_clock_steady
+
+    assert store_clock_steady(None) and store_clock_steady({"offset_s": 0.3})
+    assert store_clock_steady({"start": {"offset_s": 0.451}, "end": {"offset_s": 0.470}})
+    assert not store_clock_steady({"start": {"offset_s": 0.451}, "end": {"offset_s": 0.221}})
