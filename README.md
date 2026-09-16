@@ -88,7 +88,8 @@ How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/keel.md`](docs/adapters/keel.md) ·
 [`docs/adapters/langgraph.md`](docs/adapters/langgraph.md) ·
 [`docs/adapters/dbos.md`](docs/adapters/dbos.md) ·
-[`docs/adapters/temporal.md`](docs/adapters/temporal.md). What a finding has to clear before it
+[`docs/adapters/temporal.md`](docs/adapters/temporal.md) ·
+[`docs/adapters/restate.md`](docs/adapters/restate.md). What a finding has to clear before it
 goes to someone else's issue tracker: [`docs/upstream-report-template.md`](docs/upstream-report-template.md).
 
 ## Status — phase 8 of 8: outside the holder
@@ -178,10 +179,13 @@ at a step boundary inside its own fenced transaction, without ever becoming a se
   click and `approval_expiry` forbids the deploy by name — new `spec_hash`es for both cells — and the
   Keel arm's approve now names the approval it decides.
 - **Engine arms.** DBOS (`native`, and Pydantic AI under `DBOSDurability`; `recovery_mechanism = self`,
-  F1 `workflow_id:step_id`) and Temporal (Pydantic AI under `TemporalDurability`; `engine`, F1
-  `workflow_run_id:activity_id`) are merged, each with a one-seed smoke of W1, W5 and W5-pre in its
-  adapter page — smokes, not results. The Restate arm is in progress; `restate-sdk` has no Windows
-  wheel, so that arm runs the harness under WSL.
+  F1 `workflow_id:step_id`), Temporal (Pydantic AI under `TemporalDurability`; `engine`, F1
+  `workflow_run_id:activity_id`) and Restate (Pydantic AI through `RestateAgent` — a wrapper in
+  Restate's SDK, not a pydantic-ai capability, and every Restate cell carries that caveat; `engine`, F1
+  `ctx.uuid()` drawn before each tool's `ctx.run`) are merged, each with a one-seed smoke of W1, W5 and
+  W5-pre in its adapter page — smokes, not results. `restate-sdk` has no Windows wheel and
+  `restate-server` is a Linux binary, so the Restate arm's rows come from the harness under WSL2, and
+  its `config_pin` says `platform: linux (WSL2)` where every other arm's rows are Windows.
 
 ### Post-phase-8 audit
 
@@ -231,13 +235,20 @@ commit that added this section.
   the W5 trials predate the `sut_ref` join it reads for Keel and the checkpoint snapshot it reads for
   LangGraph, and a supervisor-fired fault has no K3 window at all. The shim pages are published
   without the check K3 gates them on, and the week-2 re-run is what decides it.
-- **K5 (adapter infeasible) has not fired** for the arms merged so far. DBOS ×2 and Temporal express
+- **K5 (adapter infeasible) has not fired** for any merged arm. DBOS ×2, Temporal and Restate express
   W1, W5 and W5-pre in cited primitives with no counter, pre-send lookup, retry or dedup of the
-  adapter's own, and both F1 formulas carry a doc citation ([dbos](docs/adapters/dbos.md),
-  [temporal](docs/adapters/temporal.md)). What they cannot express is N/A with the reason: S7 (no
-  approval id binds a decision to an effect), S4/S5 (no write-ahead step record), W6 (no cited child
-  mechanism). The LangGraph W5 binding is `interrupt()` + `Command(resume=)`, cited from the version
-  under test. Restate is checked when it lands.
+  adapter's own, and all three F1 formulas carry a doc citation ([dbos](docs/adapters/dbos.md),
+  [temporal](docs/adapters/temporal.md), [restate](docs/adapters/restate.md)). Restate's is `ctx.uuid()`
+  ("stable UUIDs for things like idempotency keys"), and its SDK source says what that is stable over:
+  an invocation-seeded generator rebuilt per attempt, so the key is drawn in the tool before its
+  `ctx.run`, where replay repeats the draw — inside the run it would shift. Restate's W5 wait is an
+  awakeable raced against a durable timer, resolved over the documented HTTP API. What the arms cannot
+  express is N/A with the reason: S7 (no approval id binds a decision to an effect), S4/S5 (no
+  per-attempt write-ahead record — Restate journals a run's command before its action, but once per run),
+  C1 for DBOS and Restate (no documented replay of a recorded run), W6 (no cited child mechanism).
+  Restate is also the one arm whose documentation claims more than at-least-once for tool side effects
+  ("Tool side effects are not duplicated"), so its rows are judged against `exactly_once`. The LangGraph
+  W5 binding is `interrupt()` + `Command(resume=)`, cited from the version under test.
 
 ### Phase 7: the artifact other people see
 
@@ -691,8 +702,9 @@ the event stream where it already lives.
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
 - W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
   effect-table bridge and a DBOS arm to be a comparison.
-- The Restate arm is in progress ([above](#status--phase-8-of-8-outside-the-holder)); §29.1's week-2
-  matrix is the full re-run at one commit with every engine arm added, and it has not run.
+- §29.1's week-2 matrix — the full re-run at one commit with every engine arm added (DBOS, Temporal and
+  Restate are all merged, [above](#status--phase-8-of-8-outside-the-holder)) — has not run. The Restate
+  arm's cells have to be run under Linux and merged with the Windows shards by `fold`.
 
 §27 is the binding staging table. One published page is ahead of it: W5-pre, a tier-2 cell built in
 week 2 for the reason given above.

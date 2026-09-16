@@ -197,7 +197,7 @@ class RestateAdapter:
             "one: it runs as its own ctx.run before the run ends asking for approval"
         ),
     }
-    #: What the documentation says, judged as written (§7, §13.3 Jepsen rule): "Tool side effects are not
+    #: What the documentation says, judged as written (§8, §13.3 Jepsen rule): "Tool side effects are not
     #: duplicated (no double bookings, no duplicate emails)" (docs.restate.dev/ai/patterns/durable-agents,
     #: "How durable execution works"); "Use restate_context() actions inside tools to make their execution
     #: durable. The result is persisted and retried until it succeeds. Side effects won't be duplicated on
