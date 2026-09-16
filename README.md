@@ -620,7 +620,7 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_fold_props.py` | determinism, incremental == batch, prefix monotonicity, blobs |
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
-| `tests/property/test_runtime_machine.py` | `KeelMachine`: crashes in sequences nobody wrote down, invariants after every rule |
+| `tests/property/test_runtime_machine.py` | `KeelMachine`: §12.3's rules for every mechanism built — kills at every hook boundary and mid-effect, timeouts, lease expiry and zombie resume, late responses, drain, journal faults, retry backoff, signals and duplicates, approvals (decide, expire, stale and duplicate clicks), delegation with forced takeover and a stray child — with S1–S8, J1–J2 and C1 after every rule and L1–L3, C3 at teardown; `sim.to_fault_spec` turns a shrunk sequence into a spec, `tests/property/regressions/` pins each one |
 | `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 56 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 44 run and 12 N/A with reasons; S8 judged from the whole tree of journals |
 | `tests/unit/test_delegation.py` | children under contracts: the spawn as one transaction, results that wake the parent, the parent grading the result, cancel asked then forced by takeover, the reaper collecting a stray, fan-out bounded by slots |
 | `tests/unit/test_proxy.py` | the black-box injector: the shim's three instants one process out, what the World did versus what the SUT was told under a dropped, 5xx, malformed or never-sent answer, real kills aimed at the pid the SUT wrote, a freeze that forwards nothing until the thaw |
@@ -674,7 +674,7 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 **Week 3 (§29.2) is depth.** The confirmation tier at n = 300 on fresh seeds — every page says it is
 the screening tier only — and the rest of §29.2's statistics hardening; the HTML report (`report --fmt
 html` refuses with the reason and exit 2); continuation segments with C2 and `before:segment_write`;
-streaming with `during:stream(chunk=k)`; the full `KeelMachine` rule set; a `Policy` implementation and
+streaming with `during:stream(chunk=k)` — and `KeelMachine`'s rules for both; a `Policy` implementation and
 `Sandbox`; `ambiguity_window_width`; and FORK, cut from phase 5 by §28.5's own cut line and last in
 week 3's cut order. The two hook boundaries are absent rather than stubbed, so a spec naming one is
 refused rather than firing nothing; §29.2's *all seventeen* is the honest completion date. `keel watch`
