@@ -38,6 +38,9 @@ class Incarnation:
     started_at: float
     exit_code: int | None = None
     ended_at: float | None = None
+    #: The harness ended it at the end of the trial. That kill is the supervisor tidying up, never
+    #: the fault a row recorded, so it can never make a `kill` row read as executed.
+    stopped_by_harness: bool = False
 
 
 @dataclass(slots=True)
@@ -250,12 +253,14 @@ class Supervisor:
     def _stop_all(self) -> None:
         for log in self._logs:
             log.close()
+        alive = self._sut is not None and self._sut.poll() is None
         for proc in ([self._sut] if self._sut else []) + self._others:
             if proc.poll() is None:
                 process.resume(proc.pid)  # a frozen process cannot be killed until it is thawed
                 process.kill(proc.pid)
         if self._sut is not None and self._sut.poll() is not None:
             self._close_incarnation()
+            self.result.incarnations[-1].stopped_by_harness = alive
 
     # --- freezing ------------------------------------------------------------
     async def _freeze_and_thaw(self) -> None:
@@ -293,13 +298,22 @@ class Supervisor:
     def executed_flags(self) -> dict[str, bool]:
         """A `kill` row whose process is still alive means the fault was recorded and did not
         happen — the trial is invalid rather than scored. Stamped on the supervisor's own copy in
-        `result.json`, never written back into `faults.jsonl` (§11.7)."""
+        `result.json`, never written back into `faults.jsonl` (§11.7).
+
+        "Ended" is read as the restart loop saw it. A kill fired from outside the SUT — the proxy's,
+        or `kill_while_waiting` — can miss (a wrong pid, a `taskkill` that lands after the process
+        left on its own), and the supervisor's own kill at the end of the trial would otherwise
+        close that incarnation and stamp the miss as a kill. So an incarnation the harness stopped
+        does not count, and neither does one that exited cleanly: a process that returned 0 was not
+        killed."""
         flags: dict[str, bool] = {}
         by_incarnation = {inc.recovery_index: inc for inc in self.result.incarnations}
         for row in self.trial.faults():
             if row.type in ("kill", "kill_while_waiting"):
                 inc = by_incarnation.get(row.recovery_index)
-                flags[row.fault_id] = bool(inc and inc.exit_code is not None)
+                flags[row.fault_id] = bool(
+                    inc and inc.exit_code not in (None, 0) and not inc.stopped_by_harness
+                )
             elif row.type == "pause_past_ttl":
                 flags[row.fault_id] = any(t["fault_id"] == row.fault_id for t in self.result.thawed)
             else:

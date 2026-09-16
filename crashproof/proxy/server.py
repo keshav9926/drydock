@@ -61,6 +61,7 @@ class Proxy:
         self.port = port
         self._server: asyncio.Server | None = None
         self._closing = asyncio.Event()
+        injector.closing = self._closing  # a parked freeze is released by the same stop
 
     async def start(self) -> int:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
@@ -111,7 +112,7 @@ class Proxy:
         entry = self.injector.arm(landmark, "before:tool_call")
         if entry is not None:
             action = await self.injector.apply(entry)
-            if action == "killed":
+            if action in ("killed", "dropped"):
                 return
             if action == "500":
                 await self._reply(writer, 500, {"error": "tool_500", "applied": False})

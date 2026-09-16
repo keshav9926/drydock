@@ -245,3 +245,88 @@ async def test_the_incarnation_is_read_at_firing_time(make) -> None:
     [row] = rig.trial.faults()
     assert row.recovery_index == 2
     assert {o.recovery_index for o in rig.trial.observations()} == {2}
+
+
+async def test_a_freeze_parked_at_a_stopping_proxy_is_dropped_not_forwarded(make) -> None:
+    """The thaw marker never comes when the trial ends first. Stopping the proxy must release the
+    parked request at once and drop it: forwarded after collection, it is an effect nobody counted."""
+    rig = await make(_spec("pause_past_ttl", "before:tool_call"), client_timeout=10.0)
+    call = asyncio.ensure_future(rig.call())
+    await asyncio.sleep(0.3)
+    assert [r.type for r in rig.trial.faults()] == ["pause_past_ttl"]
+    started = asyncio.get_running_loop().time()
+    await rig.proxy.stop()
+    assert asyncio.get_running_loop().time() - started < 2.0, "the stop did not wait out THAW_WAIT_S"
+    with pytest.raises(OSError):
+        await asyncio.wait_for(call, 5)
+    assert rig.applied() == {}, "dropped at the proxy, never applied"
+
+
+# --- who the proxy aims at ---------------------------------------------------------
+_ANNOUNCE = (
+    "import os; from crashproof.faults.log import TrialDir; t = TrialDir.from_env(); "
+    "t.announce_pid(t.read_cursor().recovery_index, os.environ.get('CRASHPROOF_KEEL_ROLE', 'worker')); "
+    "print(os.getpid(), flush=True)"
+)
+
+
+def test_only_the_worker_under_test_names_itself_as_pid_n(tmp_path) -> None:
+    """A zombie cell starts a successor from the same cursor. Writing `pid-0` too, it froze the idle
+    observer instead of the holder in 41 of 60 published proxy trials. The successor writes last
+    here on purpose — the losing order of that race — and the proxy must still aim at the worker."""
+    import types
+
+    from crashproof.faults.supervisor import Supervisor
+
+    trial = TrialDir(tmp_path / "t-7", fresh=True)
+    sup = Supervisor(
+        trial, types.SimpleNamespace(entries=[]), trial_id="t-7",
+        argv=[sys.executable, "-c", _ANNOUNCE], env={TrialDir.ENV: str(trial.path)},
+        is_terminal=None, worker_count=2, secondary_env={"CRASHPROOF_KEEL_ROLE": "successor"},
+    )
+    sup._spawn(0)
+    sup._sut.wait(timeout=30)
+    sup._spawn_others()
+    sup._others[0].wait(timeout=30)
+    for log in sup._logs:
+        log.close()
+    worker = (trial.path / "sut" / "sut-0.log").read_text().split()[0]
+    successor = (trial.path / "sut" / "successor-0.log").read_text().split()[0]
+    assert worker != successor
+    assert trial.pid_path(0).read_text() == worker
+    assert trial.pid_path(0, "successor").read_text() == successor
+    injector = ProxyInjector(trial, expand(_spec(None), 7, WORKLOAD), trial_id="t-7")
+    assert injector._current() == (0, int(worker))
+
+
+async def test_a_kill_that_never_landed_is_not_executed_because_the_trial_ended(tmp_path) -> None:
+    """A kill fired from outside can miss. The supervisor's own kill at the end of the trial must
+    not close that incarnation as though the fault had ended it: the trial is void, not scored."""
+    import time
+    import types
+
+    from crashproof.faults import process
+    from crashproof.faults.log import FaultFired
+    from crashproof.faults.supervisor import Supervisor
+
+    trial = TrialDir(tmp_path / "t-7", fresh=True)
+    fired: list[float] = []
+
+    async def is_terminal() -> bool:
+        return bool(fired) and time.time() - fired[0] > 0.5
+
+    sup = Supervisor(
+        trial, types.SimpleNamespace(entries=[], timeout=20.0, max_recoveries=3), trial_id="t-7",
+        argv=[sys.executable, "-c", "import time; time.sleep(60)"], env={}, is_terminal=is_terminal,
+    )
+
+    async def submit() -> None:
+        trial.append_fault(FaultFired(fault_id="f1", trial_id="t-7", recovery_index=0, type="kill",
+                                      boundary="after:tool_effect", landmark="tool:create_issue",
+                                      occurrence=1, sut_pid=0))
+        process.kill(0)  # aimed at nobody
+        fired.append(time.time())
+
+    result = await sup.run(submit)
+    assert result.terminal and result.restarts == 0
+    assert sup.executed_flags() == {"f1": False}

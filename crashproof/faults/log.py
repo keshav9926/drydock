@@ -147,6 +147,17 @@ class TrialDir:
         A frozen process cannot poll, so the first successful read is necessarily after the thaw."""
         return self.path / f"thawed-{fault_id}"
 
+    def pid_path(self, recovery_index: int, role: str = "worker") -> Path:
+        """Where a SUT process names its own pid. `pid-<n>` belongs to the worker under test and
+        to nobody else: the proxy aims kills and freezes by it, so a second process that wrote the
+        same file — the successor in a zombie cell, started from the same cursor — would turn a
+        freeze of the holder into a freeze of the idle observer beside it."""
+        name = f"pid-{recovery_index}" if role == "worker" else f"pid-{role}-{recovery_index}"
+        return self.path / "sut" / name
+
+    def announce_pid(self, recovery_index: int, role: str = "worker") -> None:
+        self.pid_path(recovery_index, role).write_text(str(os.getpid()), encoding="utf8")
+
     def alternate_marker(self) -> Path:
         """`model_reask_alternate`: the trial-owned flag the scripted provider consults (§13.3).
 

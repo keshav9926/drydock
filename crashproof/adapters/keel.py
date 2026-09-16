@@ -642,7 +642,9 @@ async def _worker() -> None:  # pragma: no cover - subprocess
 
     # The only process that knows its own pid for certain says so — a launcher shim can make
     # `Popen.pid` the wrong process, and the proxy aims kills and freezes by this file (§11.7).
-    (trial.path / "sut" / f"pid-{cursor.recovery_index}").write_text(str(os.getpid()), encoding="utf8")
+    # The successor reads the same cursor, so it writes under its own name: `pid-<n>` is the worker
+    # under test's alone, or a proxy freeze lands on whichever of the two wrote last.
+    trial.announce_pid(cursor.recovery_index, role)
 
     # Every SUT process carries a shim; only the one under test may fire. The successor observes
     # so that its model and tool calls are counted at the wire like anybody else's, and cannot

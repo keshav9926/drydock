@@ -33,13 +33,15 @@ THAW_WAIT_S = 60.0
 class ProxyInjector(Injector):
     def __init__(self, trial: TrialDir, schedule: Schedule, *, trial_id: str) -> None:
         super().__init__(trial, schedule, trial_id=trial_id, recovery_index=0)
+        #: Set by the `Proxy` that owns this injector; set means the trial is over.
+        self.closing: asyncio.Event | None = None
 
     # --- who the fault lands on ------------------------------------------------
     def _current(self) -> tuple[int, int]:
         """`(recovery_index, sut_pid)` as of now, from the trial directory: the supervisor writes
         the cursor before every spawn, and the SUT writes its own pid once it is up."""
         cursor = self.trial.read_cursor()
-        pid_file = self.trial.path / "sut" / f"pid-{cursor.recovery_index}"
+        pid_file = self.trial.pid_path(cursor.recovery_index)
         pid = cursor.sut_pid or 0
         if pid_file.exists():
             try:
@@ -112,9 +114,13 @@ class ProxyInjector(Injector):
             # The row is what asks the supervisor to freeze the SUT; the marker is how it says the
             # thaw happened. Nothing is forwarded in between — the same "nothing sent while
             # frozen" the shim's self-SIGSTOP gives, realised from outside.
+            # A proxy that is stopping ends the wait too, and drops the request: forwarding it
+            # after the trial was collected would apply an effect nobody counted (§11.9).
             marker = self.trial.thaw_marker(entry.fault_id)
             deadline = time.monotonic() + THAW_WAIT_S
             while time.monotonic() < deadline and not marker.exists():
+                if self.closing is not None and self.closing.is_set():
+                    return "dropped"
                 await asyncio.sleep(0.01)
             return "continue"
         if kind == "tool_delay":

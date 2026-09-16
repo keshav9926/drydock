@@ -367,7 +367,7 @@ async def _worker() -> None:  # pragma: no cover - subprocess
     world = WorldClient(os.environ[ENV_WORLD])
     thread_id = (trial.path / "sut" / "thread_id").read_text(encoding="utf8").strip()
     # The only process that knows its own pid for certain says so; the proxy aims by this file.
-    (trial.path / "sut" / f"pid-{cursor.recovery_index}").write_text(str(os.getpid()), encoding="utf8")
+    trial.announce_pid(cursor.recovery_index)
 
     shim = ToolShim(
         trial,
