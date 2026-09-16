@@ -16,7 +16,7 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | `tool_delay@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 1.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 |
 | `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 0.0s · +calls 0 |
 
-## IDEMPOTENT  ·  key_source=framework
+## IDEMPOTENT  ·  key_source=framework, none
 
 | (location, fault) | `keel.default` | `langgraph.sync` |
 |---|---|---|
@@ -36,7 +36,11 @@ None. Every safety invariant held in every scored trial.
 
 ## Provenance
 
-Generated 2026-09-13T08:03:36+00:00.
+Rows through 2026-09-11T15:38:41+00:00 (the last trial's end).
+
+| results | rows | keel_commit |
+|---|---|---|
+| `bench/results/tier1a` | 960 | `e0d94e7` ×960 |
 
 | config | pin |
 |---|---|
@@ -96,16 +100,18 @@ a random production crash would reach rarely.
 thirty trials can and cannot exclude, and the MDD table above says what gap would have been visible
 at all. Neither is hidden behind a flag.
 
-**3. Confirmation is automatic where it matters.** Every non-unanimous cell and every cell under a
-claimed difference goes to n = 300 on fresh seeds, together with the arm it is compared against.
-Unanimous cells that no claim depends on stay at thirty, because three hundred more of the same
-outcome tighten an interval nothing rests on.
+**3. This page is the screening tier only.** Every cell here is at n ≤ 30. §15.3's confirmation
+tier — every non-unanimous cell and every cell under a claimed difference re-run at n = 300 on fresh
+seeds, together with the arm it is compared against — has not been run for these rows, so no
+difference on this page is confirmed.
 
 **4. The variance being sampled is the right one.** Schedules are seeded and shared between arms, so
 the residual variance is the SUT's own internal timing — which is precisely the quantity a
 durability claim is about. Thirty samples of "does the reaper beat the zombie" are thirty draws from
 the distribution a user would experience.
 
-**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit, adapter_commit,
-framework_versions)`, and `crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over
-each trial's own facts and fails if a verdict moved. Disagreement is settled by running it.
+**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit)` and its
+`config_pin`, framework versions included. `keel_commit` pins the adapters as well as Keel, because
+they live in the same repository, and it is marked `-dirty` when the tree had uncommitted changes.
+`crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over each trial's own facts
+and fails if a verdict moved or a row cannot be re-verified. Disagreement is settled by running it.

@@ -2,6 +2,12 @@
 
 300 paired trials on (workload, variant, trigger, spec_hash, seed).
 
+Rows through 2026-09-10T23:45:17+00:00 (the last trial's end).
+
+| results | rows | keel_commit |
+|---|---|---|
+| `bench/results/matrix_v0` | 600 | `198b456` ×240, `cf7fff6` ×240, `7c4c2be` ×60, `cefd652` ×60 |
+
 ## Safety — counted, never estimated
 
 | observation | A | B |
@@ -14,21 +20,21 @@
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## recovery_rate · tool_chain_1_effect · IDEMPOTENT
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `IDEMPOTENT·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## logical_correctness · tool_chain_1_effect · EXTERNAL
 
@@ -36,39 +42,39 @@
 |---|---|---|---|---|---|---|---|---|
 | `EXTERNAL·after:tool_effect` (n=30) | 30/30 | 0/30 | 1.00 | 30/0 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
 | `EXTERNAL·after:tool_return` (n=30) | 30/30 | 0/30 | 1.00 | 30/0 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
-| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 19/30 | 30/30 | -0.37 | 0/11 | 0.0010 | 0.0010 | 0.31 | B better (p=0.0010) |
+| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 19/30 | 30/30 | -0.37 | 0/11 | 0.0010 | 0.003 | 0.31 | B better (p=0.0010) |
 
 ## logical_correctness · tool_chain_1_effect · IDEMPOTENT
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `IDEMPOTENT·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## replay_divergence · tool_chain_1_effect · EXTERNAL
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·after:tool_effect` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·after:tool_return` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·after:tool_effect` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·after:tool_return` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## replay_divergence · tool_chain_1_effect · IDEMPOTENT
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `IDEMPOTENT·after:tool_effect` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·after:tool_return` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_effect` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·after:tool_return` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## recovery_latency_ms · tool_chain_1_effect · EXTERNAL
 
@@ -94,21 +100,21 @@
 
 | cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
-| `EXTERNAL·after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `EXTERNAL·after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `EXTERNAL·after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
-| `EXTERNAL·before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
-| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `EXTERNAL·before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 
 ## extra_model_calls · tool_chain_1_effect · IDEMPOTENT
 
 | cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `IDEMPOTENT·after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
-| `IDEMPOTENT·after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `IDEMPOTENT·after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `IDEMPOTENT·after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `IDEMPOTENT·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
-| `IDEMPOTENT·before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
-| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `IDEMPOTENT·before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 
 ## extra_tokens · tool_chain_1_effect · EXTERNAL
 
@@ -150,7 +156,9 @@
 | `IDEMPOTENT·before:tool_call` (n=30) | 3160.3 | 1543.0 | 1508.7 | [1278.4, 1803.0] | 0.0000 | — | 545.51 | not claimable (detection = harness for one arm) |
 | `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 3435.7 | 2470.0 | 930.3 | [801.3, 1137.4] | 0.0000 | — | 499.29 | not claimable (detection = harness for one arm) |
 
-A safety observation is a count of what happened, so it carries no p-value: whether a runtime filed the issue twice is not a sample from a population. The estimates above it are, and every one of them is made per `(location, fault)` cell — averaging a kill at `after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs across the cells of one metric table and nowhere else (§15.6); rows already disqualified by rules 1–4 are not hypothesis tests and do not count toward `m`.
+A safety observation is a count of what happened, so it carries no p-value: whether a runtime filed the issue twice is not a sample from a population. The estimates above it are, and every one of them is made per `(location, fault)` cell — averaging a kill at `after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs across the cells of one metric table and nowhere else (§15.6). Every row with a p-value counts toward `m` and prints its adjusted p, including rows rules 1–4 already disqualified; only rows confounded by `detection = harness` are out.
+
+Two departures from §15.5, named: binary rows use McNemar's exact test at every discordant count (§15.5 names the continuity-corrected χ² from b + c ≥ 25), and they print no Wilson interval on b/(b + c) — the discordant counts and δ are printed instead.
 
 `too noisy to claim` is a real answer — at thirty seeds it is the most common honest one, and the failing rule is named beside it. The point estimate, the interval and the adjusted p stay on the page whatever the verdict: a rule that fails takes away the verb, never the numbers.
 

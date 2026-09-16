@@ -2,6 +2,12 @@
 
 90 paired trials on (workload, variant, trigger, spec_hash, seed).
 
+Rows through 2026-09-15T17:08:50+00:00 (the last trial's end).
+
+| results | rows | keel_commit |
+|---|---|---|
+| `bench/results/w5_pre` | 180 | `a787cbe` ×180 |
+
 ## Safety — counted, never estimated
 
 | observation | A | B |
@@ -14,9 +20,9 @@
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `GATED·approval_delay@supervisor` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `GATED·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `GATED·kill_while_waiting@supervisor` (n=30) | 30/30 | 30/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `GATED·approval_delay@supervisor` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `GATED·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `GATED·kill_while_waiting@supervisor` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 
 ## logical_correctness · approval_gated_deploy_pre · GATED
 
@@ -30,8 +36,8 @@
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `GATED·approval_delay@supervisor` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
-| `GATED·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | — | — | — | too noisy to claim (0 discordant pairs) |
+| `GATED·approval_delay@supervisor` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `GATED·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `GATED·kill_while_waiting@supervisor` (n=30) | 0/30 | 30/30 | -1.00 | 0/30 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
 
 ## recovery_latency_ms · approval_gated_deploy_pre · GATED
@@ -46,7 +52,7 @@
 
 | cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `GATED·approval_delay@supervisor` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `GATED·approval_delay@supervisor` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `GATED·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
 | `GATED·kill_while_waiting@supervisor` (n=30) | 0.0 | 1.0 | -1.0 | [-1.0, -1.0] | 0.0000 | 0.0000 | 0.00 | B higher |
 
@@ -54,7 +60,7 @@
 
 | cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `GATED·approval_delay@supervisor` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | — | 0.00 | too noisy to claim |
+| `GATED·approval_delay@supervisor` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `GATED·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
 | `GATED·kill_while_waiting@supervisor` (n=30) | 0.0 | 54.0 | -54.0 | [-54.0, -54.0] | 0.0000 | 0.0000 | 0.00 | B higher |
 
@@ -66,7 +72,9 @@
 | `GATED·baseline` (n=0) | — | — | — | — | — | — | — | not claimable (detection = harness for one arm) |
 | `GATED·kill_while_waiting@supervisor` (n=30) | 1308.8 | 2385.8 | -1107.1 | [-1122.4, -986.1] | 0.0000 | — | 84.97 | not claimable (detection = harness for one arm) |
 
-A safety observation is a count of what happened, so it carries no p-value: whether a runtime filed the issue twice is not a sample from a population. The estimates above it are, and every one of them is made per `(location, fault)` cell — averaging a kill at `after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs across the cells of one metric table and nowhere else (§15.6); rows already disqualified by rules 1–4 are not hypothesis tests and do not count toward `m`.
+A safety observation is a count of what happened, so it carries no p-value: whether a runtime filed the issue twice is not a sample from a population. The estimates above it are, and every one of them is made per `(location, fault)` cell — averaging a kill at `after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs across the cells of one metric table and nowhere else (§15.6). Every row with a p-value counts toward `m` and prints its adjusted p, including rows rules 1–4 already disqualified; only rows confounded by `detection = harness` are out.
+
+Two departures from §15.5, named: binary rows use McNemar's exact test at every discordant count (§15.5 names the continuity-corrected χ² from b + c ≥ 25), and they print no Wilson interval on b/(b + c) — the discordant counts and δ are printed instead.
 
 `too noisy to claim` is a real answer — at thirty seeds it is the most common honest one, and the failing rule is named beside it. The point estimate, the interval and the adjusted p stay on the page whatever the verdict: a rule that fails takes away the verb, never the numbers.
 
