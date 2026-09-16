@@ -24,6 +24,12 @@ langgraph = [
 # The week-2 engine arms (§22.3): each a dependency of its adapter module only, never of `keel`.
 dbos = ["dbos>=2.31", "pydantic-ai-slim[dbos]>=2.43"]
 temporal = ["temporalio>=1.33", "pydantic-ai-slim[temporal]>=2.43"]
+# Restate's Pydantic AI integration is `RestateAgent`, which lives in restate-sdk's own `pydantic-ai`
+# extra, not in pydantic-ai-slim (§13.5). hypercorn serves the ASGI app the server pushes to (§22.3).
+# `[mcp]` and `httpx` because restate-sdk 1.0.5's `restate.ext.pydantic` imports `pydantic_ai.mcp`
+# unconditionally, which raises without the MCP client (its extra does not ask for it) and, at 2.43,
+# imports `httpx`, which `[mcp]` no longer brings (fastmcp-slim moved to httpx2).
+restate = ["restate-sdk[pydantic-ai]>=1.0.5", "hypercorn>=0.18", "pydantic-ai-slim[mcp]>=2.43", "httpx>=0.27"]
 
 [project.scripts]
 keel = "keel.cli.main:main"
