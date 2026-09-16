@@ -64,6 +64,11 @@ def _adapters() -> dict[str, Any]:
             from crashproof.adapters.dbos import DBOSAdapter
 
             ADAPTERS["dbos"] = DBOSAdapter
+        # `uv sync --extra temporal`: the arm is Pydantic AI's TemporalDurability, so it needs both.
+        if all(importlib.util.find_spec(m) is not None for m in ("temporalio", "pydantic_ai")):
+            from crashproof.adapters.temporal import TemporalAdapter
+
+            ADAPTERS["temporal"] = TemporalAdapter
     return ADAPTERS
 
 

@@ -104,7 +104,7 @@ def test_an_arm_whose_extra_is_not_installed_is_not_registered(monkeypatch) -> N
 
     real = importlib.util.find_spec
     monkeypatch.setattr(
-        importlib.util, "find_spec", lambda name, *a: None if name in ("langgraph", "dbos") else real(name, *a)
+        importlib.util, "find_spec", lambda name, *a: None if name in ("langgraph", "dbos", "temporalio") else real(name, *a)
     )
     monkeypatch.setattr(main, "ADAPTERS", {})
     assert set(main._adapters()) == {"keel"}
