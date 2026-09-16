@@ -1637,8 +1637,9 @@ _SYSTEM_CLOCK = SystemClock()
 
 def _waits(clock: Any) -> Any:
     """The clock every wait goes through (§12.2). An engine built without one — VERIFY's, which
-    never waits — gets the system clock rather than a second code path."""
-    return clock if clock is not None else _SYSTEM_CLOCK
+    never waits — gets the system clock rather than a second code path, and so does a caller's own
+    clock that tells the time but cannot wait (`Keel(clock=)` took `now()` alone before the seam)."""
+    return clock if clock is not None and hasattr(clock, "timeout") else _SYSTEM_CLOCK
 
 
 def _remaining(started_local: datetime, timeout: float, clock: Any = None) -> float:
