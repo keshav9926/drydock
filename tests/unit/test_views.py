@@ -214,3 +214,50 @@ def test_verify_on_a_trial_directory(tmp_path) -> None:
     result = runner.invoke(app, ["verify", str(trial), "--recheck", "--placement", "--effects"])
     assert result.exit_code == 0, result.output
     assert "issues.create#1" in result.output
+
+
+def _published(tmp_path, trials: dict[int, invariants.TrialFacts | None], verdicts=None):
+    """A results directory as `bench` leaves it: rows, and a trial directory per row that has one."""
+    from crashproof.runner.store import ResultStore, slug
+
+    store = ResultStore(tmp_path)
+    for seed, f in trials.items():
+        cell = "keel.default.EXTERNAL.kill@after:tool_effect"
+        store.append({"cell_id": cell, "trial_id": f"t-{seed}", "seed": seed, "valid": True,
+                      "verdicts": verdicts or (invariants.verify(f).as_dict() if f else {})})
+        if f is not None:
+            trial = tmp_path / slug(cell) / f"t-{seed}"
+            trial.mkdir(parents=True)
+            (trial / "facts.json").write_text(json.dumps(invariants.dump(f), default=str), encoding="utf8")
+    return str(store.results_path)
+
+
+def test_recheck_over_rows_with_no_facts_is_not_green(tmp_path) -> None:
+    """Three published row sets predate facts.json. Their recheck used to re-verify 0 rows and
+    exit 0 — a publication gate that checked nothing and passed."""
+    from typer.testing import CliRunner
+
+    from crashproof.cli.main import EXIT_NOT_REVERIFIABLE, app
+
+    result = CliRunner().invoke(app, ["verify", _published(tmp_path, {7: facts(), 8: None}), "--recheck"])
+    assert result.exit_code == EXIT_NOT_REVERIFIABLE == 9
+    assert "1 row(s) are not re-verifiable" in result.output
+
+
+def test_recheck_gates_on_drift_not_on_a_fail_that_reproduces(tmp_path) -> None:
+    """W5's LangGraph expiry cells fail L1 by design. Re-verified unchanged, that FAIL is the
+    published verdict reproduced — information under --recheck, still exit 7 without it."""
+    from typer.testing import CliRunner
+
+    from crashproof.cli.main import EXIT_INVARIANT_FAIL, app
+
+    runner = CliRunner()
+    stuck = facts(timed_out=True, status="WAITING")
+    rows = _published(tmp_path / "a", {7: stuck})
+    rechecked = runner.invoke(app, ["verify", rows, "--recheck"])
+    assert rechecked.exit_code == 0, rechecked.output
+    assert "published FAIL, reproduced unchanged" in rechecked.output
+    assert runner.invoke(app, ["verify", rows]).exit_code == EXIT_INVARIANT_FAIL
+
+    drifted = _published(tmp_path / "b", {7: stuck}, verdicts={"L1": "PASS"})
+    assert runner.invoke(app, ["verify", drifted, "--recheck"]).exit_code == EXIT_INVARIANT_FAIL

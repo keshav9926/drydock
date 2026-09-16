@@ -131,6 +131,11 @@ def workloads() -> None:
 #: not a CI gate; these are what a pipeline actually branches on.
 EXIT_INVARIANT_FAIL = 7
 EXIT_TOO_NOISY = 8
+#: `verify <dir>/results.jsonl`: some rows could not be re-verified because their trial directory
+#: holds no facts.json (a trial from before the file existed, or a clone without trial dirs). Not a
+#: verdict of any kind, and not 0 either: a publication gate that checked nothing must not go green.
+#: A local decision beside §25.1's codes, which name none for this; 7 still outranks it.
+EXIT_NOT_REVERIFIABLE = 9
 
 
 def _violated(rows: list[Any]) -> bool:
@@ -404,6 +409,10 @@ def verify(
     both against a second run of itself and against the verdict that was published. The first
     catches a verdict that is not a function of the logs; the second catches a results file that
     has drifted from the directories it claims to summarise.
+
+    Exit codes: 7 on drift or instability — and, without `--recheck`, on any invariant FAIL (§25.1);
+    under `--recheck` a FAIL that reproduces unchanged is printed, not gated. 9 when any row could
+    not be re-verified (no facts.json), so a gate that checked nothing is never green.
     """
     import json
 
@@ -481,7 +490,8 @@ def verify(
         if recheck and canonical(facts) != canonical(facts):
             err.print("[red]the verifier is not a function of its inputs[/]")
             raise typer.Exit(EXIT_INVARIANT_FAIL)
-        raise typer.Exit(EXIT_INVARIANT_FAIL if invariants.verify(facts).failed else 0)
+        # Under --recheck the gate is determinism, not the verdict (see below).
+        raise typer.Exit(EXIT_INVARIANT_FAIL if invariants.verify(facts).failed and not recheck else 0)
 
     if target.name != "results.jsonl":
         err.print("[red]verify takes a trial directory or a results.jsonl, never a results root[/]")
@@ -506,20 +516,31 @@ def verify(
             failed.append(f"{row['cell_id']}/{row['trial_id']}: {fresh.failed}")
 
     err.print(f"{len(rows) - len(missing)} of {len(rows)} rows re-verified from their trial directories")
+    if missing:
+        err.print(f"[red]{len(missing)} row(s) are not re-verifiable: their trial directory holds no facts.json[/]")
     for label, items, colour in (
         ("no facts.json", missing, "yellow"),
         ("verdict drifted from the published row", drifted, "red"),
         ("verifier not a function of its inputs", unstable, "red"),
-        ("invariant FAIL", failed, "red"),
+        # Under --recheck a FAIL that re-verifies to the same FAIL is information — the published
+        # verdict, reproduced — and never by itself the reason the gate is red.
+        ("published FAIL, reproduced unchanged" if recheck else "invariant FAIL", failed,
+         "yellow" if recheck else "red"),
     ):
         for item in items[:10]:
             err.print(f"[{colour}]{label}: {item}[/]")
         if len(items) > 10:
             err.print(f"[{colour}]{label}: ... and {len(items) - 10} more[/]")
-    # A missing facts.json is a trial from before the file existed, not a failure of this one.
-    # Drift and instability are what the publication gate is for, and either one is exit 7.
-    if drifted or unstable or failed:
+    # §25.1: 7 is an invariant FAIL. `--recheck` is the publication gate of §11 and §29.3 — "the
+    # verifier is run twice on every published row and the two outputs must be byte-identical" — so
+    # there 7 means the verdict is not a function of the facts (unstable) or not the one that was
+    # published (drifted), and a designed FAIL that reproduces exactly (W5's LangGraph expiry L1)
+    # does not turn it red. Without --recheck a FAIL is a FAIL. A row that could not be re-verified
+    # at all is 9, never 0.
+    if drifted or unstable or (failed and not recheck):
         raise typer.Exit(EXIT_INVARIANT_FAIL)
+    if missing:
+        raise typer.Exit(EXIT_NOT_REVERIFIABLE)
 
 
 def _n(value: Any) -> str:
