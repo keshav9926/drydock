@@ -184,95 +184,42 @@ async def _wait_for_human(task: dict[str, Any], park: Callable[[str], None] | No
 # =============================================================================
 # The workload, as a Pydantic AI agent under DBOSDurability
 # =============================================================================
+def build_agent(workload: Workload, variant: str, world: WorldClient | None, shim: ToolShim | None) -> Any:
+    """The shared Pydantic AI agent (`pydantic_ai_agent`) with DBOS's three engine-specific parts: the
+    `{workflow_id}:{step_id}` key, each function tool as a `@DBOS.step` — the integration documents that
+    it does not wrap them ("Decorate with `@DBOS.step` if the function involves non-determinism or
+    I/O") — and `DBOSDurability`, which makes each model request a step."""
+    from dbos import DBOS
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+    from crashproof.adapters import pydantic_ai_agent
+
+    return pydantic_ai_agent.build_agent(
+        workload,
+        variant,
+        world=world,
+        shim=shim,
+        key=_step_key,
+        wrap=lambda fn, decl: DBOS.step(name=f"crashproof.tool.{decl.name}", retries_allowed=False)(fn),
+        durability=DBOSDurability(),
+    )
+
+
 def build_pydantic_ai(
     workload: Workload, variant: str, world: WorldClient, shim: ToolShim | None,
     park: Callable[[str], None] | None = None,
 ) -> Any:
-    """Returns the `@DBOS.workflow` that runs the agent.
-
-    The scripted provider is a `FunctionModel`: the node is selected by the ordered tool returns in
-    the message history — the (tool, occurrence) key of §13.2 — never by a counter or by result
-    content. A gated tool is `requires_approval`, so the agent run ends in `DeferredToolRequests`
-    where every other arm parks."""
+    """Returns the `@DBOS.workflow` that runs the shared agent. A gated tool is `requires_approval`, so
+    the run ends in `DeferredToolRequests` where every other arm parks, and the wait is DBOS's `recv`."""
     from dbos import DBOS
-    from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool
-    from pydantic_ai.durable_exec.dbos import DBOSDurability
-    from pydantic_ai.messages import (
-        ModelMessagesTypeAdapter,
-        ModelRequest,
-        ModelResponse,
-        TextPart,
-        ToolCallPart,
-        ToolReturnPart,
-    )
-    from pydantic_ai.models.function import FunctionModel
 
-    key_source = workload.variant(variant).key_source
-    gated = set(workload.gated_tools())
+    from crashproof.adapters import pydantic_ai_agent
 
-    async def respond(messages: list[Any], info: Any) -> Any:
-        returns = [p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)]
-        results = {p.tool_name: p.content for p in returns}
-        key = Workload.node_key([p.tool_name for p in returns])
-        node = workload.node_for(key)
-        node_id = _node_id(key)
-
-        def decide() -> Any:
-            decision = Workload.decision_of(node, alternate=shim is not None and shim.alternate_armed)
-            # The pre-approval calls and the gated call travel in one response, as one model turn:
-            # the framework runs the ungated ones and defers the gated one.
-            calls = [*(decision.get("before_approval") or []), *(decision.get("tool_calls") or [])]
-            if not calls:
-                return ModelResponse(parts=[TextPart(_resolve_text(str(decision.get("final", "")), results))])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(c["name"], _resolve(c.get("args", {}), results), tool_call_id=f"{node_id}:{i}")
-                    for i, c in enumerate(calls)
-                ]
-            )
-
-        if shim is None:
-            return decide()
-        prompt = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
-        return await shim.model_call(node_id, decide, prompt=prompt)
-
-    def as_tool(decl: Any) -> Any:
-        @DBOS.step(name=f"crashproof.tool.{decl.name}", retries_allowed=False)
-        async def call(**args: Any) -> Any:
-            key = _step_key() if _sends_key(decl.effect_class, key_source) else None
-            if shim is None:
-                return await world.acall(decl.endpoint, args, effect_key=key)
-            return await shim.tool_call(decl.name, decl.endpoint, args, effect_key=key)
-
-        tool = Tool.from_schema(
-            call, name=decl.name, description=decl.name,
-            json_schema={"type": "object", "additionalProperties": True},
-        )
-        tool.requires_approval = decl.name in gated
-        return tool
-
-    agent = Agent(
-        FunctionModel(respond, model_name="scripted"),
-        name="crashproof",
-        output_type=[str, DeferredToolRequests],
-        tools=[as_tool(d) for d in workload.tools_for(variant)],
-        capabilities=[DBOSDurability()],
-    )
+    agent = build_agent(workload, variant, world, shim)
 
     @DBOS.workflow(name="crashproof.pydantic_ai", max_recovery_attempts=MAX_RECOVERY_ATTEMPTS)
     async def run(task: dict[str, Any]) -> dict[str, Any]:
-        result = await agent.run(str(task.get("task", "")))
-        while isinstance(result.output, DeferredToolRequests):
-            verdict = await _wait_for_human(task, park)
-            if verdict != "granted":
-                return {"answer": f"not done: approval {verdict}"}
-            result = await agent.run(
-                message_history=result.all_messages(),
-                deferred_tool_results=DeferredToolResults(
-                    approvals={call.tool_call_id: True for call in result.output.approvals}
-                ),
-            )
-        return {"answer": result.output}
+        return await pydantic_ai_agent.run_agent(agent, task, lambda: _wait_for_human(task, park))
 
     return run
 

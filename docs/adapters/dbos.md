@@ -172,7 +172,10 @@ it adds no durable operation to the run.
    denial the script has no node for.
 5. **Pydantic AI tools are `Tool.from_schema` with an open object schema**, so the script's arguments
    reach the step exactly as the other arms send them; the scripted model's `tool_call_id` is
-   `<node>:<index>`, a pure function of the node (§13.2), never a counter.
+   `<node>:<index>`, a pure function of the node (§13.2), never a counter. None of it is DBOS code: the
+   agent is `crashproof/adapters/pydantic_ai_agent.py`, shared with the Temporal arm, and this row
+   supplies only the `{workflow_id}:{step_id}` key, `@DBOS.step` around each tool, and `DBOSDurability`
+   (`tests/unit/test_pydantic_ai_agent.py` pins that both arms answer a history identically).
 6. **The template is migrated by `dbos migrate`'s implementation**, called in-process, rather than by
    launching a DBOS app in the harness: `DBOS` is a process-wide singleton, and the harness must not
    register the workload's workflows.

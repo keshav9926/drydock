@@ -39,9 +39,13 @@ it does for Keel's IDEMPOTENT band. An EXTERNAL duplicate is the documented sema
 
 The agent itself is the capability's documented form in 2.43 — `Agent(..., capabilities=[TemporalDurability(...)])`,
 registered on the worker with `AgentPlugin(agent)` and `PydanticAIPlugin()` on the client. The
-older `TemporalAgent` wrapper is deprecated. The provider is a `FunctionModel` whose response is chosen
+older `TemporalAgent` wrapper is deprecated. The agent is not written here: it is
+[`crashproof/adapters/pydantic_ai_agent.py`](../../crashproof/adapters/pydantic_ai_agent.py), the one
+Pydantic AI agent every engine arm runs (DBOS's `pydantic_ai` row builds the same one), and Temporal
+supplies only its key, no tool wrapping, and `TemporalDurability`. `tests/unit/test_pydantic_ai_agent.py`
+pins that both arms answer the same history with the same response. The provider is a `FunctionModel` whose response is chosen
 by the workload script from the ordered `ToolReturnPart`s already in the request (§13.2) — never a
-counter, never result content — and its `tool_call_id`s are a function of that key. Inside each
+counter, never result content — and its `tool_call_id`s are `<node>:<index>`, a function of that key. Inside each
 activity the call goes through the shim exactly as every other arm's does
 (`shim.model_call(node, ...)`, `shim.tool_call(name, endpoint, args, effect_key=...)`), so the kill
 windows sit inside the durable unit.

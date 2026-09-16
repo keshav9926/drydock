@@ -42,25 +42,14 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent, FunctionToolset, Tool
+from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
+from crashproof.adapters import pydantic_ai_agent
 from crashproof.adapters.base import CanonicalResult, ConfigPin, Dependency, SutHandle
-from crashproof.adapters.langgraph import _resolve, _resolve_text
 from crashproof.faults import process
 from crashproof.faults.injectors.shim import ToolShim
 from crashproof.faults.log import TrialDir
@@ -88,8 +77,6 @@ RETRY_POLICY = RetryPolicy(
     maximum_attempts=0,
 )
 TASK_QUEUE = "crashproof"
-AGENT_NAME = "crashproof"
-TOOLSET_ID = "world"
 
 #: The agent the workflow runs. A worker builds it once at start (with its shim); the harness builds
 #: it without one for the Replayer. Module state because the workflow class must be importable at
@@ -99,100 +86,39 @@ _AGENT: Agent[None, Any] | None = None
 
 
 # =============================================================================
-# The workload, written once as a Pydantic AI agent
+# The workload: the shared Pydantic AI agent, with Temporal's engine-specific parts
 # =============================================================================
 def build_agent(workload: Workload, variant: str, world: WorldClient | None, shim: ToolShim | None) -> Agent:
-    """The scripted provider as a `FunctionModel`, the workload's tools as one `FunctionToolset`, and
-    `TemporalDurability` pinned to §13.4's timeouts. Sets the module's `_AGENT`."""
+    """`pydantic_ai_agent.build_agent` with Temporal's key, no tool wrapping (the capability makes every
+    tool call an activity), and `TemporalDurability` pinned to §13.4's timeouts. Sets `_AGENT`."""
     global _AGENT
-    key_source = workload.variant(variant).key_source
-    gated = set(workload.gated_tools())
-
-    def make_tool(decl: Any) -> Tool:
-        sends_key = key_source == "framework" and decl.effect_class in ("IDEMPOTENT", "TRANSACTIONAL")
-
-        async def call(**args: Any) -> Any:
-            key = None
-            if sends_key:
-                info = activity.info()  # the tool body runs inside its tool-call activity
-                key = f"{info.workflow_run_id}:{info.activity_id}"
-            if shim is not None:
-                return await shim.tool_call(decl.name, decl.endpoint, args, effect_key=key)
-            assert world is not None, "the harness-side agent (Replayer) never executes a tool"
-            return await world.acall(decl.endpoint, args, effect_key=key)
-
-        tool = Tool.from_schema(
-            call,
-            name=decl.name,
-            description=f"{decl.effect_class} call of {decl.endpoint}",
-            json_schema={"type": "object", "additionalProperties": True},
-        )
-        # Documented human-in-the-loop: a tool that "always requires approval" ends the run with
-        # `DeferredToolRequests` instead of executing. The gate is the workload's, not the adapter's.
-        tool.requires_approval = decl.name in gated
-        return tool
-
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        answered, results = _answered(messages)
-        key = Workload.node_key(answered)
-        node = workload.node_for(key)
-        node_id = "-".join(f"{n}{i}" for n, i in key) or "start"
-
-        def decide() -> ModelResponse:
-            decision = Workload.decision_of(node, alternate=shim is not None and shim.alternate_armed)
-            # `before_approval` calls ride in the same response, ahead of the gated one (W5-pre).
-            calls = [*decision.get("before_approval", []), *decision.get("tool_calls", [])]
-            if not calls:
-                return ModelResponse(parts=[TextPart(_resolve_text(str(decision.get("final", "")), results))])
-            return ModelResponse(
-                parts=[
-                    # A pure function of the node key, never a counter (§13.2).
-                    ToolCallPart(c["name"], _resolve(c.get("args", {}), results), tool_call_id=f"{node_id}.{i}")
-                    for i, c in enumerate(calls)
-                ]
-            )
-
-        if shim is None:
-            return decide()
-        prompt = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
-        return await shim.model_call(node_id, decide, prompt=prompt)
-
-    durability = TemporalDurability(
-        activity_config=ActivityConfig(
-            start_to_close_timeout=timedelta(seconds=START_TO_CLOSE_S),
-            heartbeat_timeout=timedelta(seconds=HEARTBEAT_S),
-            retry_policy=RETRY_POLICY,
+    _AGENT = pydantic_ai_agent.build_agent(
+        workload,
+        variant,
+        world=world,
+        shim=shim,
+        key=_activity_key,
+        durability=TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=START_TO_CLOSE_S),
+                heartbeat_timeout=timedelta(seconds=HEARTBEAT_S),
+                retry_policy=RETRY_POLICY,
+            ),
         ),
-    )
-    _AGENT = Agent(
-        FunctionModel(respond, model_name="scripted"),
-        name=AGENT_NAME,
-        output_type=[str, DeferredToolRequests],
-        toolsets=[FunctionToolset([make_tool(d) for d in workload.tools_for(variant)], id=TOOLSET_ID)],
-        capabilities=[durability],
     )
     return _AGENT
 
 
-def _answered(messages: list[ModelMessage]) -> tuple[list[str], dict[str, Any]]:
-    """The tools this request already has answers for, in order, and their results — the node key
-    and the `@tool.result` templating, read from request content alone."""
-    names: list[str] = []
-    results: dict[str, Any] = {}
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, ToolReturnPart):
-                    names.append(part.tool_name)
-                    results[part.tool_name] = part.content
-    return names, results
+def _activity_key() -> str:
+    """F1: the tool body runs inside its tool-call activity, whose info carries both ids."""
+    info = activity.info()
+    return f"{info.workflow_run_id}:{info.activity_id}"
 
 
 @workflow.defn(name="crashproof_react")
 class ReActWorkflow:
-    """`agent.run()`, and — when the run ends asking for approval — Temporal's documented wait: a
-    signal, `workflow.wait_condition` with the run input's `expires_in` as a durable timer, then the
-    Pydantic AI continuation (`message_history` + `deferred_tool_results`)."""
+    """The shared agent run, and — when it ends asking for approval — Temporal's documented wait: a
+    signal and `workflow.wait_condition` with the run input's `expires_in` as a durable timer."""
 
     def __init__(self) -> None:
         self.decisions: list[dict[str, Any]] = []
@@ -206,28 +132,21 @@ class ReActWorkflow:
     @workflow.run
     async def run(self, task: dict[str, Any]) -> dict[str, Any]:
         assert _AGENT is not None
-        result = await _AGENT.run(task["task"])
-        if isinstance(result.output, DeferredToolRequests):
-            # Memo, so `status()` reads the park from `describe()` without a worker — the worker may
-            # be the thing that was killed while parked.
-            workflow.upsert_memo({"waiting": True})
-            try:
-                await workflow.wait_condition(
-                    lambda: bool(self.decisions), timeout=timedelta(seconds=float(task.get("expires_in", 5)))
-                )
-                verdict = str(self.decisions[0].get("decision"))
-            except TimeoutError:
-                verdict = "expired"
-            workflow.upsert_memo({"waiting": False})
-            if verdict != "granted":
-                return {"answer": f"not done: approval {verdict}"}
-            result = await _AGENT.run(
-                message_history=result.all_messages(),
-                deferred_tool_results=DeferredToolResults(
-                    approvals={call.tool_call_id: True for call in result.output.approvals}
-                ),
+        return await pydantic_ai_agent.run_agent(_AGENT, task, lambda: self._wait(task))
+
+    async def _wait(self, task: dict[str, Any]) -> str:
+        # Memo, so `status()` reads the park from `describe()` without a worker — the worker may be the
+        # thing that was killed while parked.
+        workflow.upsert_memo({"waiting": True})
+        try:
+            await workflow.wait_condition(
+                lambda: bool(self.decisions), timeout=timedelta(seconds=float(task.get("expires_in", 5)))
             )
-        return {"answer": result.output if isinstance(result.output, str) else repr(result.output)}
+            verdict = str(self.decisions[0].get("decision"))
+        except TimeoutError:
+            verdict = "expired"
+        workflow.upsert_memo({"waiting": False})
+        return verdict
 
 
 def _workflow_runner() -> Any:
