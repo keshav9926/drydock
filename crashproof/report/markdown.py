@@ -13,6 +13,7 @@ a published schedule has fixed a bug.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,7 +32,14 @@ SHORT_CLAIM = {
 SHORT_CLASS = {"PURE": "PURE", "IDEMPOTENT": "IDEM", "EXTERNAL": "EXT", "TRANSACTIONAL": "TXN"}
 
 
-def render(cells: dict[str, CellSummary], *, workload: str, title: str = "matrix v0") -> str:
+def render(
+    cells: dict[str, CellSummary],
+    *,
+    workload: str,
+    title: str = "matrix v0",
+    sources: list[tuple[str, list[dict[str, Any]]]] = (),
+) -> str:
+    """`sources` is `(results directory, the rows read from it)`: what the provenance names."""
     variants = sorted({c.variant for c in cells.values()})
     columns = sorted({(c.adapter, c.config) for c in cells.values()})
     out: list[str] = [f"# {title}", "", f"Workload `{workload}`. One cell is n **seeds**, not n trials of one seed.", ""]
@@ -43,7 +51,7 @@ def render(cells: dict[str, CellSummary], *, workload: str, title: str = "matrix
         out += _band(band, variant, columns)
 
     out += _counterexamples(cells)
-    out += _provenance(cells)
+    out += _provenance(cells, sources)
     return "\n".join(out)
 
 
@@ -124,7 +132,38 @@ def _counterexamples(cells: dict[str, CellSummary]) -> list[str]:
     return out
 
 
-def _provenance(cells: dict[str, CellSummary]) -> list[str]:
+def sources_block(sources: list[tuple[str, list[dict[str, Any]]]]) -> list[str]:
+    """Which rows a page was computed from: each results directory, how many rows, and every
+    `keel_commit` they ran at, counted. §29.3's go/no-go asks whether a page's commits match its
+    rows', which nobody can check on a page that names none.
+
+    The page's only date is the last trial's end, read from the rows, so re-rendering the same rows
+    is byte-identical — which is the check CI makes on every published page."""
+    out = ["| results | rows | keel_commit |", "|---|---|---|"]
+    latest, dirty = 0.0, 0
+    for where, rows in sources:
+        commits = Counter(r.get("keel_commit") or "(none)" for r in rows)
+        dirty += sum(n for commit, n in commits.items() if commit.endswith("-dirty"))
+        listed = ", ".join(
+            f"`{commit}` ×{n}" + (" **dirty**" if commit.endswith("-dirty") else "")
+            for commit, n in sorted(commits.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        out.append(f"| `{where}` | {len(rows)} | {listed} |")
+        latest = max([latest, *(float(r.get("ended_at") or 0.0) for r in rows)])
+    when = datetime.fromtimestamp(latest, UTC).isoformat(timespec="seconds") if latest else "—"
+    out = [f"Rows through {when} (the last trial's end).", "", *out]
+    if dirty:
+        out += [
+            "",
+            f"**{dirty} row(s) ran from a dirty tree** (`-dirty`): uncommitted changes were present, "
+            "so checking out the commit does not reproduce the code that ran.",
+        ]
+    return out
+
+
+def _provenance(
+    cells: dict[str, CellSummary], sources: list[tuple[str, list[dict[str, Any]]]] = ()
+) -> list[str]:
     # A pin that varies across a config's cells must show both values, not whichever cell was
     # summarised first: `worker_count` is 2 exactly where the zombie cell needs a successor, and a
     # table that hid that would be pinning something the trials did not run.
@@ -136,7 +175,7 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
     out = [
         "## Provenance",
         "",
-        f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}.",
+        *sources_block(sources),
         "",
         "| config | pin |",
         "|---|---|",
@@ -174,15 +213,32 @@ def _provenance(cells: dict[str, CellSummary]) -> list[str]:
         # answer that needs a second command to produce is an answer they will not find.
         MDD_TABLES,
         "",
-        FAQ,
+        faq(confirmed=any(c.n > 30 for c in cells.values())),
     ]
     return out
 
 
-#: §15.9, printed in every report for the same reason as the MDD tables. The objection has five
-#: answers and they are different answers — two of them concede the point and say what the numbers
-#: therefore cannot be used for, which is why the section is a fixture of the page rather than a
-#: rebuttal kept in reserve.
+def faq(*, confirmed: bool) -> str:
+    """§15.9, printed in every report for the same reason as the MDD tables. The objection has five
+    answers and they are different answers — two of them concede the point and say what the numbers
+    therefore cannot be used for, which is why the section is a fixture of the page rather than a
+    rebuttal kept in reserve.
+
+    Answer 3 describes the confirmation tier, and it is only true of a page that has one: a page
+    whose every cell is at the screening n says so instead of claiming a confirmation nobody ran."""
+    return FAQ.replace("{confirmation}", CONFIRMED if confirmed else SCREENING_ONLY)
+
+
+CONFIRMED = """**3. Confirmation is automatic where it matters.** Every non-unanimous cell and every cell under a
+claimed difference goes to n = 300 on fresh seeds, together with the arm it is compared against.
+Unanimous cells that no claim depends on stay at thirty, because three hundred more of the same
+outcome tighten an interval nothing rests on."""
+
+SCREENING_ONLY = """**3. This page is the screening tier only.** Every cell here is at n ≤ 30. §15.3's confirmation
+tier — every non-unanimous cell and every cell under a claimed difference re-run at n = 300 on fresh
+seeds, together with the arm it is compared against — has not been run for these rows, so no
+difference on this page is confirmed."""
+
 FAQ = """### "You only ran this thirty times" (§15.9)
 
 **1. For safety rows the objection points the wrong way.** Thirty passing trials are not a claim of
@@ -196,17 +252,16 @@ a random production crash would reach rarely.
 thirty trials can and cannot exclude, and the MDD table above says what gap would have been visible
 at all. Neither is hidden behind a flag.
 
-**3. Confirmation is automatic where it matters.** Every non-unanimous cell and every cell under a
-claimed difference goes to n = 300 on fresh seeds, together with the arm it is compared against.
-Unanimous cells that no claim depends on stay at thirty, because three hundred more of the same
-outcome tighten an interval nothing rests on.
+{confirmation}
 
 **4. The variance being sampled is the right one.** Schedules are seeded and shared between arms, so
 the residual variance is the SUT's own internal timing — which is precisely the quantity a
 durability claim is about. Thirty samples of "does the reaper beat the zombie" are thirty draws from
 the distribution a user would experience.
 
-**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit, adapter_commit,
-framework_versions)`, and `crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over
-each trial's own facts and fails if a verdict moved. Disagreement is settled by running it.
+**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit)` and its
+`config_pin`, framework versions included. `keel_commit` pins the adapters as well as Keel, because
+they live in the same repository, and it is marked `-dirty` when the tree had uncommitted changes.
+`crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over each trial's own facts
+and fails if a verdict moved or a row cannot be re-verified. Disagreement is settled by running it.
 """

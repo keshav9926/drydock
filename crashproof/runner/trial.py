@@ -79,8 +79,11 @@ async def run_trial(
     out_dir: Path,
     cell_id: str = "",
     baseline: metrics.Metrics | None = None,
-    keel_commit: str = "",
 ) -> TrialRow:
+    # The code that ran is the code at the start of *this* trial. Read once per bench, a commit made
+    # mid-run stamped rows it never ran; read without `--dirty`, rows from an edited tree named a
+    # commit that did not contain what ran.
+    keel_commit = current_commit()
     trial_id = f"t-{seed}"
     trial = TrialDir(out_dir / trial_id, fresh=True)
     schedule = expand(spec, seed, workload)
@@ -255,6 +258,21 @@ async def run_trial(
         if proxy is not None:
             await proxy.stop()
         await server.stop()
+
+
+def current_commit() -> str:
+    """`git describe --always --dirty --abbrev=7` of the repository this harness runs from — a short
+    sha, `-dirty` when tracked files differ from it. Tags are excluded so the form never varies."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--always", "--dirty", "--abbrev=7", "--exclude=*"],
+            cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, check=False,
+        )
+    except OSError:  # pragma: no cover - no git on the machine
+        return ""
+    return out.stdout.strip()
 
 
 def key_source_in_effect(adapter: Any, declared: str) -> str:

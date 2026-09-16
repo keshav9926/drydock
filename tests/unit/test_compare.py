@@ -79,8 +79,8 @@ def test_too_few_discordant_pairs_is_a_property_of_the_test_not_the_sample() -> 
     a = [row("keel.d.EXTERNAL.kill", s) for s in range(30)]
     b = [row("lg.sync.EXTERNAL.kill", s, recovery_rate=0 if s < 3 else 1) for s in range(30)]
     v = only(compare(a, b), "recovery_rate")
-    assert v.p_value is None and "3 discordant pairs" in v.verdict
-    assert v.rule.startswith("3 ·")
+    assert "3 discordant pairs" in v.verdict and v.rule.startswith("3 ·")
+    assert v.p_value == 0.25, "disqualified, and still a member of its family with its p printed"
 
 
 def test_an_interval_containing_zero_claims_nothing() -> None:
@@ -113,26 +113,29 @@ def test_cells_are_compared_separately_and_never_pooled() -> None:
     assert "too noisy" in only(c, "recovery_rate", "EXTERNAL·pause").verdict
 
 
-def test_holm_runs_within_a_metric_family_and_skips_rows_no_rule_left_standing() -> None:
-    """A row already disqualified by rules 1–4 is not a hypothesis test, so it does not inflate
-    `m` — the same reason §15.6 excludes N/A cells from the family."""
+def test_holm_runs_within_a_metric_family_over_every_row_with_a_p_value() -> None:
     triggers = ("t1", "t2", "t3")
     a = [row(f"keel.d.EXTERNAL.{t}", s) for t in triggers for s in range(30)]
     b = [row(f"lg.sync.EXTERNAL.{t}", s, recovery_rate=0) for t in triggers for s in range(30)]
     family = next(f for f in compare(a, b).families if f.metric == "recovery_rate")
-    live = [r for r in family.rows if r.p_holm is not None]
-    assert len(live) == 3, "three live comparisons in the family"
-    for r in live:
+    assert all(r.p_holm is not None for r in family.rows), "three comparisons in the family"
+    for r in family.rows:
         assert r.p_holm >= r.p_value, "adjustment never makes a claim easier"
         assert "A better" in r.verdict, "30-0 survives a family of three"
 
-    # One live row beside two disqualified ones is adjusted as a family of one, not of three.
-    b_mixed = [
-        row(f"lg.sync.EXTERNAL.{t}", s, recovery_rate=0 if t == "t1" else 1)
+
+def test_rows_that_did_not_reject_still_count_toward_m() -> None:
+    """§15.6: every printed comparison is a member. Dropping the six null rows from `m` let a lone
+    p = 0.0078 be adjusted as a family of one and claimed; as a family of seven it is 0.055."""
+    triggers = [f"t{i}" for i in range(7)]
+    a = [row(f"keel.d.EXTERNAL.{t}", s) for t in triggers for s in range(30)]
+    b = [
+        row(f"lg.sync.EXTERNAL.{t}", s, recovery_rate=0 if t == "t0" and s < 8 else 1)
         for t in triggers
         for s in range(30)
     ]
-    mixed = next(f for f in compare(a, b_mixed).families if f.metric == "recovery_rate")
-    adjusted = [r for r in mixed.rows if r.p_holm is not None]
-    assert len(adjusted) == 1
-    assert adjusted[0].p_holm == adjusted[0].p_value
+    family = next(f for f in compare(a, b).families if f.metric == "recovery_rate")
+    assert len([r for r in family.rows if r.p_holm is not None]) == 7
+    lone = only(compare(a, b), "recovery_rate", "EXTERNAL·t0")
+    assert round(lone.p_value, 4) == 0.0078 and round(lone.p_holm, 4) == 0.0547
+    assert "too noisy" in lone.verdict and lone.rule == "5 · Holm"

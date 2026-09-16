@@ -212,19 +212,22 @@ def compare(
 
 
 def _holm(family: Family) -> None:
-    """§15.8 rule 5, applied after rules 1–4 and only to rows those rules left standing.
+    """§15.8 rule 5 over §15.6's family.
 
-    A row already disqualified is not a hypothesis test, so it does not count toward `m` — the
-    same reason §15.6 excludes `N/A` cells. Including them would inflate the correction with rows
-    that were never going to make a claim, which penalises the family for its own honesty.
+    Every comparison printed in the table with a p-value is a member of `m`, whatever rules 1–4
+    said about it: leaving out the rows that did not reject would choose the family by its outcome,
+    and a family of one borderline winner and six nulls would be corrected as a family of one.
+    Only the confounded rows (`detection = harness`) are out — §15.6's N/A. The adjusted p prints on
+    every member (§15.8: a failed rule takes the verb, never the numbers); rule 5 takes the verb
+    only from the rows rules 1–4 left standing.
     """
-    live = [r for r in family.rows if r.p_value is not None and r.claimed()]
-    if not live:
+    members = [r for r in family.rows if r.p_value is not None and r.rule != "confound"]
+    if not members:
         return
-    for row, adjusted in zip(live, holm([r.p_value or 1.0 for r in live]), strict=True):
+    for row, adjusted in zip(members, holm([r.p_value for r in members]), strict=True):
         row.p_holm = adjusted
-        if adjusted >= 0.05:
-            row.verdict = f"{TOO_NOISY} (Holm p={adjusted:.3f} in a family of {len(live)})"
+        if row.claimed() and adjusted >= 0.05:
+            row.verdict = f"{TOO_NOISY} (Holm p={adjusted:.3f} in a family of {len(members)})"
             row.rule = "5 · Holm"
 
 
@@ -238,6 +241,9 @@ def _mcnemar(metric: str, pairs: list[Pairing], cell: str) -> Row:
     r.a_median = sum(1 for p in pairs if p.a["metrics"].get(metric))
     r.b_median = sum(1 for p in pairs if p.b["metrics"].get(metric))
     discordant = a_only + b_only
+    # Computed before any rule is applied: a row a rule disqualifies is still a member of its Holm
+    # family and still prints its p.
+    r.p_value = exact_binomial(a_only, b_only)
     if discordant < DISCORDANT_FLOOR:
         # Rule 3, not rule 2: the five-event floor exists because the normal approximation is
         # meaningless there, and the exact test does not use one. What stops a small discordant
@@ -245,7 +251,6 @@ def _mcnemar(metric: str, pairs: list[Pairing], cell: str) -> Row:
         r.verdict = f"{TOO_NOISY} ({discordant} discordant pairs)"
         r.rule = f"3 · fewer than {DISCORDANT_FLOOR} discordant"
         return r
-    r.p_value = exact_binomial(a_only, b_only)
     r.difference = (a_only - b_only) / n
     r.mdd = mdd_paired_binary(discordant / n, n)
     if r.mdd is not None and abs(r.difference) < r.mdd:
@@ -308,12 +313,17 @@ def _paired(metric: str, pairs: list[Pairing], cell: str, rng: random.Random) ->
     return r
 
 
-def render(c: Comparison) -> str:
+def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = ()) -> str:
+    """`sources` is `(results directory, the rows A and B were selected from it)`."""
+    from crashproof.report.markdown import sources_block
+
     out = [
         f"# compare — `{c.a_name}` (A) vs `{c.b_name}` (B)",
         "",
         f"{c.paired} paired trials on (workload, variant, trigger, spec_hash, seed)."
         + (f" Unpaired: {c.unpaired_a} in A, {c.unpaired_b} in B." if c.unpaired_a or c.unpaired_b else ""),
+        "",
+        *sources_block(sources),
         "",
         "## Safety — counted, never estimated",
         "",
@@ -353,8 +363,13 @@ def render(c: Comparison) -> str:
         "runtime filed the issue twice is not a sample from a population. The estimates above it "
         "are, and every one of them is made per `(location, fault)` cell — averaging a kill at "
         "`after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs "
-        "across the cells of one metric table and nowhere else (§15.6); rows already disqualified "
-        "by rules 1–4 are not hypothesis tests and do not count toward `m`.",
+        "across the cells of one metric table and nowhere else (§15.6). Every row with a p-value "
+        "counts toward `m` and prints its adjusted p, including rows rules 1–4 already disqualified; "
+        "only rows confounded by `detection = harness` are out.",
+        "",
+        "Two departures from §15.5, named: binary rows use McNemar's exact test at every discordant "
+        "count (§15.5 names the continuity-corrected χ² from b + c ≥ 25), and they print no "
+        "Wilson interval on b/(b + c) — the discordant counts and δ are printed instead.",
         "",
         "`too noisy to claim` is a real answer — at thirty seeds it is the most common honest one, "
         "and the failing rule is named beside it. The point estimate, the interval and the "

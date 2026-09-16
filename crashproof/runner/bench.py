@@ -170,7 +170,6 @@ async def run_matrix(
     cells: list[str] | None = None,
     resume: bool = False,
     on_row: Any = None,
-    keel_commit: str = "",
 ) -> int:
     """Baselines first, then the fault cells that are paired against them."""
     import fnmatch
@@ -213,7 +212,6 @@ async def run_matrix(
                 out_dir=out_dir / slug(cell.id),
                 cell_id=cell.id,
                 baseline=baselines.get((cell.adapter, cell.config, cell.variant, seed)),
-                keel_commit=keel_commit,
             )
             if cell.is_baseline:
                 baselines[(cell.adapter, cell.config, cell.variant, seed)] = _metrics(row)

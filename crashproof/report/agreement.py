@@ -9,13 +9,17 @@ where the instrument sat. A cell where they differ is a finding about the *instr
 with both numbers and never resolved in favour of either.
 
 Paired on `(cell_id, seed)`. The spec hashes differ by construction — `mode` is in the hash — so
-this is the one pairing in the harness that ignores them, and it may: what varies between the two
-sides is exactly the thing being asked about. Nothing here carries a p-value. Agreement is not a
-hypothesis about runtimes; it is a check on the harness, and a check is PASS or it names the cell.
+this is the one pairing in the harness that ignores them. It may only because nothing *else* varies
+between the two sides, and that is checked rather than assumed: a twin whose sides ran at different
+`keel_commit`s or under different `config_pin`s is printed with both and left out of the tally,
+because a difference there could be the runtime changing rather than the instrument moving. No pin
+key encodes the mode (it is a row column), so the pins are compared whole. Nothing here carries a
+p-value. Agreement is a check on the harness, and a check is PASS or it names the cell.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,10 +37,31 @@ class CellAgreement:
     proxy_only: int = 0
     shim: CellSummary | None = None
     proxy: CellSummary | None = None
+    #: What the folded trials ran at, per side: `keel_commit`s and canonical `config_pin`s.
+    commits: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+    pins: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
 
     @property
     def twin(self) -> bool:
         return self.shim is not None and self.proxy is not None and self.n > 0
+
+    @property
+    def comparable(self) -> bool:
+        """Same code, same configuration, both sides. Otherwise a difference is not the instrument's."""
+        return self.commits[0] == self.commits[1] and self.pins[0] == self.pins[1]
+
+    def why_not_comparable(self) -> str:
+        out = []
+        if self.commits[0] != self.commits[1]:
+            out.append(f"keel_commit {_set(self.commits[0])} / {_set(self.commits[1])}")
+        shim_pins = [json.loads(p) for p in sorted(self.pins[0])]
+        proxy_pins = [json.loads(p) for p in sorted(self.pins[1])]
+        for key in sorted({k for pin in shim_pins + proxy_pins for k in pin}):
+            a = {json.dumps(pin.get(key), sort_keys=True) for pin in shim_pins}
+            b = {json.dumps(pin.get(key), sort_keys=True) for pin in proxy_pins}
+            if a != b:
+                out.append(f"{key} {_set(a)} / {_set(b)}")
+        return "; ".join(out)
 
     def differences(self) -> list[str]:
         """What the two instruments disagree on, by name. Empty is agreement."""
@@ -65,7 +90,7 @@ class CellAgreement:
 
     @property
     def agrees(self) -> bool:
-        return self.twin and not self.differences()
+        return self.twin and self.comparable and not self.differences()
 
 
 @dataclass(slots=True)
@@ -79,8 +104,12 @@ class Agreement:
         return [c for c in self.cells if c.twin]
 
     @property
+    def comparable(self) -> list[CellAgreement]:
+        return [c for c in self.twins if c.comparable]
+
+    @property
     def disagreeing(self) -> list[CellAgreement]:
-        return [c for c in self.twins if not c.agrees]
+        return [c for c in self.comparable if not c.agrees]
 
 
 def agreement(
@@ -106,26 +135,41 @@ def agreement(
             shim_only=len(l_seeds - shared),
             proxy_only=len(r_seeds - shared),
         )
-        if shared:
-            entry.shim = fold([left[(cell_id, s)] for s in shared])[cell_id]
-            entry.proxy = fold([right[(cell_id, s)] for s in shared])[cell_id]
-        elif l_seeds:
-            entry.shim = fold([left[(cell_id, s)] for s in l_seeds])[cell_id]
-        elif r_seeds:
-            entry.proxy = fold([right[(cell_id, s)] for s in r_seeds])[cell_id]
+        # Folded over the shared seeds where there are any; where there are none, each side over
+        # its own, so a cell both sides ran on disjoint seeds lists both rather than losing one.
+        shim_rows = [left[(cell_id, s)] for s in sorted(shared or l_seeds)]
+        proxy_rows = [right[(cell_id, s)] for s in sorted(shared or r_seeds)]
+        if shim_rows:
+            entry.shim = fold(shim_rows)[cell_id]
+        if proxy_rows:
+            entry.proxy = fold(proxy_rows)[cell_id]
+        entry.commits = (_commits(shim_rows), _commits(proxy_rows))
+        entry.pins = (_pins(shim_rows), _pins(proxy_rows))
         out.cells.append(entry)
     return out
 
 
+def _commits(rows: list[dict[str, Any]]) -> frozenset[str]:
+    return frozenset(r.get("keel_commit") or "(none)" for r in rows)
+
+
+def _pins(rows: list[dict[str, Any]]) -> frozenset[str]:
+    return frozenset(json.dumps(r.get("config_pin") or {}, sort_keys=True) for r in rows)
+
+
+def _set(values: frozenset[str] | set[str]) -> str:
+    return ",".join(sorted(values))
+
+
 def _latest(rows: list[dict[str, Any]]) -> dict[tuple[str, int], dict[str, Any]]:
-    """Last write wins per `(cell_id, seed)`, valid rows only — `fold`'s own rule, applied before
-    the pairing so a re-taken seed pairs with its retake and a void trial pairs with nothing."""
+    """Last write wins per `(cell_id, seed)`, *then* void rows go — `fold`'s own order, applied
+    before the pairing so a re-taken seed pairs with its retake, a void trial pairs with nothing,
+    and a void retake of a valid trial voids it here exactly as it does on the matrix page."""
     latest: dict[tuple[str, int], dict[str, Any]] = {}
     for row in rows:
-        if row.get("valid", True):
-            cell = canonical_cell(row["cell_id"])
-            latest[(cell, row["seed"])] = {**row, "cell_id": cell}
-    return latest
+        cell = canonical_cell(row["cell_id"])
+        latest[(cell, row["seed"])] = {**row, "cell_id": cell}
+    return {key: row for key, row in latest.items() if row.get("valid", True)}
 
 
 def canonical_cell(cell_id: str) -> str:
@@ -133,14 +177,18 @@ def canonical_cell(cell_id: str) -> str:
     `keel.default.EXTERNAL.after:tool_effect`, tier1p spells the same fault
     `kill@after:tool_effect`. One spelling, so the twins find each other."""
     head, _, trigger = cell_id.rpartition(".")
-    if not head or "@" in trigger or trigger == "baseline":
+    if not head or trigger == "baseline":
         return cell_id
+    # Per part: a composed trigger may spell one part bare and another explicitly.
     parts = trigger.split("+")
     return f"{head}.{'+'.join(p if '@' in p else f'kill@{p}' for p in parts)}"
 
 
 # --- rendering ---------------------------------------------------------------
-def render(a: Agreement) -> str:
+def render(a: Agreement, *, sources: list[tuple[str, list[dict[str, Any]]]] = ()) -> str:
+    """`sources` is `(results directory, its rows)` for every directory on either side."""
+    from crashproof.report.markdown import sources_block
+
     twins = a.twins
     lines = [
         f"# Proxy / shim agreement — `{a.shim_name}` vs `{a.proxy_name}`",
@@ -151,7 +199,13 @@ def render(a: Agreement) -> str:
         "window that is real and not an artefact of where the instrument sat; a cell where they",
         "differ is a finding about the instrument, printed with both numbers.",
         "",
-        "No p-values. Agreement is a check on the harness, not a hypothesis about runtimes.",
+        "No p-values. Agreement is a check on the harness, not a hypothesis about runtimes. A twin",
+        "whose two sides ran at different commits or under different config pins is printed with",
+        "what differs and left out of the tally: its difference may be the runtime, not the instrument.",
+        "`n` is the seeds both sides ran; seeds only one side ran are counted beside it and folded",
+        "into neither.",
+        "",
+        *sources_block(sources),
         "",
         "| cell | n | safety (shim) | safety (proxy) | dup_eff | dup_rcpt | recovery | latency | agree |",
         "|---|---|---|---|---|---|---|---|---|",
@@ -159,13 +213,17 @@ def render(a: Agreement) -> str:
     for c in twins:
         assert c.shim is not None and c.proxy is not None
         diffs = c.differences()
+        if not c.comparable:
+            verdict = f"not comparable: pins differ — {c.why_not_comparable()}"
+        else:
+            verdict = "yes" if not diffs else "**no** — " + "; ".join(diffs)
         lines.append(
-            f"| `{c.cell_id}` | {c.n} | {_safety(c.shim)} | {_safety(c.proxy)} "
+            f"| `{c.cell_id}` | {_n(c)} | {_safety(c.shim)} | {_safety(c.proxy)} "
             f"| {c.shim.duplicate_effects} / {c.proxy.duplicate_effects} "
             f"| {c.shim.duplicate_receipts} / {c.proxy.duplicate_receipts} "
             f"| {_rate(c.shim)} / {_rate(c.proxy)} "
             f"| {_latency(c.shim)} / {_latency(c.proxy)} "
-            f"| {'yes' if not diffs else '**no** — ' + '; '.join(diffs)} |"
+            f"| {verdict} |"
         )
     if not twins:
         lines.append("| — | 0 | | | | | | | no twins: nothing to agree on |")
@@ -183,20 +241,36 @@ def render(a: Agreement) -> str:
             "|---|---|---|---|",
         ]
         for c in singles:
+            if c.shim is not None and c.proxy is not None:
+                lines.append(
+                    f"| `{c.cell_id}` | {a.shim_name} / {a.proxy_name} | {c.shim_only} / {c.proxy_only} "
+                    "| no shared seeds: both sides ran it, on different seeds |"
+                )
+                continue
             side = a.shim_name if c.shim is not None else a.proxy_name
             n = c.shim_only if c.shim is not None else c.proxy_only
             lines.append(f"| `{c.cell_id}` | {side} | {n} | {_why(c)} |")
 
-    agreeing = len(twins) - len(a.disagreeing)
+    comparable = a.comparable
+    agreeing = len(comparable) - len(a.disagreeing)
+    not_comparable = len(twins) - len(comparable)
     lines += [
         "",
         "## Reading it",
         "",
-        f"{agreeing} of {len(twins)} twinned cells agree. "
+        f"{agreeing} of {len(comparable)} comparable twinned cells agree."
         + (
-            "Every disagreement names what differs, in the order shim / proxy."
+            f" {not_comparable} of {len(twins)} twins are not comparable — their commits or config pins "
+            "differ — and are counted in neither."
+            if not_comparable
+            else ""
+        )
+        + (
+            " Every disagreement names what differs, in the order shim / proxy."
             if a.disagreeing
-            else "Where the instrument sat did not change a verdict or a count."
+            else " Where the instrument sat did not change a verdict or a count."
+            if comparable
+            else ""
         ),
         "",
         "What the proxy realisation loses, per §11.2: `before:tool_call` fires on a request that",
@@ -213,6 +287,11 @@ def render(a: Agreement) -> str:
 def _safety(s: CellSummary) -> str:
     marks = {"PASS": "✓", "FAIL": "✗", "N/A": "·"}
     return " ".join(f"{n}{marks.get(s.verdicts.get(n, 'N/A'), '·')}" for n in SAFETY if s.verdicts.get(n, "N/A") != "N/A" or n in ("S1", "S3", "L1"))
+
+
+def _n(c: CellAgreement) -> str:
+    extra = [f"+{k} {side} only" for k, side in ((c.shim_only, "shim"), (c.proxy_only, "proxy")) if k]
+    return f"{c.n} ({', '.join(extra)})" if extra else str(c.n)
 
 
 def _rate(s: CellSummary) -> str:

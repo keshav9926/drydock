@@ -68,17 +68,6 @@ def _run(coro: Any) -> Any:
     return aio.run(coro)
 
 
-def _commit() -> str:
-    import subprocess
-
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
-        ).stdout.strip()
-    except OSError:  # pragma: no cover
-        return ""
-
-
 # --- world -------------------------------------------------------------------
 @app.command()
 def world(
@@ -227,7 +216,6 @@ def _cell(
                 seed=seed,
                 out_dir=out_dir / slug(cell_id),
                 cell_id=cell_id,
-                keel_commit=_commit(),
             )
             store.append(row.as_dict())
             rows.append(row)
@@ -294,7 +282,6 @@ def bench(
             cells=list(cells or []),
             resume=resume,
             on_row=on_row,
-            keel_commit=_commit(),
         )
     )
     report(out_dir, fmt="md", out_path=out_dir / "matrix.md")
@@ -331,7 +318,8 @@ def report(
     if fmt != "md":
         err.print("[red]only --fmt md is built; html is v1 (§27.9)[/]")
         raise typer.Exit(2)
-    page = render(fold(rows), workload=rows[0]["workload"], title=results.name)
+    page = render(fold(rows), workload=rows[0]["workload"], title=results.name,
+                  sources=[(results.as_posix(), rows)])
     target = out_path or results / "matrix.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf8")
@@ -383,7 +371,6 @@ def demo(
             seed=seed,
             out_dir=out_dir / slug(cell.id),
             cell_id=cell.id,
-            keel_commit=_commit(),
         )
 
     err.print(f"running {cell.id} seed {seed} …")
@@ -566,7 +553,7 @@ def compare(
         err.print(f"[red]nothing to compare: A={len(a_rows)} rows, B={len(b_rows)} rows[/]")
         raise typer.Exit(1)
     result = run_compare(a_rows, b_rows, a_name=a, b_name=b, seed=seed)
-    page = render(result)
+    page = render(result, sources=[(results.as_posix(), a_rows + b_rows)])
     if out_path is None:
         out.print(page)
     else:
@@ -592,8 +579,9 @@ def agree(
     from crashproof.report.agreement import agreement, render
     from crashproof.runner.store import ResultStore
 
-    shim_rows = [r for p in shim for r in ResultStore(p).rows()]
-    proxy_rows = [r for p in proxy for r in ResultStore(p).rows()]
+    by_dir = {p.as_posix(): list(ResultStore(p).rows()) for p in [*shim, *proxy]}
+    shim_rows = [r for p in shim for r in by_dir[p.as_posix()]]
+    proxy_rows = [r for p in proxy for r in by_dir[p.as_posix()]]
     if not shim_rows or not proxy_rows:
         err.print(f"[red]nothing to pair: shim={len(shim_rows)} rows, proxy={len(proxy_rows)} rows[/]")
         raise typer.Exit(1)
@@ -607,7 +595,8 @@ def agree(
         agreement(
             shim_rows, proxy_rows,
             shim_name="+".join(p.name for p in shim), proxy_name="+".join(p.name for p in proxy),
-        )
+        ),
+        sources=list(by_dir.items()),
     )
     if out_path is None:
         out.print(page)

@@ -85,6 +85,44 @@ def test_the_page_prints_both_numbers_and_never_a_p_value() -> None:
     page = render(agreement(shim, proxy, shim_name="v0", proxy_name="p"))
     assert "| `" + KILL + "` | 1 |" in page and "| yes |" in page
     assert "**no** — duplicate_effects 0/1" in page
-    assert "1 of 2 twinned cells agree" in page
+    assert "1 of 2 comparable twinned cells agree" in page
     assert "proxy-only" in page and DROPPED in page
     assert "p-value" not in page.lower().replace("no p-values", "")
+
+
+def test_a_twin_from_another_commit_or_config_is_printed_but_never_tallied() -> None:
+    """The 11/30 vs 30/30 pause cell paired a shim run at one Keel commit and retry policy with a
+    proxy run at another. A difference there may be the runtime changing, not the instrument."""
+    shim = [{**_row(KILL, 7, "shim"), "keel_commit": "198b456"}, _row(PAUSE, 7, "shim")]
+    proxy = [{**_row(KILL, 7, "proxy", dup=1), "keel_commit": "8ee372d"},
+             {**_row(PAUSE, 7, "proxy"), "config_pin": {"retry": "max_attempts=3"}}]
+    a = agreement(shim, proxy)
+    assert len(a.twins) == 2 and a.comparable == [] and a.disagreeing == []
+    page = render(a)
+    assert "not comparable: pins differ — keel_commit 198b456 / 8ee372d" in page
+    assert 'retry null / "max_attempts=3"' in page
+    assert "0 of 0 comparable twinned cells agree. 2 of 2 twins are not comparable" in page
+
+
+def test_seeds_only_one_side_ran_are_printed_beside_n_and_disjoint_seeds_list_both() -> None:
+    shim = [_row(KILL, s, "shim", dup=1 if s > 7 else 0) for s in range(7, 12)]
+    page = render(agreement(shim, [_row(KILL, 7, "proxy")]))
+    assert f"| `{KILL}` | 1 (+4 shim only) |" in page
+    a = agreement([_row(KILL, 7, "shim")], [_row(KILL, 8, "proxy")])
+    [kill] = a.cells
+    assert not kill.twin and kill.shim is not None and kill.proxy is not None
+    assert "| 1 / 1 | no shared seeds" in render(a)
+
+
+def test_a_void_retake_of_a_valid_trial_voids_it_as_fold_does() -> None:
+    a = agreement([_row(KILL, 7, "shim", dup=1), _row(KILL, 7, "shim", valid=False)], [_row(KILL, 7, "proxy")])
+    [kill] = a.cells
+    assert not kill.twin and kill.proxy_only == 1, "last write wins first, then the void row goes"
+
+
+def test_a_composed_trigger_is_canonicalised_part_by_part() -> None:
+    from crashproof.report.agreement import canonical_cell
+
+    assert canonical_cell("keel.default.EXTERNAL.tool_500@after:tool_effect+after:tool_return") == (
+        "keel.default.EXTERNAL.tool_500@after:tool_effect+kill@after:tool_return"
+    )

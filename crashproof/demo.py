@@ -85,7 +85,7 @@ _VOLATILE = (
     (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<uuid>"),
     (re.compile(r"\b\d{4}-\d{2}-\d{2}T[\d:.+\-]+\b"), "<ts>"),
     # This one changes on every commit, including the ones that change nothing printed here.
-    (re.compile(r"keel_commit [0-9a-f]{7,40}"), "keel_commit <sha>"),
+    (re.compile(r"keel_commit [0-9a-f]{7,40}(-dirty)?"), "keel_commit <sha>"),
     (re.compile(r"\b[0-9a-f]{12,}\b"), "<hash>"),
     (re.compile(r"(?<=:)\d{4,5}\b"), "<port>"),
     (re.compile(r"\bpid \d+"), "pid <pid>"),
