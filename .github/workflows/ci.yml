@@ -4,8 +4,9 @@
 # `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 36 white-box
 # conformance cells, the golden diff of the demo's printed lines — which is §28.7's named
 # mitigation for "a demo that only works on the author's machine" — and every published page
-# re-rendered from its committed rows. It installs the LangGraph and DBOS extras, because a change to the
-# shared harness that breaks either arm should fail here and not in an overnight bench.
+# re-rendered from its committed rows. It installs the LangGraph, DBOS and Temporal extras, because a
+# change to the shared harness that breaks an arm should fail here and not in an overnight bench. (The
+# Temporal arm's unit test needs no server; its dev-server trial is opt-in, CRASHPROOF_TEMPORAL_TESTS=1.)
 #
 # `integration` needs Postgres, because the four control-plane statements are the one place the
 # MemoryJournal tests and the real store could disagree, and a durability claim checked only against
@@ -28,7 +29,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.13"
-      - run: uv sync --locked --extra dev --extra langgraph --extra dbos
+      - run: uv sync --locked --extra dev --extra langgraph --extra dbos --extra temporal
       - name: unit, property and conformance
         run: uv run pytest tests/unit tests/property tests/conformance -q --hypothesis-seed=0
       # The conformance cells write their table. If the committed one differs, the code and the
