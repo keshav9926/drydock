@@ -1171,6 +1171,7 @@ class StepEngine:
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent))
             now = await tx.now()
+            started_local = self._worker_now()
             deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
             if intent.kind is StepKind.TOOL:
                 await tx.write_effect(
@@ -1215,7 +1216,7 @@ class StepEngine:
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
         # ---- write-ahead barrier passed: the effect may now begin ----
-        return await self._dispatch(intent, 1, started_seq, deadline, timeout)
+        return await self._dispatch(intent, 1, started_seq, deadline, timeout, started_local)
 
     def _timeout_of(self, intent: StepIntent, tool: Any) -> float:
         if intent.kind is StepKind.TOOL:
@@ -1241,6 +1242,7 @@ class StepEngine:
             if close is not None:
                 await tx.append(close)
             now = await tx.now()
+            started_local = self._worker_now()
             deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
             started_seq = await tx.append(
                 StepAttemptStarted(
@@ -1269,7 +1271,7 @@ class StepEngine:
         self.state.charged.start(
             intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind)
         )
-        return await self._dispatch(intent, attempt_no, started_seq, deadline, timeout)
+        return await self._dispatch(intent, attempt_no, started_seq, deadline, timeout, started_local)
 
     async def _dispatch(
         self,
@@ -1278,6 +1280,7 @@ class StepEngine:
         started_seq: int,
         deadline: datetime | None,
         timeout: float,
+        started_local: datetime,
     ) -> Any:
         eff_class = intent.effect_class
         if eff_class is not None and eff_class != EffectClass.PURE:
@@ -1294,7 +1297,7 @@ class StepEngine:
         )
         executor = EXECUTORS[intent.kind]
         try:
-            remaining = _remaining(deadline, timeout, self.clock)
+            remaining = timeout if deadline is None else _remaining(started_local, timeout, self.clock)
             # The write-ahead barrier is behind us: STARTED is durable, so a crash here is the
             # window the whole recovery table exists for.
             hooks.at("before:effect_exec", attempt_no=attempt_no, **_where(intent))
@@ -1618,14 +1621,14 @@ class StepEngine:
         return self.tools.get(intent.name)
 
 
-def _remaining(deadline: datetime | None, timeout: float, clock: Any = None) -> float:
-    """Count down to the *journaled* attempt_deadline, not to a fresh timeout measured from
-    dispatch (§5.10). Read through the run's own clock, so the residual is clock-read skew between
-    the worker and Postgres and nothing more."""
-    if deadline is None:
-        return timeout
+def _remaining(started_local: datetime, timeout: float, clock: Any = None) -> float:
+    """Count down from the STARTED commit, not from dispatch (§5.10): the time between the commit
+    and the send is spent from the attempt's budget. The journaled `attempt_deadline` is on the
+    store's clock and is never compared with the worker's; only time elapsed on the worker's own
+    clock since it read the store's is subtracted. Comparing the two clocks directly made every
+    call time out on arrival once Docker's VM clock fell a second behind the host's."""
     now = clock.now() if clock is not None else datetime.now(UTC)
-    return max(0.001, (deadline - now).total_seconds())
+    return max(0.001, timeout - (now - started_local).total_seconds())
 
 
 def _where(intent: StepIntent) -> dict[str, Any]:

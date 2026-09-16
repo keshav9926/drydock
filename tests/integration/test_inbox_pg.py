@@ -206,6 +206,28 @@ async def test_a_client_clock_ahead_of_the_store_delays_neither_start_nor_handov
     assert await journal.claim("w2", timedelta(seconds=TTL)) is not None
 
 
+async def test_a_worker_clock_skewed_from_the_store_gets_its_whole_tool_timeout(journal, world) -> None:
+    """`attempt_deadline` is journaled on the store's clock. The dispatch timeout counted down to it
+    on the worker's clock, so a store a second behind the host (Docker's VM clock drifts) turned every
+    EXTERNAL call into an instant timeout, AMBIGUOUS before the request could be answered."""
+    from datetime import UTC, datetime
+
+    class Ahead:
+        def now(self) -> datetime:
+            return datetime.now(UTC) + timedelta(hours=1)
+
+    k = Keel(
+        journal=journal, provider=ScriptedProvider(demo.SCRIPT), clock=Ahead(),
+        tools=[demo.search, demo.create_issue_tool("EXTERNAL")], programs=[demo.tool_chain],
+    )
+    handle = await k.start(demo.tool_chain, {"task": "skew"})
+    assert await _work(k, "w1")
+    types = [e.type for e in await k.events(handle.run_id)]
+    # The probe would still resolve an instant timeout to COMPLETED, so the phase proves nothing.
+    assert "STEP_AMBIGUOUS" not in types and "STEP_FAILED" not in types, types
+    assert types[-1] == "RUN_COMPLETED" and world.applied_counts()["issues.create#1"] == 1
+
+
 async def test_an_unknown_signal_type_is_a_keel_error_not_a_check_violation(journal, world) -> None:
     k = _keel(journal)
     handle = await k.start(demo.tool_chain, {"task": "x"})
