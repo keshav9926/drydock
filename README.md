@@ -490,10 +490,10 @@ of megabytes and are *not* committed. That is the one thing a clone cannot re-ch
 re-runs the verifier over each trial's own recorded facts and fails (exit 7) if a verdict moved or
 the results file has drifted from the directories it summarises, so it runs against a directory you
 generated. A row with no `facts.json` behind it exits 9 — a clone's rows, and matrix v0, tier1a and
-reask_alternate even on the machine that ran them, because those trials predate the file. Since
-`182994a`, rechecking the tier1p, W5 and W5-pre directories on that machine exits 7: every row's
-fresh verdicts differ from its published ones by one added `S6: N/A` and nothing else, because the
-rows predate S6.
+reask_alternate even on the machine that ran them, because those trials predate the file. An
+invariant added after a row was written and N/A for it is not drift (the row could not carry it), so
+the tier1p, W5 and W5-pre directories recheck with exit 0 on that machine: 1080, 450 and 270 rows,
+the one FAIL printed being W5's designed LangGraph expiry L1.
 
 **`bench` is serial on purpose, and parallelism is sharding.** One run owns one `results.jsonl` and
 one `cursor.json`, which is what makes `--resume` safe and a re-taken void trial unambiguous; two
