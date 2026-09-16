@@ -21,6 +21,9 @@ langgraph = [
     "langgraph>=0.2",
     "langgraph-checkpoint-postgres>=2.0",
 ]
+# The week-2 engine arms (§22.3): each a dependency of its adapter module only, never of `keel`.
+dbos = ["dbos>=2.31", "pydantic-ai-slim[dbos]>=2.43"]
+temporal = ["temporalio>=1.33", "pydantic-ai-slim[temporal]>=2.43"]
 
 [project.scripts]
 keel = "keel.cli.main:main"
