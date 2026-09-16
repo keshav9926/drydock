@@ -338,9 +338,15 @@ class Worker:
         A crash here leaves a lease nobody holds and nobody has released — indistinguishable from a
         crash to every observer, which is the point: a graceful shutdown that dies mid-release must
         degrade to the ordinary orphan path rather than to a stuck run.
+
+        A store outage here takes that path too. It used to escape `execute` and end the worker's
+        claim loop — every other run on the process lost to one blip at the last statement of one.
         """
-        hooks.at("before:lease_release", run_id=str(lease.run_id), epoch=lease.epoch)
-        await self.journal.release(lease, **fields)
+        try:
+            hooks.at("before:lease_release", run_id=str(lease.run_id), epoch=lease.epoch)
+            await self.journal.release(lease, **fields)
+        except StoreUnavailable:
+            return  # nothing released: the lease lapses and the reaper hands the run on
 
     async def _heartbeat(self, lease: Lease) -> None:
         """The fence statement alone, on a timer. A fenced heartbeat means someone else owns the
