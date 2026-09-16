@@ -82,6 +82,7 @@ def test_canonicalising_removes_the_weather_and_keeps_the_behaviour() -> None:
     assert canonicalise("keel worker pid 41822 on :8600") == "keel worker pid <pid> on :<port>"
     assert canonicalise("elapsed 41 ms") == "elapsed <ms> ms"
     assert canonicalise("keel_commit a212a20") == "keel_commit <sha>"
+    assert canonicalise("keel_commit a212a20-dirty") == "keel_commit <sha>"
     assert canonicalise("key=8e3f31de50e8") == "key=<hash>"
 
     # Kept, and each for a reason: a config pin is identical on every run of the cell, so a change
@@ -89,3 +90,18 @@ def test_canonicalising_removes_the_weather_and_keeps_the_behaviour() -> None:
     # break the golden file, or it is not checking anything worth checking.
     for stable in ("lease_ttl 2.0 s > create_issue timeout 1.0 s", "seq 14", "replayed_steps=4"):
         assert canonicalise(stable) == stable
+
+
+def test_the_approval_half_prints_the_park_it_read_and_nothing_it_did_not() -> None:
+    """The line used to assert a released lease and a NULL runnable_at whenever an approval
+    existed, without reading either — the scripted-screenshot failure the demo exists to prevent."""
+    from crashproof.demo import _approval_lines
+
+    def e(seq: int, kind: str, **body) -> dict:
+        return {"seq": seq, "type": kind, "body": body}
+
+    requested = e(15, "APPROVAL_REQUESTED", step_index=3, binds_effect_key="1860a3451aadfb25")
+    parked = _approval_lines([requested, e(16, "RUN_WAITING", reason="approval")])
+    assert "RUN_WAITING{approval} seq 16" in parked[1]
+    assert not any("lease released" in line or "runnable_at" in line for line in parked)
+    assert "no RUN_WAITING" in _approval_lines([requested])[1]

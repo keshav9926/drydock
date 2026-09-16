@@ -225,6 +225,51 @@ async def test_kill_while_waiting_ends_the_process_and_grants_to_whoever_comes_b
     assert sup.executed_flags()[row.fault_id] is True, "recorded *and* happened: not a void trial"
 
 
+async def test_the_keel_arm_names_the_approval_it_decides_and_the_duplicate_names_it_again(
+    tmp_path, monkeypatch
+) -> None:
+    """Keel's drain reads `payload.approval_id`: a named decision for an approval already decided is
+    `SIGNAL_IGNORED{approval_terminal}`. So the human's click names the open approval, and §11.4 C's
+    second click is the same row again, unkeyed — never a click on nothing in particular."""
+    import contextlib
+    from datetime import timedelta
+
+    from crashproof.adapters.base import SutHandle
+    from crashproof.adapters.keel import KeelAdapter
+    from crashproof.workloads.tool_chain_1_effect import build_world
+    from crashproof.world.server import WorldServer
+    from keel import Keel
+    from keel.agents import demo
+    from keel.core.clock import FakeClock
+    from keel.journal.memory import MemoryJournal
+    from keel.providers.scripted import ScriptedProvider
+    from keel.state.fold import fold
+
+    server = WorldServer(build_world(), port=0)
+    await server.start()
+    monkeypatch.setattr(demo, "WORLD_URL", server.base_url)
+    clock = FakeClock()
+    k = Keel(journal=MemoryJournal(clock=clock), provider=ScriptedProvider(demo.SCRIPT),
+             tools=[demo.search, demo.create_issue_tool("EXTERNAL")],
+             programs=[demo.gated_tool_chain], clock=clock)
+    try:
+        run = await k.start(demo.gated_tool_chain, {"title": "gate me"})
+        lease = await k.journal.claim("w1", timedelta(seconds=2.0))
+        with contextlib.suppress(BaseException):
+            await k.worker(worker_id="w1", lease_ttl=2.0).execute(lease)
+        adapter = KeelAdapter(load_named("approval_gated_deploy"), "GATED")
+        adapter._app = k
+        handle = SutHandle(trial_dir=tmp_path, dependency=None, world_url=server.base_url, run_ref=str(run.run_id))
+        assert await adapter.approve(handle) and await adapter.approve(handle)
+        [approval_id] = fold(await k.events(run.run_id)).approvals
+        rows = await k.journal.pending_signals(run.run_id)
+    finally:
+        await server.stop()
+    assert [(r.type, r.payload, r.client_key) for r in rows] == [
+        ("approve", {"by": "harness", "approval_id": str(approval_id)}, None)
+    ] * 2
+
+
 async def test_a_workload_that_never_parks_never_asks_the_human(tmp_path) -> None:
     status, granted = ["RUNNING"], []
     sup = _supervisor(tmp_path, "approval_delay@supervisor", status, granted)
