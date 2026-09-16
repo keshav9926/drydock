@@ -208,6 +208,16 @@ def test_an_approval_decided_twice_fails_s7() -> None:
     assert verify(f).findings["S7"].counterexample == {"approval_id": {"a1": 2}}
 
 
+def test_a_gated_step_resolved_by_assume_failed_fails_s7() -> None:
+    """`assume_failed` re-fires under the one approval, so a bound EXTERNAL tool may only resolve by
+    probe or escalate (§9.4) — a FAIL even when the World happens to show one application."""
+    f = gated()
+    f.journal.append({"seq": 6, "type": "STEP_RESOLVED", "ts": 101.0, "step_index": 4,
+                      "body": {"resolution": "RESOLVED_FAILED", "method": "assume_failed"}})
+    v = verify(f)
+    assert v.findings["S7"].verdict == "FAIL" and v.findings["S7"].counterexample == {"step_index": 4}
+
+
 def test_s7_without_a_journal_names_the_missing_input() -> None:
     f = gated()
     f.journal = None
