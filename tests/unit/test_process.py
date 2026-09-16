@@ -28,3 +28,18 @@ def test_resuming_a_process_that_is_terminating_is_not_an_error() -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def test_a_self_freeze_does_not_pass_the_boundary_before_the_thaw(tmp_path, monkeypatch) -> None:
+    """A POSIX self-stop is taken by whichever thread the kernel wakes, so the shim thread that raised it
+    can run on for a moment — and a Restate smoke's frozen attempt sent its request 17 ms after its fault
+    row. Whatever the stop does, the boundary is not passed until the supervisor's thaw marker exists."""
+    import threading
+    import time
+
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: None)  # a stop that has not reached this thread
+    marker = tmp_path / "thaw"
+    threading.Timer(0.3, marker.write_text, args=("1",)).start()
+    started = time.monotonic()
+    process.freeze_self(marker)
+    assert marker.exists() and time.monotonic() - started >= 0.25

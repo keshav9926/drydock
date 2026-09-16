@@ -59,10 +59,17 @@ def freeze_self(thaw_marker: "Path | None" = None) -> None:
     guess — a frozen process cannot poll, so the first successful read is necessarily after the
     thaw. Timing heuristics ("did that sleep overrun?") miss when the freeze lands between two
     iterations, and a missed detection is a worker parked for no reason.
+
+    **POSIX parks on the marker too.** A process-directed stop is taken by whichever thread the kernel
+    wakes for it (the group leader, when it can), so the thread that raised it — a shim thread, never
+    the leader — can run on until the stop reaches it. Under load that was long enough to send the
+    request the freeze exists to hold back: a Restate smoke's frozen attempt left a World receipt 17 ms
+    after its fault row. Parking closes it the same way it does on Windows.
     """
     if not WINDOWS:
         os.kill(os.getpid(), signal.SIGSTOP)
-        return
+        if thaw_marker is None:
+            return
     deadline = time.monotonic() + PARK_S
     while time.monotonic() < deadline:
         if thaw_marker is not None and thaw_marker.exists():
