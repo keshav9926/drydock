@@ -4,8 +4,8 @@
 # `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 36 white-box
 # conformance cells, the golden diff of the demo's printed lines — which is §28.7's named
 # mitigation for "a demo that only works on the author's machine" — and every published page
-# re-rendered from its committed rows. It installs the LangGraph extra, because a change to the
-# shared harness that breaks that arm should fail here and not in an overnight bench.
+# re-rendered from its committed rows. It installs the LangGraph and DBOS extras, because a change to the
+# shared harness that breaks either arm should fail here and not in an overnight bench.
 #
 # `integration` needs Postgres, because the four control-plane statements are the one place the
 # MemoryJournal tests and the real store could disagree, and a durability claim checked only against
@@ -28,7 +28,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.13"
-      - run: uv sync --locked --extra dev --extra langgraph
+      - run: uv sync --locked --extra dev --extra langgraph --extra dbos
       - name: unit, property and conformance
         run: uv run pytest tests/unit tests/property tests/conformance -q --hypothesis-seed=0
       # The conformance cells write their table. If the committed one differs, the code and the
@@ -64,7 +64,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.13"
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked --extra dev --extra dbos
       - name: control-plane statements against a real store
         env:
           KEEL_TEST_DSN: postgresql://keel:keel@localhost:5432/keel

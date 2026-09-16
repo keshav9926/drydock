@@ -104,7 +104,7 @@ def test_an_arm_whose_extra_is_not_installed_is_not_registered(monkeypatch) -> N
 
     real = importlib.util.find_spec
     monkeypatch.setattr(
-        importlib.util, "find_spec", lambda name, *a: None if name == "langgraph" else real(name, *a)
+        importlib.util, "find_spec", lambda name, *a: None if name in ("langgraph", "dbos") else real(name, *a)
     )
     monkeypatch.setattr(main, "ADAPTERS", {})
     assert set(main._adapters()) == {"keel"}
@@ -127,3 +127,29 @@ def test_the_langgraph_adapter_builds_every_workload_it_declares() -> None:
             assert {"agent", "tools"} <= set(graph.get_graph().nodes)
             pin = LangGraphAdapter(workload, variant, durability="async").config_pin().as_dict()
             assert pin["durability"] == "async" and pin["framework_versions"]["langgraph"]
+
+
+def test_the_dbos_adapter_builds_every_workload_it_declares() -> None:
+    """Both `agent_code` rows, every workload, every variant: built and registered with DBOS, never
+    launched, so no database is needed. CI installs the extra for the same reason as LangGraph's."""
+    pytest.importorskip("dbos")
+    from dbos import DBOS
+
+    from crashproof.adapters.dbos import BUILDERS, DBOSAdapter
+    from crashproof.runner.trial import key_source_in_effect
+    from crashproof.workloads.spec import load_named
+    from crashproof.world.client import WorldClient
+
+    assert key_source_in_effect(DBOSAdapter, "framework") == "framework"
+    try:
+        for agent_code, build in BUILDERS.items():
+            for name in sorted(DBOSAdapter.workloads):
+                workload = load_named(name)
+                for variant in workload.variants:
+                    DBOS.destroy(destroy_registry=True)
+                    assert callable(build(workload, variant, WorldClient("http://127.0.0.1:9"), None))
+                    pin = DBOSAdapter(workload, variant, agent_code=agent_code).config_pin().as_dict()
+                    assert pin["extra"]["agent_code"] == agent_code and pin["framework_versions"]["dbos"]
+                    assert ("pydantic-ai-slim" in pin["framework_versions"]) == (agent_code == "pydantic_ai")
+    finally:
+        DBOS.destroy(destroy_registry=True)

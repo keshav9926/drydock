@@ -60,6 +60,10 @@ def _adapters() -> dict[str, Any]:
             from crashproof.adapters.langgraph import LangGraphAdapter
 
             ADAPTERS["langgraph"] = LangGraphAdapter
+        if importlib.util.find_spec("dbos") is not None:  # `uv sync --extra dbos`
+            from crashproof.adapters.dbos import DBOSAdapter
+
+            ADAPTERS["dbos"] = DBOSAdapter
     return ADAPTERS
 
 
