@@ -285,7 +285,7 @@ def test_the_sim_can_actually_lose_and_recover_a_run() -> None:
 #: `ci` is what `.github/workflows/ci.yml` runs (with `--hypothesis-seed=0`); `deep` is for a
 #: targeted local run: `KEEL_PBT_PROFILE=deep uv run pytest tests/property/test_runtime_machine.py`.
 PROFILES = {
-    "ci": dict(max_examples=60, stateful_step_count=30),
+    "ci": dict(max_examples=200, stateful_step_count=40),
     "deep": dict(max_examples=2000, stateful_step_count=60),
 }
 KeelMachine.TestCase.settings = settings(
