@@ -188,13 +188,17 @@ async def run_matrix(
     # of them with their journals and raw observations is a megabyte-scale reason for a long run to
     # die two thirds of the way through.
     written = 0
+    refuse_conflicting_key_sources(matrix, adapters)
+    # A missing arm and an N/A arm are different findings, so it is recorded, not skipped — and
+    # recorded before any trial runs, not an hour in when its first cell comes round.
+    missing = [cell for cell in selected if cell.adapter not in adapters]
+    for cell in missing:
+        if on_row:
+            on_row(None, cell, "adapter not built (or its extra is not installed)")
 
     for cell in sorted(selected, key=lambda c: (not c.is_baseline, c.id)):
         factory = adapters.get(cell.adapter)
         if factory is None:
-            # A missing arm and an N/A arm are different findings, so it is recorded, not skipped.
-            if on_row:
-                on_row(None, cell, "adapter not built")
             continue
         for seed in matrix.seed_range():
             if (cell.id, seed) in already:
@@ -219,6 +223,20 @@ async def run_matrix(
             if on_row:
                 on_row(row, cell, None)
     return written
+
+
+def refuse_conflicting_key_sources(matrix: Matrix, adapters: dict[str, Any]) -> None:
+    """A matrix that declares an arm at a key source its adapter cannot present is refused. The row
+    would record the key source in effect, not the declared one, and a page folded from it would
+    contradict the matrix file it claims to be the result of."""
+    for entry in matrix.adapters:
+        factory = adapters.get(entry["name"])
+        declared = entry.get("key_source", "none")
+        if factory is not None and declared not in factory.key_sources:
+            raise ValueError(
+                f"matrix declares {entry['name']} at key_source={declared}, but the adapter presents "
+                f"only {sorted(factory.key_sources)}"
+            )
 
 
 def _baselines_from(store: ResultStore) -> dict[tuple[str, str, str, int], Metrics]:

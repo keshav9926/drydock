@@ -45,16 +45,19 @@ ADAPTERS: dict[str, Any] = {}
 
 
 def _adapters() -> dict[str, Any]:
+    """The arms whose framework is importable. The adapter modules import their framework lazily,
+    so importing one proves nothing: an arm is registered only when its extra is installed, and an
+    arm that is not prints as missing before the first trial rather than failing inside one."""
+    import importlib.util
+
     if not ADAPTERS:
         from crashproof.adapters.keel import KeelAdapter
 
         ADAPTERS["keel"] = KeelAdapter
-        try:
+        if importlib.util.find_spec("langgraph") is not None:  # `uv sync --extra langgraph`
             from crashproof.adapters.langgraph import LangGraphAdapter
 
             ADAPTERS["langgraph"] = LangGraphAdapter
-        except ImportError:  # the extra is not installed; the column prints as a missing arm
-            pass
     return ADAPTERS
 
 
@@ -263,9 +266,14 @@ def bench(
     resume: Annotated[bool, typer.Option("--resume")] = False,
 ) -> None:
     """Run a matrix. Baselines first, because every delta metric is paired against one."""
-    from crashproof.runner.bench import Matrix, run_matrix
+    from crashproof.runner.bench import Matrix, refuse_conflicting_key_sources, run_matrix
 
     m = Matrix.load(matrix)
+    try:
+        refuse_conflicting_key_sources(m, _adapters())
+    except ValueError as exc:
+        err.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
     if seeds is not None:
         m.seeds = seeds
     if base_seed is not None:

@@ -6,6 +6,8 @@ would still look fine — so the shape is asserted rather than counted by hand.
 
 from __future__ import annotations
 
+import pytest
+
 from crashproof.runner.bench import Matrix
 
 MATRIX = "bench/specs/matrix_v0.yaml"
@@ -49,3 +51,79 @@ def test_a_baseline_exists_for_every_band_and_config() -> None:
     """Without a paired no-fault trial the delta metrics are undefined, not merely imprecise."""
     baselines = {c.id for c in Matrix.load(MATRIX).cells() if c.is_baseline}
     assert len(baselines) == 8, "4 configs x 2 bands"
+
+
+# --- the key source a row records, and the arms that can run -------------------------
+def test_a_row_records_the_key_the_arm_presents_not_the_one_the_variant_asks_for() -> None:
+    """The IDEMPOTENT variant asks for `framework`. LangGraph has none to give, so its rows say
+    `none` — its IDEMPOTENT band is the receiver's natural dedup at F0, never F1 (§14.2)."""
+    from crashproof.adapters.keel import KeelAdapter
+    from crashproof.adapters.langgraph import LangGraphAdapter
+    from crashproof.runner.trial import key_source_in_effect
+
+    assert key_source_in_effect(LangGraphAdapter, "framework") == "none"
+    assert key_source_in_effect(KeelAdapter, "framework") == "framework"
+    assert key_source_in_effect(KeelAdapter, "none") == "none"
+
+
+def test_a_matrix_declaring_an_arm_at_a_key_source_it_cannot_present_is_refused() -> None:
+    from crashproof.adapters.keel import KeelAdapter
+    from crashproof.adapters.langgraph import LangGraphAdapter
+    from crashproof.runner.bench import refuse_conflicting_key_sources
+
+    m = Matrix.load(MATRIX)
+    adapters = {"keel": KeelAdapter, "langgraph": LangGraphAdapter}
+    refuse_conflicting_key_sources(m, adapters)  # the published matrix is consistent
+    next(a for a in m.adapters if a["name"] == "langgraph")["key_source"] = "framework"
+    with pytest.raises(ValueError, match="langgraph at key_source=framework"):
+        refuse_conflicting_key_sources(m, adapters)
+
+
+async def test_a_missing_arm_is_reported_before_any_trial_starts(tmp_path) -> None:
+    from crashproof.adapters.keel import KeelAdapter
+    from crashproof.runner.bench import run_matrix
+
+    notes: list[str] = []
+
+    class Started(KeelAdapter):
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("a trial started")
+
+    with pytest.raises(RuntimeError, match="a trial started"):
+        await run_matrix(Matrix.load(MATRIX), out_dir=tmp_path, adapters={"keel": Started},
+                         on_row=lambda row, cell, note: notes.append(f"{cell.adapter}: {note}"))
+    assert len(notes) == 30 and all(n.startswith("langgraph: adapter not built") for n in notes)
+
+
+def test_an_arm_whose_extra_is_not_installed_is_not_registered(monkeypatch) -> None:
+    """The adapter modules import their framework lazily, so an `except ImportError` around the
+    import never fired and the arm failed inside its first trial instead."""
+    import importlib.util
+
+    from crashproof.cli import main
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name, *a: None if name == "langgraph" else real(name, *a)
+    )
+    monkeypatch.setattr(main, "ADAPTERS", {})
+    assert set(main._adapters()) == {"keel"}
+
+
+def test_the_langgraph_adapter_builds_every_workload_it_declares() -> None:
+    """The one test that imports the LangGraph arm. CI installs the extra, so a change to the shared
+    harness that breaks this adapter fails on the commit rather than in an overnight bench."""
+    pytest.importorskip("langgraph")
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from crashproof.adapters.langgraph import LangGraphAdapter, build_graph
+    from crashproof.workloads.spec import load_named
+    from crashproof.world.client import WorldClient
+
+    for name in sorted(LangGraphAdapter.workloads):
+        workload = load_named(name)
+        for variant in workload.variants:
+            graph = build_graph(workload, variant, WorldClient("http://127.0.0.1:9"), None, InMemorySaver())
+            assert {"agent", "tools"} <= set(graph.get_graph().nodes)
+            pin = LangGraphAdapter(workload, variant, durability="async").config_pin().as_dict()
+            assert pin["durability"] == "async" and pin["framework_versions"]["langgraph"]

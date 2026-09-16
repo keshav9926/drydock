@@ -289,8 +289,18 @@ class KeelAdapter:
     name = "keel"
     recovery_mechanism = "self"
     key_sources = frozenset({"none", "framework"})
-    workloads = frozenset({"tool_chain_1_effect"})
-    workload_evidence = {"tool_chain_1_effect": "keel/agents/demo.py: ctx.model -> ctx.tool -> ctx.model"}
+    workloads = frozenset({"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre"})
+    workload_evidence = {
+        "tool_chain_1_effect": "keel/agents/demo.py: ctx.model -> ctx.tool -> ctx.model",
+        "approval_gated_deploy": (
+            "keel/agents/demo.py tool_chain: the provider's `approval` metadata becomes "
+            "ctx.approve(gates=(tool, args)) before the gated ctx.tool"
+        ),
+        "approval_gated_deploy_pre": (
+            "as approval_gated_deploy, with `before_approval` calls made as their own ctx.tool steps "
+            "before ctx.approve"
+        ),
+    }
     claims: dict[str, str] = {
         # A fence protects the journal; it cannot reach a third party. So the only classes that can
         # claim more than at-least-once are the ones where the *receiver* is doing the work.

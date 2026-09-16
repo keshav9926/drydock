@@ -230,7 +230,7 @@ async def run_trial(
             spec_hash=spec.spec_hash,
             schedule_hash=schedule.hash(),
             seed=seed,
-            key_source=workload.variant(variant).key_source,
+            key_source=key_source_in_effect(adapter, workload.variant(variant).key_source),
             recovery_mechanism=adapter.recovery_mechanism,
             claims=dict(adapter.claims),
             config_pin=adapter.config_pin(worker_count=worker_count).as_dict(),
@@ -255,6 +255,13 @@ async def run_trial(
         if proxy is not None:
             await proxy.stop()
         await server.stop()
+
+
+def key_source_in_effect(adapter: Any, declared: str) -> str:
+    """The key the arm actually presents, not the one the variant asks for. A variant says
+    `framework`; an adapter whose framework has no key to give sends none, and a row that said
+    otherwise would put a natural-idempotency result under F1 (§13.6, §14.2)."""
+    return declared if declared in adapter.key_sources else "none"
 
 
 async def _terminal(adapter: Any, handle: SutHandle, workload: Workload) -> bool:

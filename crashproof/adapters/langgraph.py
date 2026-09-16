@@ -194,13 +194,21 @@ class LangGraphAdapter:
     name = "langgraph"
     recovery_mechanism = "harness"
     key_sources = frozenset({"none"})
-    workloads = frozenset({"tool_chain_1_effect"})
+    workloads = frozenset({"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre"})
     workload_evidence = {
         "tool_chain_1_effect": (
             "graph API: agent node = one model call, tool node = one @task-wrapped tool call, one "
             "superstep each (docs: wrap side effects in @task so their results are persisted and "
             "not re-run on resume)"
-        )
+        ),
+        "approval_gated_deploy": (
+            "human-in-the-loop: interrupt() in the agent node before the gated call; resumed with "
+            "Command(resume=...) on the same thread"
+        ),
+        "approval_gated_deploy_pre": (
+            "as approval_gated_deploy, with the `before_approval` calls un-wrapped in the same node "
+            "ahead of interrupt() (docs: code before interrupt() re-runs on resume)"
+        ),
     }
     #: No documented exactly-once or key primitive anywhere in the fact sheet, so at-least-once is
     #: the honest declaration for every class. The raw duplicate counts say the rest.
