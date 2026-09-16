@@ -1,0 +1,45 @@
+# week 2, W1 in proxy mode: tier1p's cells over every Windows arm, the twin of week2_w1_shim.yaml
+# for the proxy/shim agreement column (§29.1). No model faults: model traffic does not cross the
+# proxy, and a spec naming a model boundary is refused.
+workload: tool_chain_1_effect
+mode: proxy
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, S6, L1, L2, C1]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - kill@before:tool_call
+  - kill@after:tool_effect
+  - kill@after:tool_return
+  - pause_past_ttl@before:tool_call
+  - tool_timeout@before:tool_call
+  - tool_500@after:tool_effect
+  - tool_dropped_response@after:tool_effect
+  - tool_malformed@after:tool_effect
+
+adapters:
+  - name: keel
+    key_source: framework             # effect_key
+    configs:
+      - {id: default}
+  - name: langgraph
+    key_source: none                  # no documented idempotency-key primitive (§13.6)
+    configs:
+      - {id: sync,  durability: sync}
+      - {id: async, durability: async}
+      - {id: exit,  durability: exit}
+  - name: dbos
+    key_source: framework             # workflow_id:step_id
+    configs:
+      - {id: native,      agent_code: native}
+      - {id: pydantic_ai, agent_code: pydantic_ai}
+  - name: temporal
+    key_source: framework             # workflow_run_id:activity_id
+    configs:
+      - {id: pydantic_ai, agent_code: pydantic_ai}

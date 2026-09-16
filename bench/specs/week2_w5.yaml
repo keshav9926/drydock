@@ -1,0 +1,64 @@
+# week 2: bench/specs/w5.yaml over every Windows arm, LangGraph's exit config included (not run in
+# the first W5 pages). Everything above the adapters is that file's, unchanged, so the cells are the
+# same cells.
+#
+# W5 — approval_gated_deploy, the human in the loop (§29.1, §13.7 H7).
+#
+# The headline form: the gated effect sits *after* the wait. H7 predicts one applied effect for
+# every arm, LangGraph included — and if it holds, that is the honest result: no difference on the
+# task itself. The cells that can separate the arms are the ones about the *wait*:
+#
+#   approval_delay        the human takes 500 ms, then clicks approve a second time, unkeyed
+#                         (§11.4 spec C's duplicate). One GRANTED per approval id and one deploy
+#                         are the expected result; a runtime that grants twice fails S7.
+#   approval_expiry       the human never answers; `expires_in` in the input decides the run's
+#                         fate. Keel expires by the store's clock; LangGraph has no deadline
+#                         primitive, so its row is whatever it does — printed, not judged.
+#   kill_while_waiting    the process holding the wait is killed, then the human grants to whoever
+#                         comes back. H7: exactly one gated effect for Keel; for LangGraph, one —
+#                         `interrupt()` is checkpointed — with `+1` model call iff the interrupting
+#                         node re-runs. That column is the finding, whichever way it falls.
+#   kill@after:tool_effect the day-3 window, now behind a gate: S7 applies as well as S1.
+#
+# The tier-2 form, where an effect fires in the same node *before* the wait, is `w5_pre.yaml`.
+workload: approval_gated_deploy
+mode: shim
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+landmark: tool:deploy_service
+approval_delay_ms: 500
+# The second click follows the first at once, so both rows are in Keel's inbox when the holder
+# drains: the only order that reaches drain-time dedup at all. A later click lands on a decided or
+# terminal run and is refused at insert, which exercises nothing.
+approval_duplicate_gap_ms: 0
+verifier: [S1, S2, S3, S4, S5, S7, L1, L2]
+
+variants:
+  - {id: GATED, endpoint_dedup: false, resolution: probe}
+
+triggers:
+  - approval_delay@supervisor
+  - approval_expiry@supervisor
+  - kill_while_waiting@supervisor
+  - kill@after:tool_effect
+adapters:
+  - name: keel
+    key_source: framework             # effect_key
+    configs:
+      - {id: default}
+  - name: langgraph
+    key_source: none                  # no documented idempotency-key primitive (§13.6)
+    configs:
+      - {id: sync,  durability: sync}
+      - {id: async, durability: async}
+      - {id: exit,  durability: exit}
+  - name: dbos
+    key_source: framework             # workflow_id:step_id
+    configs:
+      - {id: native,      agent_code: native}
+      - {id: pydantic_ai, agent_code: pydantic_ai}
+  - name: temporal
+    key_source: framework             # workflow_run_id:activity_id
+    configs:
+      - {id: pydantic_ai, agent_code: pydantic_ai}
