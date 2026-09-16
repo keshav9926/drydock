@@ -105,3 +105,17 @@ def test_the_approval_half_prints_the_park_it_read_and_nothing_it_did_not() -> N
     assert "RUN_WAITING{approval} seq 16" in parked[1]
     assert not any("lease released" in line or "runnable_at" in line for line in parked)
     assert "no RUN_WAITING" in _approval_lines([requested])[1]
+
+
+def test_the_demo_cell_runs_at_the_key_source_its_adapter_declares() -> None:
+    """Read from the registered adapter's `key_sources`, not named per arm: an engine arm that declares
+    `framework` runs its demo at F1 like Keel, and one that does not runs at F0."""
+    from crashproof.demo import one_cell
+
+    both, none = frozenset({"none", "framework"}), frozenset({"none"})
+    fault = "kill@after:tool_effect"
+    assert one_cell("keel", "default", "IDEMPOTENT", fault, both).key_source == "framework"
+    assert one_cell("temporal", "pydantic_ai", "IDEMPOTENT", fault, both).key_source == "framework"
+    assert one_cell("langgraph", "sync", "IDEMPOTENT", fault, none).key_source == "none"
+    # The config id is the adapter's own vocabulary, so `pydantic_ai` runs the Pydantic AI row.
+    assert one_cell("dbos", "pydantic_ai", "EXTERNAL", fault, both).settings == {"agent_code": "pydantic_ai"}

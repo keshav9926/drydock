@@ -378,7 +378,7 @@ def demo(
         err.print(f"[red]no adapter {adapter!r}; built: {sorted(_adapters())}[/]")
         raise typer.Exit(2)
     wl = load_named(script.WORKLOAD)
-    cell = script.one_cell(adapter, config, variant, fault)
+    cell = script.one_cell(adapter, config, variant, fault, factory.key_sources)
     trial_dir = out_dir / slug(cell.id) / f"t-{seed}"
 
     async def go() -> Any:

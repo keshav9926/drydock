@@ -41,16 +41,25 @@ CONFIG_SETTINGS = {
     "sync": {"durability": "sync"},
     "async": {"durability": "async"},
     "exit": {"durability": "exit"},
+    # §13.5's axis (DBOS, Temporal). Without it `--config pydantic_ai` named a cell the adapter's
+    # default `agent_code` ran instead.
+    "native": {"agent_code": "native"},
+    "pydantic_ai": {"agent_code": "pydantic_ai"},
 }
 
 
-def one_cell(adapter: str, config: str, variant: str, fault: str) -> Any:
+def one_cell(
+    adapter: str, config: str, variant: str, fault: str, key_sources: frozenset[str] = frozenset({"none"})
+) -> Any:
     """The demo's cell, built through the *matrix* loader rather than beside it.
 
     `kill` at `after:tool_effect` is the only window where the World and the journal can disagree
     about an EXTERNAL effect, which is the whole subject. Expressing it as a one-cell matrix means
     the trigger string is parsed by the same code that parses `bench/specs/matrix_v0.yaml` — a demo
     whose spec is assembled by hand is a demo that can drift from the thing it is demonstrating.
+
+    `key_sources` is the registered adapter's own declaration: the arm runs at `framework` when it
+    declares one, as the published matrices do, and at `none` otherwise — read, not named per arm.
     """
     from crashproof.runner.bench import Matrix
 
@@ -64,7 +73,7 @@ def one_cell(adapter: str, config: str, variant: str, fault: str) -> Any:
         triggers=[fault],
         adapters=[{
             "name": adapter,
-            "key_source": "framework" if adapter == "keel" else "none",
+            "key_source": "framework" if "framework" in key_sources else "none",
             "configs": [{"id": config, **CONFIG_SETTINGS.get(config, {})}],
         }],
     )
