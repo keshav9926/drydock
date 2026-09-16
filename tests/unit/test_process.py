@@ -39,7 +39,13 @@ def test_a_self_freeze_does_not_pass_the_boundary_before_the_thaw(tmp_path, monk
 
     monkeypatch.setattr(process.os, "kill", lambda pid, sig: None)  # a stop that has not reached this thread
     marker = tmp_path / "thaw"
-    threading.Timer(0.3, marker.write_text, args=("1",)).start()
-    started = time.monotonic()
+    thawed_at: list[float] = []
+
+    def thaw() -> None:
+        thawed_at.append(time.monotonic())  # before the write, so a return after the write finds it
+        marker.write_text("1", encoding="utf8")
+
+    threading.Timer(0.3, thaw).start()
     process.freeze_self(marker)
-    assert marker.exists() and time.monotonic() - started >= 0.25
+    # Ordered by the thaw itself, not by a duration: a stalled test thread cannot make this pass or fail.
+    assert thawed_at and time.monotonic() >= thawed_at[0]
