@@ -49,3 +49,7 @@ adapters:
     key_source: framework             # workflow_run_id:activity_id
     configs:
       - {id: pydantic_ai, agent_code: pydantic_ai}
+  - name: restate
+    key_source: framework             # str(restate_context().uuid()), drawn outside the run (WSL only)
+    configs:
+      - {id: pydantic_ai, agent_code: pydantic_ai}
