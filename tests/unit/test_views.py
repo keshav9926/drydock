@@ -95,36 +95,79 @@ def test_the_verdict_is_byte_identical_on_a_second_run() -> None:
     assert canonical() == canonical()
 
 
+REF = {"run_id": "r-1", "step_index": 0, "attempt_no": 1}
+
+
+def _named(journal):
+    """The tool's name is on its STEP_INTENDED, which is how the view knows the attempt was the aimed one."""
+    for e in journal:
+        if e["type"] == "STEP_INTENT" and e["step_index"] == 0:
+            e["body"] = {"name": "create_issue"}
+    return journal
+
+
 def test_placement_says_which_attempt_was_open_when_the_kill_landed() -> None:
     """The diagnostic §11.2 requires beside every published cell. A kill at `after:tool_effect`
     has to land with the effect in the World and the step still open in the journal — the row
     below is what "it landed where it aimed" looks like, and any other shape is a mis-aimed
     schedule rather than a finding."""
-    killed = facts(journal=[
-        event(1, "RUN_CREATED", 0.0),
-        event(2, "STEP_INTENT", 1.0, step=0),
-        event(3, "STEP_ATTEMPT_STARTED", 2.0, step=0),
-        event(4, "RECOVERY_STARTED", 6.0),
-    ])
-    row = views.placement(killed)[0]
+    killed = facts(
+        journal=_named([
+            event(1, "RUN_CREATED", 0.0),
+            event(2, "STEP_INTENT", 1.0, step=0),
+            event(3, "STEP_ATTEMPT_STARTED", 2.0, step=0),
+            event(4, "RECOVERY_STARTED", 6.0),
+        ]),
+        faults=[{**facts().faults[0], "boundary": "after:tool_effect", "landmark": "tool:create_issue",
+                 "sut_ref": REF}],
+    )
+    row = views.placement(killed, {"create_issue": "issues.create"})[0]
     assert row["open_step"] == "0.1", "the attempt the fault interrupted"
     assert row["last_seq_before"] == 3 and row["first_seq_after"] == 4
     assert row["recovery_seq"] == 4, "a successor did come back for it"
     assert row["receipt_before"] == "issues.create#1", "the World has the effect"
     assert row["receipt_after"] is None, "and nothing happened after"
+    assert row["in_window"] is True and row["where"] == "step 0.1 create_issue"
 
 
-def test_placement_reports_a_fault_that_landed_between_steps() -> None:
-    """A kill with no attempt open is a different window and a different recovery path, so the
-    view has to distinguish it rather than print the last attempt it saw."""
+def test_placement_joins_the_journal_on_sut_ref_never_on_two_clocks() -> None:
+    """The store stamps `ts` with its clock and the trigger is the host's. A few milliseconds between
+    them put this kill after a STEP_COMPLETED that the attempt the shim was still inside could not
+    have committed yet (killcriteria-5). The cut is the attempt, not the timestamp."""
     from datetime import UTC, datetime
 
     base = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
-    late = facts(faults=[{**facts().faults[0], "trigger_observed_at": base + 4.5}])
-    row = views.placement(late)[0]
-    assert row["open_step"] is None, "step 0 completed at seq 4, half a second before the fault"
-    assert row["last_type_before"] == "STEP_COMPLETED"
-    assert row["last_seq_before"] == 4
+    skewed = facts(faults=[{**facts().faults[0], "trigger_observed_at": base + 4.5, "sut_ref": REF}])
+    row = views.placement(skewed)[0]
+    assert row["open_step"] == "0.1" and row["last_seq_before"] == 3, "STARTED, not the later outcome"
+    assert row["first_seq_after"] == 4 and row["last_type_before"] == "STEP_ATTEMPT_STARTED"
+
+
+def test_placement_without_sut_ref_leaves_the_journal_columns_empty_and_says_why() -> None:
+    row = views.placement(facts())[0]
+    assert row["last_seq_before"] is None and row["open_step"] is None
+    assert row["join"].startswith("not placeable: no sut_ref")
+    assert row["in_window"] is None and row["where"] == "unobservable"
+
+
+def test_a_checkpointing_runtime_is_placed_on_its_checkpoints_own_clock() -> None:
+    """LangGraph keeps no journal, but each checkpoint's `ts` is stamped in the SUT's process, on the
+    trigger's clock. A kill after the effect is in the window only if no checkpoint landed between
+    the receipt and the trigger — which is K3's question for T3."""
+    from datetime import UTC, datetime, timedelta
+
+    def ckpt(step: int, offset: float) -> dict:
+        ts = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=offset)
+        return {"checkpoint_id": f"c{step}", "ts": ts.isoformat(), "step": step, "source": "loop"}
+
+    fault = {**facts().faults[0], "boundary": "after:tool_return", "landmark": "tool:create_issue"}
+    lg = dict(journal=None, sut_committed=None, sut_effects=None, faults=[fault])
+    endpoints = {"create_issue": "issues.create"}
+    early = views.placement(facts(**lg, sut_checkpoints=[ckpt(1, 1.0), ckpt(2, 6.0)]), endpoints)[0]
+    assert early["in_window"] is True and early["where"] == "after checkpoint step 1"
+    assert (early["checkpoint_before"], early["checkpoint_after"]) == ("step 1 (loop)", "step 2 (loop)")
+    late = views.placement(facts(**lg, sut_checkpoints=[ckpt(1, 1.0), ckpt(2, 3.2)]), endpoints)[0]
+    assert late["in_window"] is False, "the checkpoint was written before the kill landed"
 
 
 def test_the_ledger_judges_one_effect_at_a_time() -> None:

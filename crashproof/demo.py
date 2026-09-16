@@ -6,10 +6,10 @@ That is not a shortcut. A demo that prints what it *intended* to do is a demo th
 it after the runtime stops doing it, and the one thing this repository cannot afford is a
 screenshot that outlives the behaviour it claims.
 
-The script is §26.3's, with the approval half absent rather than faked. The APPROVAL step at #3,
-`RUN_WAITING{WAITING_APPROVAL}`, `keel approve`, the `signals` row and
-`RECOVERY_STARTED{cause=WAKE}` all need the inbox, which is week 2; the demo says so where they
-would have gone rather than printing a sequence the runtime cannot produce.
+The script is §26.3's. Its approval half — the APPROVAL_REQUESTED, the RUN_WAITING park, the WAKE
+recovery and the decision — is printed only from a journal that has one, each line with the seq it
+was read from; the command runs `tool_chain_1_effect`, which gates nothing, and says so where those
+lines would go rather than printing a sequence this trial did not produce.
 
 The output is a BEFORE CRASH / AFTER RESTART pair because that is the shape of the claim. Before:
 the World has the effect and the journal has an attempt with no outcome. After: a different
@@ -104,8 +104,12 @@ def narrate(row: Any, facts: TrialFacts, *, row_path: Any = None, canonical: boo
     events = sorted(facts.journal or [], key=lambda e: e["seq"])
     fault = (placement(facts) or [{}])[0]
     cut = float(fault.get("trigger_observed_at") or 0.0)
-    before = [e for e in events if not cut or iso(e["ts"]) <= cut]
-    after = [e for e in events if cut and iso(e["ts"]) > cut]
+    # The journal is split where the fault landed in it — the attempt its `sut_ref` names — when the
+    # row has one. A trial recorded before rows carried `sut_ref` falls back to the store's
+    # timestamps, which is a comparison across two clocks, and line [9] prints no seq for it.
+    seq = fault.get("last_seq_before")
+    before = [e for e in events if (e["seq"] <= seq if seq is not None else not cut or iso(e["ts"]) <= cut)]
+    after = [e for e in events if (e["seq"] > seq if seq is not None else cut and iso(e["ts"]) > cut)]
     receipts = sorted(facts.world_receipts, key=lambda r: iso(r["ts"]))
     target = _required(facts)
 
@@ -194,6 +198,9 @@ def _before(
         f"  landmark {fault.get('landmark', '—')}  → fault-log row fsync → process gone",
         f"     at the cut: last committed seq {_n(fault.get('last_seq_before'))}"
         f" · open step {_n(fault.get('open_step'))} · no outcome"
+        f" · World's last receipt {_n(fault.get('receipt_before'))}"
+        if fault.get("last_seq_before") is not None or facts.journal is None
+        else f"     at the cut: journal {fault.get('join', '—')}"
         f" · World's last receipt {_n(fault.get('receipt_before'))}",
     ]
     return lines
@@ -216,12 +223,17 @@ def _approval_lines(events: list[dict[str, Any]]) -> list[str]:
         (e for e in events if e["type"] == "RECOVERY_STARTED" and e["body"].get("cause") == "WAKE"),
         None,
     )
+    waiting = next(
+        (e for e in events if e["type"] == "RUN_WAITING" and e["seq"] > requested["seq"]), None
+    )
     out = [
         f"     approval #{body['step_index']} requested seq {requested['seq']}"
         f"  binds {str(body.get('binds_effect_key') or '—')[:12]}"
         "   — the effect it authorises, named before anyone decides",
-        "     RUN_WAITING{approval} · lease released · runnable_at NULL"
-        "   — zero compute *and* zero ticks: nothing polls it",
+        f"     RUN_WAITING{{{waiting['body'].get('reason')}}} seq {waiting['seq']}"
+        "   — the park, as the journal has it"
+        if waiting is not None
+        else "     no RUN_WAITING after the request in this journal",
     ]
     if wake is not None:
         out.append(

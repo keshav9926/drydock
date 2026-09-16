@@ -7,6 +7,8 @@
     demo     one crash, one recovery, read back off the trial's own artefacts
     verify   the verifier re-run over facts already on disk — nothing executed
     compare  two arms, paired per (location, fault)
+    agree    the same cells from the shim and from the proxy, paired per (cell, seed)
+    placement  §19.5's placement histogram and K3, from the trial directories
     world    the World alone, for adapter development
 
 `--seed N --seeds K` means seeds N … N+K-1, one trial per seed, trial id `t-<seed>`. There is no
@@ -452,19 +454,24 @@ def verify(
                 table.add_row(name, f"[{colour}]{finding.verdict}[/]", finding.detail)
         out.print(table)
         if placement:
-            rows = views.placement(facts)
+            rows = views.placement(facts, _endpoints(trial_dir))
             p = Table(box=None, title="placement — where the schedule aimed, and where it landed")
             for col in ("fault", "boundary", "landmark", "#", "rec", "ran", "last seq",
-                        "open step", "next seq", "recovery", "receipt before", "receipt after"):
+                        "open step", "next seq", "recovery", "checkpoint before", "checkpoint after",
+                        "receipt before", "receipt after", "in window"):
                 p.add_column(col)
             for r in rows:
                 p.add_row(
                     r["type"], r["boundary"], r["landmark"], str(r["occurrence"]),
                     str(r["recovery_index"]), "yes" if r["executed"] else "[red]no[/]",
                     _n(r["last_seq_before"]), _n(r["open_step"]), _n(r["first_seq_after"]),
-                    _n(r["recovery_seq"]), _n(r["receipt_before"]), _n(r["receipt_after"]),
+                    _n(r["recovery_seq"]), _n(r["checkpoint_before"]), _n(r["checkpoint_after"]),
+                    _n(r["receipt_before"]), _n(r["receipt_after"]),
+                    {True: "[green]yes[/]", False: "[red]no[/]"}.get(r["in_window"], "—"),
                 )
             out.print(p)
+            for r in rows:
+                err.print(f"{r['fault_id']}: journal join — {r['join']}")
             if not rows:
                 err.print("[yellow]no faults fired in this trial[/]")
         if effects:
@@ -547,6 +554,22 @@ def _n(value: Any) -> str:
     return "—" if value is None else str(value)
 
 
+def _endpoints(trial_dir: Path) -> dict[str, str] | None:
+    """Tool name → World endpoint for the trial's own workload, read from its `spec.yaml`, so the
+    placement view can aim at the receipt of the tool under test and not at the first of any kind."""
+    import yaml
+
+    spec = trial_dir / "spec.yaml"
+    if not spec.exists():
+        return None
+    doc = yaml.safe_load(spec.read_text(encoding="utf8")) or {}
+    try:
+        workload = load_named(doc["workload"])
+        return {t.name: t.endpoint for t in workload.tools_for(doc.get("workload_variant"))}
+    except (KeyError, OSError):
+        return None
+
+
 def _verdict(value: str) -> str:
     return {"PASS": "[green]PASS[/]", "FAIL": "[red]FAIL[/]"}.get(value, "[yellow]N/A[/]")
 
@@ -587,6 +610,34 @@ def compare(
     # nothing, whether the reason was the sample size or the confound.
     if strict and not any(r.claimed() for r in result.rows):
         raise typer.Exit(EXIT_TOO_NOISY)
+
+
+@app.command()
+def placement(
+    results: Annotated[Path, typer.Argument(help="a results directory whose trial directories are present")],
+    out_path: Annotated[Path | None, typer.Option("--out")] = None,
+) -> None:
+    """§19.5's placement histogram and K3's two numbers, per cell, from the trial directories.
+
+    Not in §25.3's tree: the report-only view §19.5 names, as its own command because it reads the
+    trial directories (`facts.json`) and a page folded from rows cannot. Where a fault cannot be
+    placed from the artefacts the page says so and computes no K3 verdict over it. Exits 0: K3 is a
+    kill criterion a person decides on, not an invariant.
+    """
+    from crashproof.report.placement import placements, render
+    from crashproof.runner.store import ResultStore
+
+    rows = list(ResultStore(results).rows())
+    if not rows:
+        err.print(f"[red]no results in {results}[/]")
+        raise typer.Exit(1)
+    page = render(placements(results), sources=[(results.as_posix(), rows)])
+    if out_path is None:
+        out.print(page, highlight=False, markup=False, soft_wrap=True)
+    else:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(page, encoding="utf8")
+        err.print(f"wrote {out_path}")
 
 
 @app.command()

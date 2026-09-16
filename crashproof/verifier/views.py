@@ -31,51 +31,142 @@ from crashproof.verifier.invariants import AT_MOST_ONE_APPLIED, TrialFacts, iso
 OUTCOME_TYPES = ("STEP_COMPLETED", "STEP_FAILED", "STEP_AMBIGUOUS", "STEP_RESOLVED", "STEP_CANCELLED")
 
 
-def placement(facts: TrialFacts) -> list[dict[str, Any]]:
+#: The boundaries K3's window is defined at: a tool call, seen from the World and from the SUT.
+WINDOW_BOUNDARIES = ("before:tool_call", "after:tool_effect", "after:tool_return")
+
+
+def placement(facts: TrialFacts, endpoints: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """One row per fired fault: where the schedule aimed, and where it landed.
 
-    The journal coordinates are the ones a reader needs to tell a kill *inside* an open attempt
-    from one between two steps — the last committed seq before the fault, whatever attempt was
-    open at that instant, and the first seq of the epoch that came after. The World's last receipt
-    before and first receipt after put the same instant on the other side of the wire, which is
-    the only way to see a kill that landed after the effect but before the journal heard.
+    Each side of the join is read on its own clock, never across them:
+
+    - **the journal, causally.** Journal timestamps are the store's clock and `trigger_observed_at`
+      is the SUT host's, and a few milliseconds between them put a kill after a commit that could
+      not have happened yet. So the cut is the fault row's `sut_ref` — the attempt the injector was
+      inside when it fired (§11.7) — and the last committed record at firing time is that attempt's
+      STEP_ATTEMPT_STARTED (§11.8: the outcome seq never exists for it). Without a `sut_ref` the
+      journal columns are empty and `join` says why.
+    - **checkpoints, where the runtime keeps them instead** (LangGraph): each checkpoint's `ts` is
+      stamped in the SUT's process, on the same host clock as the trigger.
+    - **the World**, whose receipt timestamps are the same host clock.
+
+    `in_window` is K3's test (§30): the trigger fell between the World receipt of the aimed tool and
+    the SUT's next committed record — for `before:tool_call`, before any receipt of it. `None` where
+    one side is not observable, which is never counted as either. `where` is the histogram bucket
+    (§19.5 view 4). `endpoints` maps the workload's tool names to World endpoints; without it the
+    receipt side cannot be aimed and `in_window` is `None`.
     """
     events = sorted(facts.journal or [], key=lambda e: e["seq"])
     receipts = sorted(facts.world_receipts, key=lambda r: iso(r["ts"]))
+    checkpoints = sorted(facts.sut_checkpoints or [], key=lambda c: iso(c["ts"]))
     rows = []
     for fault in facts.faults:
         at = float(fault.get("trigger_observed_at") or 0.0)
-        before = [e for e in events if at and iso(e["ts"]) <= at]
-        after = [e for e in events if at and iso(e["ts"]) > at]
-        open_attempt = _open_attempt(before)
-        rows.append(
-            {
-                "fault_id": fault.get("fault_id", ""),
-                "type": fault.get("type", ""),
-                "boundary": fault.get("boundary", ""),
-                "landmark": fault.get("landmark", ""),
-                "occurrence": fault.get("occurrence", 0),
-                "recovery_index": fault.get("recovery_index", 0),
-                "executed": fault.get("executed", True),
-                "trigger_observed_at": at,
-                "last_seq_before": before[-1]["seq"] if before else None,
-                "last_type_before": before[-1]["type"] if before else None,
-                "open_step": open_attempt,
-                "first_seq_after": after[0]["seq"] if after else None,
-                # The successor's own first append. A fault with no RECOVERY_STARTED after it
-                # either did not kill anything or nothing came back for the work it interrupted.
-                "recovery_seq": next(
-                    (e["seq"] for e in after if e["type"] == "RECOVERY_STARTED"), None
-                ),
-                "receipt_before": _receipt_label(
-                    [r for r in receipts if at and iso(r["ts"]) <= at], -1
-                ),
-                "receipt_after": _receipt_label(
-                    [r for r in receipts if at and iso(r["ts"]) > at], 0
-                ),
-            }
-        )
+        cut, join = _cut(facts, events, fault.get("sut_ref") or {})
+        before = [e for e in events if cut is not None and e["seq"] <= cut]
+        after = [e for e in events if cut is not None and e["seq"] > cut]
+        open_attempt = _open_attempt(before) if cut is not None else None
+        last_ckpt = [c for c in checkpoints if at and iso(c["ts"]) <= at]
+        next_ckpt = [c for c in checkpoints if at and iso(c["ts"]) > at]
+        row = {
+            "fault_id": fault.get("fault_id", ""),
+            "type": fault.get("type", ""),
+            "boundary": fault.get("boundary", ""),
+            "landmark": fault.get("landmark", ""),
+            "occurrence": fault.get("occurrence", 0),
+            "recovery_index": fault.get("recovery_index", 0),
+            "executed": fault.get("executed", True),
+            "trigger_observed_at": at,
+            "join": join,
+            "last_seq_before": before[-1]["seq"] if before else None,
+            "last_type_before": before[-1]["type"] if before else None,
+            "open_step": open_attempt,
+            "first_seq_after": after[0]["seq"] if after else None,
+            # The successor's own first append. A fault with no RECOVERY_STARTED after it
+            # either did not kill anything or nothing came back for the work it interrupted.
+            "recovery_seq": next((e["seq"] for e in after if e["type"] == "RECOVERY_STARTED"), None),
+            "checkpoint_before": _checkpoint_label(last_ckpt[-1]) if last_ckpt else None,
+            "checkpoint_after": _checkpoint_label(next_ckpt[0]) if next_ckpt else None,
+            "receipt_before": _receipt_label([r for r in receipts if at and iso(r["ts"]) <= at], -1),
+            "receipt_after": _receipt_label([r for r in receipts if at and iso(r["ts"]) > at], 0),
+        }
+        row["where"] = _where(facts, events, row, open_attempt, last_ckpt, cut)
+        row["in_window"] = _in_window(facts, events, fault, row, receipts, checkpoints, endpoints, cut)
+        rows.append(row)
     return rows
+
+
+def _cut(facts: TrialFacts, events: list[dict[str, Any]], ref: dict[str, Any]) -> tuple[int | None, str]:
+    """The last committed seq at firing time, from `sut_ref`, and how it was found."""
+    if facts.journal is None:
+        return None, "no journal"
+    if ref.get("seq") is not None:
+        return int(ref["seq"]), f"sut_ref seq {ref['seq']}"
+    if ref.get("step_index") is None:
+        return None, "not placeable: no sut_ref (the journal's clock is not the trigger's)"
+    started = next(
+        (
+            e for e in events
+            if e["type"] == "STEP_ATTEMPT_STARTED"
+            and e.get("step_index") == ref["step_index"]
+            and e.get("attempt_no") == ref.get("attempt_no")
+        ),
+        None,
+    )
+    if started is None:
+        return None, f"not placeable: sut_ref attempt {ref['step_index']}.{ref.get('attempt_no')} not in the journal"
+    return started["seq"], f"sut_ref attempt {ref['step_index']}.{ref.get('attempt_no')} = seq {started['seq']}"
+
+
+def _step_name(events: list[dict[str, Any]], step: int | None) -> str:
+    intent = next(
+        (e for e in events if e["type"] in ("STEP_INTENDED", "STEP_INTENT") and e.get("step_index") == step),
+        None,
+    )
+    return str((intent or {}).get("body", {}).get("name") or "")
+
+
+def _where(facts, events, row, open_attempt, last_ckpt, cut) -> str:
+    if cut is not None:
+        if open_attempt is None:
+            return "between steps"
+        step = int(open_attempt.split(".")[0])
+        return f"step {open_attempt} {_step_name(events, step)}".rstrip()
+    if facts.sut_checkpoints is not None:
+        return f"after checkpoint step {last_ckpt[-1].get('step')}" if last_ckpt else "before the first checkpoint"
+    return "unobservable"
+
+
+def _in_window(facts, events, fault, row, receipts, checkpoints, endpoints, cut) -> bool | None:
+    boundary, landmark = fault.get("boundary", ""), str(fault.get("landmark", ""))
+    kind, _, tool = landmark.partition(":")
+    if boundary not in WINDOW_BOUNDARIES or kind != "tool" or not endpoints or tool not in endpoints:
+        return None
+    at = row["trigger_observed_at"]
+    mine = [r for r in receipts if r.get("endpoint") == endpoints[tool]]
+    landed = [r for r in mine if iso(r["ts"]) <= at]
+    if boundary == "before:tool_call":
+        receipt_side = len(landed) < int(fault.get("occurrence") or 1)
+    else:
+        receipt_side = bool(landed)
+    if cut is not None:
+        # sut_ref pins the attempt the injector was inside, so nothing of it was committed after
+        # the trigger that the journal could have placed before it. What is left to check is that
+        # the attempt was the aimed tool's, still open.
+        if row["open_step"] is None:
+            return False
+        return receipt_side and _step_name(events, int(row["open_step"].split(".")[0])) == tool
+    if facts.sut_checkpoints is not None:
+        if not receipt_side or boundary == "before:tool_call":
+            return receipt_side
+        receipt_ts = iso(landed[-1]["ts"])
+        # Between the receipt and the next committed record: no checkpoint landed in between.
+        return not any(receipt_ts < iso(c["ts"]) <= at for c in checkpoints)
+    return None
+
+
+def _checkpoint_label(checkpoint: dict[str, Any]) -> str:
+    return f"step {checkpoint.get('step')} ({checkpoint.get('source') or '—'})"
 
 
 def _open_attempt(before: list[dict[str, Any]]) -> str | None:

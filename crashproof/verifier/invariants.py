@@ -100,6 +100,10 @@ class TrialFacts:
     #: The workload's approval-gated tools, name → World endpoint. S7 is judged on these: an applied
     #: gated effect with no approval behind it is invisible to a check driven by the journal alone.
     gated_tools: dict[str, str] = field(default_factory=dict)
+    #: The runtime's checkpoints, where it keeps checkpoints instead of a journal: `{checkpoint_id,
+    #: ts, step, source}`, `ts` stamped in the SUT's own process. No verdict reads them; the
+    #: placement view does, because they are the one committed record on the trigger's clock.
+    sut_checkpoints: list[dict[str, Any]] | None = None
 
 
 def dump(facts: TrialFacts) -> dict[str, Any]:

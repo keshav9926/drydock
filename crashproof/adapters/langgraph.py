@@ -335,10 +335,22 @@ class LangGraphAdapter:
         return done.read_text(encoding="utf8").strip() if done.exists() else "RUNNING"
 
     async def collect(self, handle: SutHandle) -> CanonicalResult:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
         status_file = handle.trial_dir / "sut" / "status"
         answer_file = handle.trial_dir / "sut" / "answer.json"
         status = status_file.read_text(encoding="utf8").strip() if status_file.exists() else "UNKNOWN"
         answer = json.loads(answer_file.read_text(encoding="utf8")) if answer_file.exists() else None
+        # The checkpoints, read before `stop_dependency` drops the database: the one committed
+        # record this runtime keeps, and the only one on the trigger's clock (§19.5 placement).
+        export = handle.trial_dir / "sut" / "checkpoints.json"
+        thread_id = handle.run_ref or (handle.trial_dir / "sut" / "thread_id").read_text(encoding="utf8").strip()
+        try:
+            async with AsyncPostgresSaver.from_conn_string(handle.dependency.dsn or "") as saver:
+                snapshot: dict[str, Any] = {"checkpoints": await checkpoint_rows(saver, thread_id)}
+        except Exception as exc:  # noqa: BLE001 - a placement input missing, never a failed trial
+            snapshot = {"checkpoints": None, "error": f"{type(exc).__name__}: {exc}"}
+        export.write_text(json.dumps(snapshot, indent=2), encoding="utf8")
         return CanonicalResult(
             status=status,  # type: ignore[arg-type]
             result=answer,
@@ -347,10 +359,28 @@ class LangGraphAdapter:
             # keep. So S2 and C3 are N/A here — named individually, and never a PASS for having
             # nothing to check.
             committed_effects=None,
-            export=None,
+            export=export,
             model_calls=None,
             tokens=None,
         )
+
+
+async def checkpoint_rows(saver: Any, thread_id: str) -> list[dict[str, Any]]:
+    """Every checkpoint on the thread, oldest first, through the documented `alist` and the
+    documented `Checkpoint.ts` ("the timestamp of the checkpoint in ISO 8601 format"). The SUT's own
+    process stamps it when it creates the checkpoint, just before writing it, so it is on the same
+    host clock as a fault's `trigger_observed_at`. A thin read of what the framework persisted:
+    only checkpoints that were written are here, and nothing about them is inferred."""
+    rows = [
+        {
+            "checkpoint_id": t.config["configurable"]["checkpoint_id"],
+            "ts": t.checkpoint["ts"],
+            "step": (t.metadata or {}).get("step"),
+            "source": (t.metadata or {}).get("source"),
+        }
+        async for t in saver.alist({"configurable": {"thread_id": thread_id}})
+    ]
+    return sorted(rows, key=lambda r: r["ts"])
 
 
 def _db_name_for(trial_dir: Path) -> str:

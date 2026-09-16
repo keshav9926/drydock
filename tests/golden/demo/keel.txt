@@ -15,7 +15,7 @@ BEFORE CRASH
 [7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
 [8]  World receipt issues.create#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
 [9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
-     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt issues.create#1
+     at the cut: journal not placeable: no sut_ref (the journal's clock is not the trigger's) · World's last receipt issues.create#1
 
 ────────────────────────────────────────────────────────────────────────
 AFTER RESTART

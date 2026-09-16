@@ -23,6 +23,7 @@ so the matrix says which arms had one.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -64,6 +65,18 @@ ENV_ROLE = "CRASHPROOF_KEEL_ROLE"  # "worker" | "successor": the second observer
 # the run and therefore the one the fault lands in. It is a bias, not a guarantee — a trial whose
 # schedule fired nothing is marked invalid rather than scored (§11.7).
 SUCCESSOR_START_DELAY_S = 1.5
+
+#: The attempt a tool call belongs to, for the fault row's `sut_ref` (§11.7): `{run_id, step_index,
+#: attempt_no}`. Set by the tool around its instrumented call and read by the shim when it records a
+#: firing — on the worker thread and in the `call_soon` callback alike, both of which run in a copy
+#: of the tool's context. Its STEP_ATTEMPT_STARTED is the last committed record at every tool
+#: boundary (the write-ahead rule: nothing of an attempt commits before its dispatch returns), so the
+#: placement view joins on it causally instead of comparing the store's clock with the host's.
+SUT_REF: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("crashproof_sut_ref", default={})
+
+
+def sut_ref() -> dict[str, Any]:
+    return dict(SUT_REF.get())
 
 
 # =============================================================================
@@ -117,6 +130,9 @@ def _build_tool(
         from crashproof.world.client import WorldError
 
         key = tctx.effect_key if sends_key else None
+        token = SUT_REF.set(
+            {"run_id": str(tctx.run_id), "step_index": tctx.step_index, "attempt_no": tctx.attempt_no}
+        )
         try:
             if shim is not None:
                 return await shim.tool_call(decl.name, endpoint, args, effect_key=key)
@@ -132,6 +148,8 @@ def _build_tool(
             # *answer*, and nothing is known about the effect — §8.5's transport ambiguity, which
             # the class disposes of exactly as it disposes of a timeout.
             raise UnknownOutcome(f"{type(exc).__name__}: {exc}") from exc
+        finally:
+            SUT_REF.reset(token)
 
     if decl.resolution == "probe":
 
@@ -679,6 +697,7 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         recovery_index=cursor.recovery_index,
         world=world,
         observe_only=role != "worker" or os.environ.get("CRASHPROOF_MODE") == "proxy",
+        sut_ref=sut_ref,
     )
 
     app = build_app(workload, variant, world, shim, os.environ[ENV_DSN])

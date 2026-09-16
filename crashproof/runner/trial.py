@@ -179,6 +179,7 @@ async def run_trial(
             replay=replay,
             sut_effects=_effects(result.export),
             gated_tools=_gated(workload, variant),
+            sut_checkpoints=_export(result.export, "checkpoints"),
         )
         verdicts = invariants.verify(facts)
         # The verifier's inputs, in the trial directory, before the verdict computed from them.
@@ -311,21 +312,23 @@ def _receipt(r: Any) -> dict[str, Any]:
 
 
 def _journal(export: Path | None) -> list[dict[str, Any]] | None:
-    if export is None or not export.exists():
-        return None
-    import json
-
-    return json.loads(export.read_text(encoding="utf8")).get("events")
+    return _export(export, "events")
 
 
 def _effects(export: Path | None) -> list[dict[str, Any]] | None:
     """The runtime's own effect ledger, where it keeps one. A runtime with no such table has none
     to export, and §19.5's journal columns print empty for it rather than being invented."""
+    return _export(export, "effects")
+
+
+def _export(export: Path | None, key: str) -> list[dict[str, Any]] | None:
+    """One section of the adapter's export — journal events, effect rows, checkpoints — or `None`
+    where this runtime keeps no such thing."""
     if export is None or not export.exists():
         return None
     import json
 
-    return json.loads(export.read_text(encoding="utf8")).get("effects")
+    return json.loads(export.read_text(encoding="utf8")).get(key)
 
 
 def _write_spec(path: Path, spec: FaultSpec) -> None:
