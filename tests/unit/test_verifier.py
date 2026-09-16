@@ -136,6 +136,100 @@ def test_restarts_past_the_bound_are_a_liveness_failure() -> None:
     assert v.findings["L2"].verdict == "FAIL"
 
 
+# --- S7: approvals, judged against the World ----------------------------------
+KEY = "ac35c47458aae53e26f5c95ce780d840"  # a real binds_effect_key: 32 hex, never a World label
+
+
+def gated(decision: str | None = "granted", applied: int = 1, *, requested: bool = True,
+          label: str | None = "deploy.service#1", **kw) -> TrialFacts:
+    """A W5 trial as its facts.json has it: the approval names an effect key, the effect ledger maps
+    that key to a World label, and the World counts the label."""
+    journal = [STARTED]
+    if requested:
+        journal.append({"seq": 3, "type": "APPROVAL_REQUESTED", "ts": 99.0, "step_index": 3,
+                        "body": {"step_index": 3, "approval_id": "a1", "binds_effect_key": KEY}})
+    if decision is not None:
+        journal.append({"seq": 4, "type": "APPROVAL_DECIDED", "ts": 99.5, "step_index": 3,
+                        "body": {"step_index": 3, "approval_id": "a1", "decision": decision}})
+    return facts(
+        journal=journal,
+        world_applied={"deploy.service#1": applied} if applied else {},
+        world_receipts=[],
+        required_effects=(),
+        sut_effects=[{"effect_key": KEY, "external_ref": label}] if label is not None else [],
+        gated_tools={"deploy_service": "deploy.service"},
+        **kw,
+    )
+
+
+def test_one_granted_approval_and_one_deploy_passes_s7() -> None:
+    assert verify(gated()).findings["S7"].verdict == "PASS"
+
+
+def test_two_deploys_under_one_approval_fail_s7_though_s1_passes_against_the_claim() -> None:
+    v = verify(gated(applied=2))
+    assert v.findings["S1"].verdict == "PASS", "EXTERNAL is claimed at_least_once"
+    assert v.findings["S7"].verdict == "FAIL"
+    assert v.findings["S7"].counterexample == {"approval_id": {"a1": {"deploy.service#1": 2}}}
+
+
+def test_a_deploy_under_an_expired_approval_fails_s7() -> None:
+    v = verify(gated(decision="expired"))
+    assert v.findings["S7"].verdict == "FAIL"
+    assert "without a GRANTED approval" in v.findings["S7"].detail
+
+
+def test_a_deploy_under_an_undecided_approval_fails_s7() -> None:
+    v = verify(gated(decision=None))
+    assert v.findings["S7"].verdict == "FAIL"
+    assert v.findings["S7"].counterexample["approval_id"]["a1"]["decision"] == "undecided"
+
+
+def test_a_gated_deploy_with_no_approval_at_all_fails_s7_rather_than_gating_nothing() -> None:
+    """The violation that matters most. Driven by the APPROVAL_REQUESTED events alone, this trial
+    read "this workload gates nothing" — and a cell folds that N/A into a PASS."""
+    v = verify(gated(decision=None, requested=False, label=None))
+    assert v.findings["S7"].verdict == "FAIL"
+    assert "no GRANTED approval bound" in v.findings["S7"].detail
+
+
+def test_an_unlabelled_grant_accounts_for_one_deploy_and_no_more() -> None:
+    """Started, applied, never resolved to a label (escalated): the grant still accounts for the one
+    application on the gated endpoint, and a second is unapproved."""
+    assert verify(gated(label=None)).findings["S7"].verdict == "PASS"
+    assert verify(gated(label=None, applied=2)).findings["S7"].verdict == "FAIL"
+    assert verify(gated(decision="rejected", label=None)).findings["S7"].verdict == "FAIL"
+
+
+def test_an_approval_decided_twice_fails_s7() -> None:
+    f = gated()
+    f.journal.append({"seq": 5, "type": "APPROVAL_DECIDED", "ts": 99.6, "step_index": 3,
+                      "body": {"step_index": 3, "approval_id": "a1", "decision": "granted"}})
+    assert verify(f).findings["S7"].counterexample == {"approval_id": {"a1": 2}}
+
+
+def test_s7_without_a_journal_names_the_missing_input() -> None:
+    f = gated()
+    f.journal = None
+    v = verify(f)
+    assert v.findings["S7"].verdict == "N/A" and "no journal" in v.findings["S7"].detail
+
+
+def test_expiry_forbids_the_deploy_for_every_arm_through_logical_correctness() -> None:
+    """S7 needs a journal; the forbidden label on the spec does not. A runtime with no journal that
+    deploys under an expired wait is still not logically correct."""
+    from crashproof.runner.bench import Matrix
+
+    m = Matrix.load("bench/specs/w5.yaml")
+    spec = next(c.spec for c in m.cells() if c.trigger == "approval_expiry@supervisor")
+    common = dict(world_receipts=[], sut_committed=None, required_effects=(), status="COMPLETED",
+                  expected_status="COMPLETED", expected_world_state=dict(spec.expected_world_state),
+                  faults=[], t_restarts=[], wall_ms=1, model_calls=None, tokens=None,
+                  storage_bytes=None, detect_ms=None, verdicts={})
+    assert metrics.compute(world_applied={}, **common).logical_correctness == 1
+    assert metrics.compute(world_applied={"deploy.service#1": 1}, **common).logical_correctness == 0
+
+
 # --- metrics -----------------------------------------------------------------
 def test_duplicate_effects_and_receipts_are_counted_apart() -> None:
     m = metrics.compute(

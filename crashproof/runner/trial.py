@@ -175,6 +175,7 @@ async def run_trial(
             reached_terminal=sup.terminal,
             replay=replay,
             sut_effects=_effects(result.export),
+            gated_tools=_gated(workload, variant),
         )
         verdicts = invariants.verify(facts)
         # The verifier's inputs, in the trial directory, before the verdict computed from them.
@@ -268,6 +269,11 @@ def _class_under_test(workload: Workload, variant: str) -> str:
         if decl.effect_class != "PURE":
             return decl.effect_class
     return "PURE"
+
+
+def _gated(workload: Workload, variant: str) -> dict[str, str]:
+    endpoints = {t.name: t.endpoint for t in workload.tools_for(variant)}
+    return {name: endpoints[name] for name in workload.gated_tools()}
 
 
 def _receipt(r: Any) -> dict[str, Any]:

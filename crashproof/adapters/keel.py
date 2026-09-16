@@ -480,11 +480,23 @@ class KeelAdapter:
         claims it, and the decision is journaled by *that* holder at its drain — which is why a
         kill during the wait followed by a grant still yields exactly one gated effect: the grant
         was never in a process's memory to lose.
+
+        The row names the gate it decides, as a person approving *this* request would: the open
+        approval, or — once nothing is open — the most recent one. A second click (§11.4 C) resolves
+        to the same id and is sent exactly like the first, unkeyed, so a runtime that applied it
+        would be granting one approval twice; Keel journals it `SIGNAL_IGNORED{approval_terminal}`.
         """
+        from keel.state.fold import fold
+
         run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()
-        return await self._client(handle).signal(
-            uuid.UUID(run_ref), decision, {"by": by}, source="api:harness"
-        )
+        app = self._client(handle)
+        run_id = uuid.UUID(run_ref)
+        approvals = list(fold(await app.events(run_id)).approvals.values())
+        open_ = [a for a in approvals if a.state == "REQUESTED"]
+        payload: dict[str, Any] = {"by": by}
+        if open_ or approvals:
+            payload["approval_id"] = str((open_ or approvals)[-1].approval_id)
+        return await app.signal(run_id, decision, payload, source="api:harness")
 
     async def collect(self, handle: SutHandle) -> CanonicalResult:
         run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()

@@ -65,7 +65,7 @@ def test_supervisor_faults_are_aimed_at_the_wait_and_carry_their_parameters() ->
 
     delay = expand(cells["approval_delay@supervisor"].spec, 7, w).entries
     assert [(e.boundary, e.landmark, e.params) for e in delay] == [
-        ("supervisor", "approval:*", {"delay_ms": 500.0})
+        ("supervisor", "approval:*", {"delay_ms": 500.0, "duplicate": True, "duplicate_gap_ms": 0})
     ]
     kill = expand(cells["kill@after:tool_effect"].spec, 7, w).entries
     assert kill[0].landmark == "tool:deploy_service", "the matrix's own landmark for the day-3 window"
@@ -78,7 +78,8 @@ def test_expiry_changes_what_correct_looks_like_and_the_spec_hash_says_so() -> N
     m = Matrix.load("bench/specs/w5.yaml")
     cells = {c.trigger: c for c in m.cells() if c.adapter == "keel"}
     expiry, delay = cells["approval_expiry@supervisor"].spec, cells["approval_delay@supervisor"].spec
-    assert expiry.expected_effects == () and expiry.expected_world_state == {}
+    assert expiry.expected_effects == ()
+    assert expiry.expected_world_state == {"deploy.service#1": 0}, "the forbidden label, stated"
     assert delay.expected_effects is None, "every other cell defers to the workload's variant"
     assert expiry.spec_hash != delay.spec_hash
 
@@ -106,8 +107,12 @@ class _Sut:
     argv = [sys.executable, "-c", "import time; time.sleep(60)"]
 
 
-def _supervisor(tmp_path, trigger: str, status: list[str], granted: list[float]) -> Supervisor:
+def _supervisor(
+    tmp_path, trigger: str, status: list[str], granted: list[float], *, duplicate: bool = False
+) -> Supervisor:
     m = Matrix.load("bench/specs/w5.yaml")
+    if not duplicate:
+        m.approval_duplicate_gap_ms = None
     cell = next(c for c in m.cells() if c.adapter == "keel" and c.trigger == trigger)
     schedule = expand(cell.spec, 7, load_named(m.workload))
     trial = TrialDir(tmp_path / "t-7", fresh=True)
@@ -145,6 +150,25 @@ async def test_the_human_grants_exactly_once(tmp_path) -> None:
     assert len(granted) == 1, "a human clicks once; needing it twice is the runtime's finding"
     rows = sup.trial.faults()
     assert [r.type for r in rows] == ["approval_delay"], "the delay fired, and is on record"
+
+
+async def test_the_duplicate_click_is_sent_once_even_after_the_run_is_over(tmp_path) -> None:
+    """§11.4 C: the same approve again, unkeyed. It is sent whatever the run did in the gap — a
+    trial that ended first would not have offered the runtime the chance to grant twice — and the
+    fault reads as executed only once the second click actually went out."""
+    status, granted = ["WAITING"], []
+    sup = _supervisor(tmp_path, "approval_delay@supervisor", status, granted, duplicate=True)
+    sup._spawn(0)
+    try:
+        await _drive(sup, 8, gap=0.1)
+        assert len(granted) == 2, "the click, and the duplicate"
+        status[0] = "COMPLETED"
+        await _drive(sup, 5, gap=0.05)
+    finally:
+        sup._stop_all()
+    [row] = sup.trial.faults()
+    assert row.params["duplicate"] is True and len(granted) == 2
+    assert sup.executed_flags() == {row.fault_id: True}
 
 
 async def test_the_human_waits_out_the_delay_before_granting(tmp_path) -> None:

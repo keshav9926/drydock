@@ -483,6 +483,12 @@ async def run_gated_cell(cell: Cell) -> Result:
                 faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
                 restarts=2 if result.recovered else 1,
                 replay=replay.as_dict(),
+                # S7 reads "applied under this approval" through the effect ledger's World label.
+                sut_effects=[
+                    {"effect_key": e.effect_key, "external_ref": e.external_ref}
+                    for e in await k.journal.effects(handle.run_id)
+                ],
+                gated_tools={"create_issue": identity.rpartition("#")[0]},
             )
         )
         judged = (*JUDGED, "S7")

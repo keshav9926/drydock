@@ -16,6 +16,7 @@ max_recoveries: 3
 timeout: 60
 landmark: tool:deploy_service
 approval_delay_ms: 500
+approval_duplicate_gap_ms: 0  # §11.4 C's second, unkeyed click; see w5.yaml
 verifier: [S1, S2, S3, S4, S5, S7, L1, L2]
 
 variants:

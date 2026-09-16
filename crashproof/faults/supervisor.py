@@ -52,6 +52,8 @@ class SupervisorResult:
     terminal: bool = False
     t_restarts: list[float] = field(default_factory=list)
     thawed: list[dict[str, Any]] = field(default_factory=list)
+    #: `approval_delay` faults whose second, unkeyed approve was actually sent (§11.4 C).
+    duplicates: list[str] = field(default_factory=list)
     started_at: float = 0.0
     ended_at: float = 0.0
 
@@ -94,6 +96,7 @@ class Supervisor:
         self._logs: list[Any] = []
         self._waiting_since: float | None = None
         self._granted = False
+        self._duplicate_at: float | None = None
         self._waiting_faults = [e for e in schedule.entries if e.boundary == "supervisor"]
 
     # --- the loop ------------------------------------------------------------
@@ -108,7 +111,9 @@ class Supervisor:
             while time.time() < deadline:
                 await self._freeze_and_thaw()
 
-                if self._sut is not None and self._sut.poll() is not None:
+                # Once the run is terminal nothing is restarted: the loop only lingers to send a
+                # duplicate approve, and a worker that exits on completion is not a crash.
+                if self._sut is not None and self._sut.poll() is not None and not self.result.terminal:
                     self._close_incarnation()
                     if self.result.restarts >= self.schedule.max_recoveries:
                         self.result.exhausted_recoveries = True  # L2 FAIL
@@ -119,7 +124,8 @@ class Supervisor:
 
                 if await self.is_terminal():
                     self.result.terminal = True
-                    break
+                    if self._duplicate_at is None:
+                        break
                 await self._play_the_human()
                 await asyncio.sleep(POLL_S)
             else:
@@ -141,10 +147,17 @@ class Supervisor:
             approval_expiry      never grant; the workload's `expires_in` decides the run's fate
             approval_delay       grant after `delay_ms`
 
-        With none of them scheduled the grant is immediate. It is made exactly once per trial: a
-        human clicks once, and whether a runtime needs the click twice is the runtime's finding.
+        With none of them scheduled the grant is immediate. It is made once per trial: a human
+        clicks once, and whether a runtime needs the click twice is the runtime's finding. The one
+        exception is the one §11.4's spec C asks for — `approval_delay` with `duplicate: true` clicks
+        again, unkeyed, `duplicate_gap_ms` after the first, whatever the run has done since: a
+        runtime that turns the second click into a second grant is the weakness the cell exists to
+        catch, and a trial that ended before the click was sent would not have tested it.
         """
-        if self.status is None or self.on_waiting is None or self._granted:
+        if self.status is None or self.on_waiting is None:
+            return
+        if self._granted:
+            await self._click_again_if_due()
             return
         if await self.status() != "WAITING":
             return
@@ -178,7 +191,26 @@ class Supervisor:
             if entry.type == "approval_delay" and entry.fault_id not in self._seen_faults:
                 self._fire_from_outside(entry)
         self._granted = True
+        gaps = [
+            float(e.params.get("duplicate_gap_ms", 500.0))
+            for e in self._waiting_faults
+            if e.type == "approval_delay" and e.params.get("duplicate")
+        ]
+        if gaps:
+            self._duplicate_at = time.time() + max(gaps) / 1000.0
         await self.on_waiting()
+        await self._click_again_if_due()
+
+    async def _click_again_if_due(self) -> None:
+        """The second click of §11.4 C: the same approve, unkeyed — the adapter sends what it sent
+        the first time, and nothing marks it as a retry."""
+        if self._duplicate_at is None or time.time() < self._duplicate_at or self.on_waiting is None:
+            return
+        self._duplicate_at = None
+        await self.on_waiting()
+        self.result.duplicates += [
+            e.fault_id for e in self._waiting_faults if e.type == "approval_delay" and e.params.get("duplicate")
+        ]
 
     def _fire_from_outside(self, entry: Any) -> None:
         """A supervisor fault leaves the same row a shim fault would, in the same file, so the
@@ -316,6 +348,8 @@ class Supervisor:
                 )
             elif row.type == "pause_past_ttl":
                 flags[row.fault_id] = any(t["fault_id"] == row.fault_id for t in self.result.thawed)
+            elif row.type == "approval_delay" and row.params.get("duplicate"):
+                flags[row.fault_id] = row.fault_id in self.result.duplicates
             else:
                 flags[row.fault_id] = True
         return flags

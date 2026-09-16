@@ -305,6 +305,11 @@ class LangGraphAdapter:
         worker that dies and comes back has to be able to find it again. It is written once and
         never deleted, because it is the human's decision and the decision stands; whether the
         framework needs it twice is the framework's finding.
+
+        A second click (§11.4 C's duplicate) writes the same decision to the same file. LangGraph's
+        resume primitive carries no approval id to be granted twice under: the worker issues
+        `Command(resume=...)` once per `interrupt()` it is parked on, so the duplicate reaches the
+        framework only if the graph interrupts again — which is the documented path, and the only one.
         """
         verdict = "granted" if decision == "approve" else "rejected"
         (handle.trial_dir / "sut" / "resume").write_text(

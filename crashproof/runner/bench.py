@@ -60,6 +60,10 @@ class Matrix:
     #: How long the harness-as-human waits before granting under `approval_delay` (W5). Pinned in
     #: the matrix file and printed, like every other number that could move a result.
     approval_delay_ms: float = 500.0
+    #: §11.4 spec C: the human clicks approve twice, the second time unkeyed, this long after the
+    #: first (`duplicate`, `duplicate_gap_ms` on the `approval_delay` fault). Unset, the human clicks
+    #: once. A second click is what reaches "grants twice", the weak runtime §11.5 names for the cell.
+    approval_duplicate_gap_ms: float | None = None
 
     @classmethod
     def load(cls, path: Path | str) -> "Matrix":
@@ -116,10 +120,23 @@ class Matrix:
         if any(part.startswith("approval_expiry") for part in trigger.split("+")):
             # A human who never answers changes what "correct" looks like: the gated effect must
             # *not* happen, and a run that completes without it has done the right thing. Stated on
-            # the spec, so it is hashed into the cell's identity rather than assumed by the verifier.
+            # the spec, so it is hashed into the cell's identity rather than assumed by the verifier
+            # — and stated as the forbidden label applied zero times, because an empty expected
+            # state is an equality over nothing and passes a run that deployed anyway.
             base["expected_effects"] = []
-            base["expected_world_state"] = {}
+            base["expected_world_state"] = self._forbidden_under_expiry(variant)
         return from_doc(base)
+
+    def _forbidden_under_expiry(self, variant: str) -> dict[str, int]:
+        """Every World label a gated call would apply, at zero: `endpoint#n` per gated call."""
+        workload = load_named(self.workload)
+        endpoints = {t.name: t.endpoint for t in workload.tools_for(variant)}
+        forbidden: dict[str, int] = {}
+        for name in workload.gated_tools():
+            endpoint = endpoints[name]
+            n = 1 + sum(1 for label in forbidden if label.startswith(f"{endpoint}#"))
+            forbidden[f"{endpoint}#{n}"] = 0
+        return forbidden
 
     def _fault(self, fault_id: str, part: str) -> dict[str, Any]:
         fault_type, _, boundary = part.rpartition("@")
@@ -140,6 +157,8 @@ class Matrix:
         fault: dict[str, Any] = {"id": fault_id, "type": fault_type, "trigger": trigger}
         if fault_type == "approval_delay":
             fault["params"] = {"delay_ms": self.approval_delay_ms}
+            if self.approval_duplicate_gap_ms is not None:
+                fault["params"] |= {"duplicate": True, "duplicate_gap_ms": self.approval_duplicate_gap_ms}
         return fault
 
 

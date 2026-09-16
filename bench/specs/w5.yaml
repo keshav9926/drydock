@@ -4,7 +4,9 @@
 # every arm, LangGraph included — and if it holds, that is the honest result: no difference on the
 # task itself. The cells that can separate the arms are the ones about the *wait*:
 #
-#   approval_delay        the human takes 500 ms. Nothing should differ; it is the control.
+#   approval_delay        the human takes 500 ms, then clicks approve a second time, unkeyed
+#                         (§11.4 spec C's duplicate). One GRANTED per approval id and one deploy
+#                         are the expected result; a runtime that grants twice fails S7.
 #   approval_expiry       the human never answers; `expires_in` in the input decides the run's
 #                         fate. Keel expires by the store's clock; LangGraph has no deadline
 #                         primitive, so its row is whatever it does — printed, not judged.
@@ -22,6 +24,10 @@ max_recoveries: 3
 timeout: 60
 landmark: tool:deploy_service
 approval_delay_ms: 500
+# The second click follows the first at once, so both rows are in Keel's inbox when the holder
+# drains: the only order that reaches drain-time dedup at all. A later click lands on a decided or
+# terminal run and is refused at insert, which exercises nothing.
+approval_duplicate_gap_ms: 0
 verifier: [S1, S2, S3, S4, S5, S7, L1, L2]
 
 variants:

@@ -97,6 +97,9 @@ class TrialFacts:
     #: The runtime's effect ledger, where it keeps one. No verdict reads it — §19.5's per-effect
     #: view does, and a view over a trial is a view over its facts.
     sut_effects: list[dict[str, Any]] | None = None
+    #: The workload's approval-gated tools, name → World endpoint. S7 is judged on these: an applied
+    #: gated effect with no approval behind it is invisible to a check driven by the journal alone.
+    gated_tools: dict[str, str] = field(default_factory=dict)
 
 
 def dump(facts: TrialFacts) -> dict[str, Any]:
@@ -192,59 +195,91 @@ def _c1_replay_determinism(f: TrialFacts, v: Verdicts) -> None:
 
 
 def _s7_approval_binding(f: TrialFacts, v: Verdicts) -> None:
-    """Per `approval_id`: exactly one APPROVAL_DECIDED, and at most one applied effect bound to it.
+    """Every approval-gated effect has exactly one GRANTED approval; ≤ 1 applied effect per
+    approval (§12.4). Judged per `approval_id`, and against the World:
 
-    The second half is the one worth having. A runtime can decide an approval correctly and still
-    apply the gated effect twice — a crash between the grant and the effect, re-executed without the
-    binding — and every other safety invariant here would score that clean, because there is no
-    duplicate *key*: the second application is a different effect that nobody approved.
+    - an approval decided more than once fails;
+    - a gated tool resolved by `assume_failed` fails — it re-fires under one approval (§9.4);
+    - more than one applied effect under one approval fails. A runtime can decide correctly and
+      still apply the gated effect twice, and no other invariant sees it: there is no duplicate
+      *key*, the second application is a different effect that nobody approved;
+    - a bound effect applied when its approval was rejected, expired or never decided fails;
+    - a gated tool applied with no approval to account for it fails. That is the violation that
+      matters most, and a check driven by the APPROVAL_REQUESTED events alone cannot see it — so
+      the workload's gated tools drive it, not the journal.
 
-    `assume_failed` on a gated tool fails for the same reason: it re-fires under one approval, so an
-    EXTERNAL bound tool may only resolve by probe or escalate (§9.4).
+    The binding is read through the runtime's own effect ledger: `binds_effect_key` names the
+    effect row, the row names its World label (`external_ref`), and the World says how often that
+    label was applied. A bound effect with no label in the ledger (never started, or started and
+    never resolved) is accounted for on the gated endpoint instead: each GRANTED approval may
+    account for one application there, and anything beyond that is unapproved.
     """
     if f.journal is None:
-        v.add("S7", "N/A", "the runtime exposes no journal, so nothing to bind against")
+        v.add("S7", "N/A", "the runtime exposes no journal with APPROVAL_REQUESTED/DECIDED to bind an "
+              "applied effect to")
         return
     requested = [e for e in f.journal if e["type"] == "APPROVAL_REQUESTED"]
-    if not requested:
+    gated_endpoints = set(f.gated_tools.values())
+    if not requested and not gated_endpoints:
         v.add("S7", "N/A", "this workload gates nothing")
         return
 
-    decided: dict[str, int] = {}
+    decisions: dict[str, list[str]] = {}
     for e in f.journal:
         if e["type"] == "APPROVAL_DECIDED":
-            aid = str(e["body"]["approval_id"])
-            decided[aid] = decided.get(aid, 0) + 1
-    twice = {aid: n for aid, n in decided.items() if n > 1}
+            decisions.setdefault(str(e["body"]["approval_id"]), []).append(str(e["body"].get("decision")))
+    twice = {aid: len(d) for aid, d in decisions.items() if len(d) > 1}
     if twice:
         v.add("S7", "FAIL", "an approval was decided more than once", {"approval_id": twice})
         return
 
-    gated = {e["body"]["step_index"] + 1 for e in requested if e["body"].get("binds_effect_key")}
+    gated_steps = {e["body"]["step_index"] + 1 for e in requested if e["body"].get("binds_effect_key")}
     for e in f.journal:
         if (
             e["type"] == "STEP_RESOLVED"
-            and e.get("step_index") in gated
+            and e.get("step_index") in gated_steps
             and e["body"].get("method") == "assume_failed"
         ):
             v.add("S7", "FAIL", "a gated tool resolved by assume_failed, which re-fires under one "
                   "approval", {"step_index": e["step_index"]})
             return
 
-    # At most one applied effect per grant. The World counts under the bound key, so this is the
-    # same number S1 reads — asked per approval rather than per effect.
-    over = {}
+    labels = {row.get("effect_key"): row.get("external_ref") for row in f.sut_effects or []}
+    over, ungranted, bound, unlabelled_grants = {}, {}, set(), 0
     for e in requested:
         key = e["body"].get("binds_effect_key")
         if not key:
+            continue  # a bare `ctx.approve` is a durable wait and binds nothing
+        aid = str(e["body"]["approval_id"])
+        decision = (decisions.get(aid) or [None])[0]
+        label = labels.get(key)
+        if label is None:
+            unlabelled_grants += decision == "granted"
             continue
-        applied = sum(n for label, n in f.world_applied.items() if key in str(label))
+        bound.add(label)
+        applied = f.world_applied.get(label, 0)
         if applied > 1:
-            over[str(e["body"]["approval_id"])] = applied
+            over[aid] = {label: applied}
+        if applied >= 1 and decision != "granted":
+            ungranted[aid] = {"decision": decision or "undecided", label: applied}
     if over:
         v.add("S7", "FAIL", "more than one applied effect under one approval", {"approval_id": over})
         return
-    v.add("S7", "PASS", f"{len(requested)} approval(s), each decided once and applied at most once")
+    if ungranted:
+        v.add("S7", "FAIL", "a bound effect applied without a GRANTED approval", {"approval_id": ungranted})
+        return
+
+    stray = {
+        label: n
+        for label, n in f.world_applied.items()
+        if n >= 1 and label not in bound and str(label).rpartition("#")[0] in gated_endpoints
+    }
+    if sum(stray.values()) > unlabelled_grants:
+        v.add("S7", "FAIL", "a gated tool applied with no GRANTED approval bound to it",
+              {"applied": stray, "unaccounted_grants": unlabelled_grants})
+        return
+    v.add("S7", "PASS", f"{len(requested)} approval(s), each decided at most once; every applied "
+          "gated effect granted, at most once")
 
 
 # --- safety ------------------------------------------------------------------
