@@ -397,7 +397,7 @@ history where the other carries a state dict. After a fault that does not touch 
 **+0**, because a synchronous checkpoint restores the state without re-deciding — LangGraph duplicates
 the effect without paying for a second decision.
 
-The pieces: a **retry policy** with full jitter, clamped inside the lease and off by default;
+The pieces: a **retry policy** with full jitter, off by default (phase 4 clamped it inside the lease; week 2's park lifted that);
 **reserve-then-settle budgets** where an attempt nobody heard back from stays charged forever, which
 is what makes the journaled spend an upper bound on the bill; `UnknownOutcome` and `Rejected`, so the
 step engine routes on the *effect class* rather than the status code; a `tool_timeout` armed **at the
@@ -685,9 +685,6 @@ the event stream where it already lives.
 
 - `max_usd` and `max_wall_clock` (phase 4): they need a pinned price table and a deadline every
   waiting kind respects.
-- A retry policy's own backoff is still capped at half the lease (`keel/runtime/retry.py`). The park a
-  longer one needs now exists — a wait of a second or more is `RUN_WAITING{retry_backoff}` — and the
-  cap has not been lifted.
 - A delegation's `deadline_s` is journaled in the contract and not enforced by the parent: a child
   that never reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full
   slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one

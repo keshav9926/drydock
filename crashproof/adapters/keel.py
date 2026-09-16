@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from keel.runtime.breaker import DEFAULT_COOLDOWN_S, DEFAULT_N_OPEN
+from keel.runtime.retry import MODEL_RETRY, TOOL_RETRY
 from crashproof.adapters.base import CanonicalResult, ConfigPin, Dependency, SutHandle
 from crashproof.faults.injectors.shim import ToolShim
 from crashproof.faults.log import TrialDir
@@ -54,7 +55,6 @@ REAPER_PERIOD_S = 0.2
 #: Retries arrive with the faults that exercise them (§28.4). Printed in config_pin, because a
 #: runtime that retries internally can exhaust the restart budget and score L2 FAIL for a reason
 #: that is not a durability property.
-MAX_ATTEMPTS = 3
 MODEL_TIMEOUT_S = 2.0
 
 ENV_WORLD = "CRASHPROOF_WORLD_URL"
@@ -351,7 +351,11 @@ class KeelAdapter:
             successor_start_delay_s=SUCCESSOR_START_DELAY_S if worker_count > 1 else None,
             claim_poll_s=CLAIM_POLL_S,
             reaper_period_s=REAPER_PERIOD_S,
-            retry=f"max_attempts={MAX_ATTEMPTS}, backoff=exponential+jitter",
+            retry=(
+                f"tools max_attempts={TOOL_RETRY.max_attempts} base={TOOL_RETRY.base_s:g}s cap={TOOL_RETRY.max_backoff_s:g}s; "
+                f"model max_attempts={MODEL_RETRY.max_attempts} base={MODEL_RETRY.base_s:g}s cap={MODEL_RETRY.max_backoff_s:g}s; "
+                "x2 full jitter; a wait of 1 s or more parks with the lease released (§8)"
+            ),
             extra={
                 "model_timeout_s": MODEL_TIMEOUT_S, "world_client_timeout_s": DEFAULT_TIMEOUT_S,
                 # The per-provider breaker (§8): it pushes a MODEL retry out, which changes a number.
@@ -746,13 +750,12 @@ async def _worker() -> None:  # pragma: no cover - subprocess
         # it would mark the run ORPHANED and leave it there. So the second observer is a whole
         # worker — it simply waits long enough that the first one gets the run (§11.2).
         await asyncio.sleep(float(os.environ.get("CRASHPROOF_KEEL_START_DELAY_S", SUCCESSOR_START_DELAY_S)))
-    from keel.runtime.retry import RetryPolicy
-
     worker = app.worker(
         worker_id=f"{role}-{os.getpid()}",
         lease_ttl=LEASE_TTL_S,
         poll=CLAIM_POLL_S,
-        retry=RetryPolicy(max_attempts=MAX_ATTEMPTS),
+        retry=TOOL_RETRY,
+        model_retry=MODEL_RETRY,
         model_timeout_s=MODEL_TIMEOUT_S,
     )
     tasks = [

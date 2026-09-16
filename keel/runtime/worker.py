@@ -72,6 +72,7 @@ class Worker:
         shutdown_grace: float = 10.0,
         poll: float = 1.0,
         retry: RetryPolicy = NO_RETRY,
+        model_retry: RetryPolicy | None = None,
         model_timeout_s: float = 60.0,
         cancel_grace: float = DEFAULT_CANCEL_GRACE_S,
         breaker: CircuitBreaker | None = None,
@@ -86,6 +87,7 @@ class Worker:
         self.shutdown_grace = shutdown_grace
         self.poll = poll
         self.retry = retry
+        self.model_retry = model_retry
         self.model_timeout_s = model_timeout_s
         self.cancel_grace = cancel_grace
         #: One per process, per provider, shared by every lease this worker holds (§8): an outage
@@ -176,6 +178,7 @@ class Worker:
             clock=self.clock,
             should_drain=lambda: self.draining,
             retry=self.retry,
+            model_retry=self.model_retry,
             model_timeout_s=self.model_timeout_s,
             parent_run_id=row.parent_run_id,
             depth=await _depth(journal, row),

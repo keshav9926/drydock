@@ -179,6 +179,7 @@ class StepEngine:
         clock: Any = None,
         should_drain: Callable[[], bool] | None = None,
         retry: RetryPolicy = NO_RETRY,
+        model_retry: RetryPolicy | None = None,
         model_timeout_s: float = DEFAULT_MODEL_TIMEOUT_S,
         allow_live: bool = True,
         parent_run_id: Any = None,
@@ -197,6 +198,7 @@ class StepEngine:
         self.clock = clock
         self.should_drain = should_drain
         self.retry = retry
+        self.model_retry = model_retry or retry  # §8: MODEL steps may have their own
         self.model_timeout_s = model_timeout_s
         #: Delegation (§17). The parent, if this run is a child — the worker co-commits the
         #: `child_result` row with the terminal event; the depth, so a verifier cannot delegate to a
@@ -1347,13 +1349,14 @@ class StepEngine:
         # The retry decision is made *before* the outcome commits, so it is journaled with it: a
         # STEP_FAILED carrying `next_attempt_at` is a failure the runtime will retry, and a successor
         # that finds it retries rather than failing the run (§8.7, §11.5 `provider_outage`).
-        retrying = isinstance(outcome, Failed) and outcome.retryable and self.retry.may_retry(attempt_no)
+        policy = self.model_retry if intent.kind is StepKind.MODEL else self.retry
+        retrying = isinstance(outcome, Failed) and outcome.retryable and policy.may_retry(attempt_no)
         wait_s = 0.0
         if isinstance(outcome, (Completed, Failed)):
             self._breaker_saw(intent, ok=isinstance(outcome, Completed))
         if retrying:
             wait_s = max(
-                self.retry.backoff_s(attempt_no, lease_ttl_s=self.lease.ttl_seconds),
+                policy.backoff_s(attempt_no),
                 self._breaker_wait_s(intent),
             )
         next_attempt_at = None

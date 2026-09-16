@@ -106,7 +106,9 @@ wait fails `logical_correctness` for any arm.
 
 `tool.timeout = 1 s`, `lease_ttl = 2 s`, heartbeat `≈ 0.67 s`, `attempt_deadline = started_at + 1 s`,
 `pause_past_ttl` pause 3 s (pinned, not drawn), `worker_count = 2` in `pause_past_ttl` cells and 1
-elsewhere, retry `max_attempts = 3` with exponential backoff and full jitter, and the circuit breaker's
+elsewhere, §8's per-kind retry policies — tools `max_attempts = 3`, base 1 s, cap 30 s; MODEL steps
+`max_attempts = 5`, base 2 s, cap 60 s; ×2 with full jitter, a wait of 1 s or more parked with the lease
+released (rows before this commit ran one policy, 3 attempts from a 0.1 s base) — and the circuit breaker's
 `n_open = 5`, `cooldown_s = 30` (rows written before `182994a` do not carry the breaker). Every one of
 them travels in `config_pin` on every row, because "Keel recovers faster" is a claim about timeouts
 unless both arms' timeouts are printed beside it.

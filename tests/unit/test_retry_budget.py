@@ -27,20 +27,14 @@ def test_the_default_is_one_attempt() -> None:
     assert not NO_RETRY.may_retry(1)
 
 
-def test_backoff_grows_and_stays_inside_the_lease() -> None:
-    """Holding a lease past its TTL is how a worker becomes a zombie. The policy is clamped rather
-    than allowed to manufacture one to honour its curve."""
-    policy = RetryPolicy(max_attempts=5, base_s=0.5, factor=4.0)
-    import random
+def test_backoff_grows_to_its_cap_and_the_lease_does_not_clamp_it() -> None:
+    """A long wait parks with the lease released, so the curve is the policy's own. §8's MODEL
+    policy reaches its 60 s cap; nothing folds it back under a 2 s lease."""
+    from keel.runtime.retry import MODEL_RETRY
 
-    rng = random.Random(0)
-    for attempt in (1, 2, 3, 4):
-        assert policy.backoff_s(attempt, lease_ttl_s=2.0, rng=rng) <= 1.0
-
-    quiet = RetryPolicy(max_attempts=5, base_s=0.05, factor=2.0)
     always_max = type("R", (), {"random": staticmethod(lambda: 1.0)})()
-    windows = [quiet.backoff_s(a, lease_ttl_s=100.0, rng=always_max) for a in (1, 2, 3)]
-    assert windows == sorted(windows) and windows[0] < windows[-1], "exponential"
+    windows = [MODEL_RETRY.backoff_s(a, rng=always_max) for a in (1, 2, 3, 4, 5, 6, 7)]
+    assert windows == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0]
 
 
 async def test_a_retryable_failure_is_retried_and_an_absolute_one_is_not() -> None:
@@ -270,3 +264,54 @@ async def test_a_successor_honours_a_retry_the_journal_already_decided() -> None
     state = fold(await k.events(handle.run_id))
     assert state.phase == "COMPLETED", state.error
     assert calls["n"] == 2
+
+
+async def test_a_model_outage_shorter_than_the_model_policy_is_waited_out() -> None:
+    """§11.5 `provider_outage` under §8's MODEL policy: three 503s in a row are three STEP_FAILED
+    with a journaled next attempt, a wait of a second or more parks with the lease released, and the
+    fourth attempt completes. The tool policy's three attempts would have failed the run."""
+    from datetime import timedelta
+
+    from keel.client import program
+    from keel.core.errors import UnknownOutcome
+    from keel.runtime.retry import MODEL_RETRY, TOOL_RETRY
+
+    clock = FakeClock()
+    calls = {"n": 0}
+
+    class Outage:
+        name = "flaky-provider"
+
+        def __init__(self, inner: ScriptedProvider) -> None:
+            self.inner = inner
+
+        async def count_tokens(self, req):
+            return await self.inner.count_tokens(req)
+
+        async def complete(self, req):
+            calls["n"] += 1
+            if calls["n"] <= 3:
+                raise UnknownOutcome("503 from the provider")
+            return await self.inner.complete(req)
+
+    @program(name="asks_once", version="1.0")
+    async def asks_once(ctx, args):
+        return (await ctx.model([{"role": "user", "content": "hi"}], name="m")).text
+
+    k = Keel(journal=MemoryJournal(clock=clock), provider=Outage(ScriptedProvider(demo.SCRIPT)),
+             programs=[asks_once], clock=clock)
+    handle = await k.start(asks_once, {})
+    for _ in range(20):
+        lease = await k.journal.claim("w", timedelta(seconds=5))
+        if lease is None:
+            clock.advance(61)
+            await k.journal.sweep_timers()
+            continue
+        await k.worker(worker_id="w", lease_ttl=5.0, retry=TOOL_RETRY, model_retry=MODEL_RETRY).execute(lease)
+        if fold(await k.events(handle.run_id)).phase == "COMPLETED":
+            break
+    events = await k.events(handle.run_id)
+    assert fold(events).phase == "COMPLETED" and calls["n"] == 4
+    failed = [e for e in events if e.type == "STEP_FAILED"]
+    assert [e.body.attempt_no for e in failed] == [1, 2, 3]
+    assert all(e.body.next_attempt_at is not None for e in failed)
