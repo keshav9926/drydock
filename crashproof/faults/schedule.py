@@ -97,7 +97,7 @@ def expand(spec: FaultSpec, seed: int, workload: OccurrenceSource | None = None)
                     occurrence=occ,
                     recovery_index=f.trigger.recovery_index,
                     delay_ms=f.trigger.delay_ms,
-                    params=_draw_params(rng, f.params),
+                    params=_pause_factor(rng, f.type, _draw_params(rng, f.params)),
                 )
             )
             occ += 1
@@ -128,6 +128,15 @@ def _geometric(rng: random.Random, p: float) -> int:
     if p >= 1:
         return 1
     return int(math.floor(math.log(1.0 - rng.random()) / math.log(1.0 - p))) + 1
+
+
+def _pause_factor(rng: random.Random, fault_type: str, params: dict[str, Any]) -> dict[str, Any]:
+    """§13.4: a `pause_past_ttl` lasts a seeded draw in [2x, 4x] of the arm's pinned detection
+    timeout. The schedule is the same for every arm, so it carries the factor and the supervisor
+    multiplies; drawn after the declared params, so it never shifts one of theirs."""
+    if fault_type == "pause_past_ttl" and "pause_ms" not in params:
+        params["pause_factor"] = rng.uniform(2.0, 4.0)
+    return params
 
 
 def _draw_params(rng: random.Random, params: dict[str, Any]) -> dict[str, Any]:

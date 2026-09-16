@@ -330,3 +330,27 @@ async def test_a_kill_that_never_landed_is_not_executed_because_the_trial_ended(
     result = await sup.run(submit)
     assert result.terminal and result.restarts == 0
     assert sup.executed_flags() == {"f1": False}
+
+
+def test_a_pause_lasts_a_seeded_draw_over_the_arms_detection_timeout(tmp_path) -> None:
+    """§13.4: [2x, 4x] of the arm's pinned detection timeout, one draw per trial, the same factor for
+    every arm at a seed. An arm's own pin (Keel: 3 s) and a spec's explicit `pause_ms` both win."""
+    import types
+
+    from crashproof.faults.supervisor import DEFAULT_PAUSE_MS, Supervisor
+
+    [entry] = expand(_spec("pause_past_ttl", boundary="before:tool_call"), 7, WORKLOAD).entries
+    factor = entry.params["pause_factor"]
+    assert 2.0 <= factor <= 4.0
+    assert expand(_spec("pause_past_ttl", boundary="before:tool_call"), 7, WORKLOAD).entries[0].params == entry.params
+    [pinned] = expand(_spec("pause_past_ttl", boundary="before:tool_call", pause_ms=500), 7, WORKLOAD).entries
+    assert "pause_factor" not in pinned.params
+
+    def sup(**pins: Any) -> Supervisor:
+        return Supervisor(TrialDir(tmp_path / "t", fresh=True), types.SimpleNamespace(entries=[]),
+                          trial_id="t", argv=[], env={}, is_terminal=None, **pins)
+
+    assert sup(detection_timeout_s=2.0).pause_ms_for(entry.params) == factor * 2000.0
+    assert sup(pinned_pause_ms=3000.0, detection_timeout_s=2.0).pause_ms_for(entry.params) == 3000.0
+    assert sup(detection_timeout_s=2.0).pause_ms_for(pinned.params) == 500.0
+    assert sup().pause_ms_for(entry.params) == DEFAULT_PAUSE_MS

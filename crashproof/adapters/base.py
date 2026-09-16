@@ -42,7 +42,10 @@ class ConfigPin:
     heartbeat_s: float | None = None
     retry: str = "none"
     worker_count: int = 1
+    #: Pinned outright (Keel: 3 s). Otherwise a `pause_past_ttl` lasts the schedule's drawn factor
+    #: times `detection_timeout_s` (§13.4); an arm with neither (no successor) gets the 3 s default.
     pause_ms: float | None = None
+    detection_timeout_s: float | None = None
     successor_start_delay_s: float | None = None
     claim_poll_s: float | None = None
     reaper_period_s: float | None = None

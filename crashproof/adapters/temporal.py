@@ -287,6 +287,8 @@ class TemporalAdapter:
             durability="event history; agent_code=pydantic_ai (TemporalDurability)",
             tool_timeout_s=START_TO_CLOSE_S,
             heartbeat_s=HEARTBEAT_S,
+            # Detection of a frozen worker is the heartbeat timeout (§13.4), so the pause is drawn over it.
+            detection_timeout_s=HEARTBEAT_S,
             retry=(
                 "RetryPolicy(initial_interval=1s, backoff_coefficient=2.0, maximum_interval=100s, "
                 "maximum_attempts=0) + TemporalDurability non_retryable_error_types"

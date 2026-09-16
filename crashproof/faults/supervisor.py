@@ -76,6 +76,8 @@ class Supervisor:
         secondary_env: dict[str, str] | None = None,
         status: Any = None,
         on_waiting: Any = None,
+        pinned_pause_ms: float | None = None,
+        detection_timeout_s: float | None = None,
     ) -> None:
         self.trial = trial
         self.schedule = schedule
@@ -89,6 +91,8 @@ class Supervisor:
         #: `on_waiting()` is the grant. Both optional: a workload that gates nothing never parks.
         self.status = status
         self.on_waiting = on_waiting
+        self.pinned_pause_ms = pinned_pause_ms
+        self.detection_timeout_s = detection_timeout_s
         self.result = SupervisorResult()
         self._sut: subprocess.Popen | None = None
         self._others: list[subprocess.Popen] = []
@@ -307,7 +311,7 @@ class Supervisor:
         for row in self._new_faults():
             if row.type != "pause_past_ttl":
                 continue
-            pause_ms = float(row.params.get("pause_ms", DEFAULT_PAUSE_MS))
+            pause_ms = self.pause_ms_for(row.params)
             # The firing process's own pid, not `Popen.pid`: a launcher shim makes those different,
             # and a freeze aimed at the launcher stops nothing at all.
             pid = row.sut_pid or (self._sut.pid if self._sut else 0)
@@ -320,6 +324,17 @@ class Supervisor:
             self.result.thawed.append(
                 {"fault_id": row.fault_id, "pid": pid, "pause_ms": pause_ms, "at": time.time()}
             )
+
+    def pause_ms_for(self, params: dict[str, Any]) -> float:
+        """The spec's own `pause_ms`, then the arm's pin, then §13.4's draw over the arm's pinned
+        detection timeout, then the default for an arm with no detection timeout at all."""
+        if "pause_ms" in params:
+            return float(params["pause_ms"])
+        if self.pinned_pause_ms is not None:
+            return self.pinned_pause_ms
+        if self.detection_timeout_s is not None and "pause_factor" in params:
+            return float(params["pause_factor"]) * self.detection_timeout_s * 1000.0
+        return DEFAULT_PAUSE_MS
 
     def _new_faults(self) -> list[FaultFired]:
         rows = [r for r in self.trial.faults() if r.fault_id not in self._seen_faults]

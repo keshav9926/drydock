@@ -114,6 +114,7 @@ async def run_trial(
         # 2. the SUT's own store, owned by the adapter that knows what belongs in it
         handle.dependency = await adapter.start_dependency(handle)
         worker_count = adapter.worker_count(spec)
+        pin = adapter.config_pin(worker_count=worker_count)
 
         supervisor = Supervisor(
             trial,
@@ -131,6 +132,8 @@ async def run_trial(
             # pretending — `on_waiting` is None and the supervisor never grants.
             status=lambda: adapter.status(handle),
             on_waiting=(lambda: adapter.approve(handle)) if hasattr(adapter, "approve") else None,
+            pinned_pause_ms=pin.pause_ms,
+            detection_timeout_s=pin.detection_timeout_s,
         )
         sup = await supervisor.run(lambda: adapter.submit(handle))
 
@@ -146,8 +149,14 @@ async def run_trial(
             except Exception as exc:  # noqa: BLE001 - a harness failure, not the runtime's
                 replay = {"ok": False, "error": f"replay_check: {type(exc).__name__}: {exc}"}
         executed = supervisor.executed_flags()
+        # A freeze prints the pause it actually applied: §13.4's draw, once per trial.
+        paused = {t["fault_id"]: t["pause_ms"] for t in supervisor.result.thawed}
         fault_rows = [
-            {**row.model_dump(), "executed": executed.get(row.fault_id, True)}
+            {
+                **row.model_dump(),
+                "executed": executed.get(row.fault_id, True),
+                **({"pause_ms": paused[row.fault_id]} if row.fault_id in paused else {}),
+            }
             for row in trial.faults()
         ]
         # A trial is scored only if it tested what it claimed to. Two ways it might not have: a
