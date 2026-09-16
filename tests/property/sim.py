@@ -850,10 +850,25 @@ class Sim:
                 decl = self.decls.get(e.body.name) if e.type == "STEP_INTENDED" and e.body.kind == "TOOL" else None
                 if decl is not None and decl.cls != "PURE":
                     required.append(self.world.label_for(decl.endpoint, e.body.args) or f"{decl.endpoint}#never")
+        applied = {k: n for k, n in self.world.applied_counts().items() if k in labels}
+        by_endpoint = {d.endpoint: d for d in self.decls.values()}
+        for label, n in applied.items():
+            # S7's count, in its sim form: what Keel is answerable for under one approval. A second
+            # application by a request no current holder was awaiting is §8.7's named residual for an
+            # EXTERNAL bound effect ("can apply twice per approval … S7 reports it"); a receiver that
+            # ignores an IDEMPOTENT key breaks the tool's stated assumption, and S1 already reports
+            # that raw. Both stay in the World's own count, which S1 and C3 read.
+            decl = by_endpoint.get(label.rpartition("#")[0])
+            if decl is None or not decl.gated:
+                continue
+            if decl.cls == "IDEMPOTENT" and not decl.dedup:
+                applied[label] = min(n, 1)
+            elif decl.cls == "EXTERNAL":
+                applied[label] = min(n, max(1, sum(1 for l in mine if l.label == label and l.current)))
         return invariants.TrialFacts(
             world_receipts=[{"endpoint": l.endpoint, "effect_key": l.effect_key, "logical_identity": l.label,
                              "ts": l.ts} for l in mine],
-            world_applied={k: n for k, n in self.world.applied_counts().items() if k in labels},
+            world_applied=applied,
             sut_committed={e.external_ref for e in effects
                            if e.status in ("COMMITTED", "RESOLVED_COMMITTED") and e.external_ref},
             journal=[{"seq": e.seq, "type": e.type, "ts": e.ts.isoformat(), "step_index": e.step_index,
