@@ -69,6 +69,11 @@ def _adapters() -> dict[str, Any]:
             from crashproof.adapters.temporal import TemporalAdapter
 
             ADAPTERS["temporal"] = TemporalAdapter
+        # `uv sync --extra restate` (Linux: restate-sdk has no Windows wheel). RestateAgent lives in the SDK.
+        if all(importlib.util.find_spec(m) is not None for m in ("restate", "pydantic_ai", "hypercorn")):
+            from crashproof.adapters.restate import RestateAdapter
+
+            ADAPTERS["restate"] = RestateAdapter
     return ADAPTERS
 
 
