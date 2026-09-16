@@ -4,11 +4,15 @@
 only true if the agent is literally the same code. So it lives here, once, and an engine arm supplies
 exactly the three things that differ between engines and nothing else:
 
-    key()       the F1 key, read from inside the durable unit a tool body runs in
-                (Temporal: `{workflow_run_id}:{activity_id}`; DBOS: `{workflow_id}:{step_id}`)
+    key()       the F1 key, as the tool body sees it
+                (Temporal: `{workflow_run_id}:{activity_id}`; DBOS: `{workflow_id}:{step_id}`;
+                Restate: the `ctx.uuid()` its wrapper drew before entering the run)
     wrap(fn, d) whatever the engine documents a function tool needs to be durable — DBOS's
-                `@DBOS.step`; identity for Temporal, whose capability makes tool calls activities
-    durability  the engine's capability (`TemporalDurability`, `DBOSDurability`, ...)
+                `@DBOS.step`, Restate's `restate_context().run_typed(...)`; identity for Temporal,
+                whose capability makes tool calls activities
+    durability  the engine's capability (`TemporalDurability`, `DBOSDurability`, ...), or `None`
+                where the integration is a wrapper around the finished agent rather than a
+                capability (Restate's `RestateAgent`), which the arm then applies itself
 
 The model is the workload script as a `FunctionModel`: a node is selected by the ordered tool returns
 already in the request (§13.2) — never a counter, never result content — and `tool_call_id` is a
@@ -109,7 +113,7 @@ def build_agent(
         name=AGENT_NAME,
         output_type=[str, DeferredToolRequests],
         toolsets=[FunctionToolset([make_tool(d) for d in workload.tools_for(variant)], id=TOOLSET_ID)],
-        capabilities=[durability],
+        capabilities=[] if durability is None else [durability],
     )
 
 
