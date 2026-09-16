@@ -186,6 +186,26 @@ async def test_the_timer_sweep_skips_a_held_run(journal, world) -> None:
     del lease
 
 
+async def test_a_client_clock_ahead_of_the_store_delays_neither_start_nor_handover(journal, world) -> None:
+    """The claim compares `runnable_at` with the store's `now()`. Docker's VM clock drifts from the
+    host's; a start or a drain stamped by a client ahead of it was unclaimable for the skew."""
+    from datetime import UTC, datetime
+
+    class Ahead:
+        def now(self) -> datetime:
+            return datetime.now(UTC) + timedelta(hours=1)
+
+    k = Keel(
+        journal=journal, provider=ScriptedProvider(demo.SCRIPT), clock=Ahead(),
+        tools=[demo.search, demo.create_issue_tool("EXTERNAL")], programs=[demo.tool_chain],
+    )
+    handle = await k.start(demo.tool_chain, {"task": "skew"})
+    lease = await journal.claim("w1", timedelta(seconds=TTL))
+    assert lease is not None and lease.run_id == handle.run_id
+    await journal.release(lease, runnable_at=Ahead().now(), runnable_reason="DRAIN")
+    assert await journal.claim("w2", timedelta(seconds=TTL)) is not None
+
+
 async def test_an_unknown_signal_type_is_a_keel_error_not_a_check_violation(journal, world) -> None:
     k = _keel(journal)
     handle = await k.start(demo.tool_chain, {"task": "x"})

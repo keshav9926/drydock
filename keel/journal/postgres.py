@@ -277,11 +277,15 @@ async def _insert_run(
     on_conflict: str = "ignore",
 ) -> bool:
     """The `runs` row and its RUN_CREATED at `lease_epoch = 0` — the one append with no fence
-    (§23.4), shared by `keel run` for a root and by the parent's spawn transaction for a child."""
+    (§23.4), shared by `keel run` for a root and by the parent's spawn transaction for a child.
+
+    `runnable_at` is capped at the store's `now()`: the claim compares it with the store's clock,
+    so a creator whose clock runs ahead would otherwise make a new run unclaimable for the skew.
+    Every caller means "due now"; a scheduled start would pass a store-relative delay instead."""
     cur = await conn.execute(
         "INSERT INTO runs (run_id, run_root_id, parent_run_id, program, program_version,"
         " keel_version, model_config, args, budget, trace_id, phase, runnable_at, runnable_reason)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'CREATED',%s,%s)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'CREATED',LEAST(%s::timestamptz, now()),%s)"
         + (" ON CONFLICT (run_id) DO NOTHING" if on_conflict == "ignore" else ""),
         (
             row.run_id,
@@ -563,7 +567,8 @@ class PostgresJournal:
         pool = await self._ready()
         async with pool.connection() as conn:
             await conn.execute(
-                "UPDATE runs SET lease_expires_at = NULL, runnable_at = %s, wake_at = %s,"
+                # Capped at the store's clock for the same reason as `_insert_run`.
+                "UPDATE runs SET lease_expires_at = NULL, runnable_at = LEAST(%s::timestamptz, now()), wake_at = %s,"
                 " phase = coalesce(%s, phase), runnable_reason = %s,"
                 " attempt_deadline = NULL, updated_at = now()"
                 " WHERE run_id = %s AND lease_epoch = %s AND lease_expires_at IS NOT NULL",
