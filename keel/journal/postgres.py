@@ -22,7 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from keel.core.errors import DuplicateEffectKey, Fenced, IllegalTransition
+from keel.core.errors import DuplicateEffectKey, Fenced, IllegalTransition, WakeRaced
 from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
@@ -30,6 +30,7 @@ from keel.events.schema import TERMINAL_TYPES
 from keel.core.errors import AmbiguousRunRef, StoreUnavailable
 from keel.journal.blobs import externalise, internalise
 from keel.journal.protocol import (
+    SIGNAL_TYPES,
     DelegationRow,
     EffectRow,
     Lease,
@@ -177,10 +178,48 @@ class _PgAppendTx:
             (*values, self._lease.run_id, self._lease.epoch),
         )
 
+    # --- the wake path (§5.4 (4), (7)) -------------------------------------------
+    async def pending_signals(self) -> list[SignalRow]:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM signals WHERE run_id = %s AND consumed_seq IS NULL"
+                " ORDER BY created_at, signal_id",
+                (self._lease.run_id,),
+            )
+            return [SignalRow(**r) for r in await cur.fetchall()]
+
+    async def clear_wake(self) -> None:
+        await self._conn.execute(
+            "UPDATE runs SET runnable_at = NULL, updated_at = now()"
+            " WHERE run_id = %s AND lease_epoch = %s AND runnable_at <= now()",
+            (self._lease.run_id, self._lease.epoch),
+        )
+
+    async def release_park(self, *, phase: str, wake_at: datetime | None, paused: bool = False) -> None:
+        cur = await self._conn.execute(
+            "UPDATE runs SET lease_expires_at = NULL, runnable_at = NULL, runnable_reason = NULL,"
+            " attempt_deadline = NULL, wake_at = %s, phase = %s,"
+            " paused_at = CASE WHEN %s THEN now() ELSE paused_at END, updated_at = now()"
+            " WHERE run_id = %s AND lease_epoch = %s"
+            "   AND lease_expires_at IS NOT NULL AND runnable_at IS NULL",
+            (wake_at, phase, paused, self._lease.run_id, self._lease.epoch),
+        )
+        if cur.rowcount == 0:
+            # The fence already holds this row, so 0 rows means only one thing: an insert set
+            # `runnable_at` before this transaction began and nothing here has drained it.
+            raise WakeRaced(f"run {self._lease.run_id}: a signal arrived since the last drain")
+        await self._conn.execute(
+            "UPDATE recoveries SET released_at = now() WHERE run_id = %s AND lease_epoch = %s",
+            (self._lease.run_id, self._lease.epoch),
+        )
+
     # --- delegation (§17): three more things that commit with the append ----------
     async def insert_signal(self, row: SignalRow) -> None:
-        """A row in another run's inbox, on this transaction's connection (§5.10)."""
-        await _insert_signal(self._conn, row)
+        """A row in another run's inbox, on this transaction's connection (§5.10). No wake bump:
+        it would lock the target's `runs` row while this transaction holds its own, and a child's
+        terminal transaction and its parent's cancel drain would take the pair in opposite orders.
+        The claim reads the inbox (§18.4); `NOTIFY` still fires on commit."""
+        await _insert_signal(self._conn, row, wake=False)
 
     async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:
         payload, blob_ids = await externalise(payload_of(created), self._j.blobs)
@@ -270,9 +309,13 @@ async def _insert_run(
     return True
 
 
-async def _insert_signal(conn: psycopg.AsyncConnection, row: SignalRow) -> bool:
-    """One inbox row, plus the wake (§5.6). Refused before the insert for a terminal target — no
-    future holder will drain it — and deduplicated by `signals_client_key`."""
+async def _insert_signal(conn: psycopg.AsyncConnection, row: SignalRow, *, wake: bool = True) -> bool:
+    """One inbox row, plus the wake (§5.4 (5)). Refused before the insert for a terminal target —
+    no future holder will drain it — and deduplicated by `signals_client_key`."""
+    if row.type not in SIGNAL_TYPES:
+        # The CHECK would refuse it as an IntegrityError; saying so first keeps memory and Postgres
+        # identical and gives the caller a KeelError rather than a driver traceback.
+        raise IllegalTransition(f"unknown signal type {row.type!r}; one of {sorted(SIGNAL_TYPES)}")
     cur = await conn.execute(
         "INSERT INTO signals (signal_id, run_id, type, payload, client_key, source)"
         " SELECT %s, %s, %s, %s, %s, %s"
@@ -283,13 +326,16 @@ async def _insert_signal(conn: psycopg.AsyncConnection, row: SignalRow) -> bool:
     if cur.rowcount == 0:
         return False
     # The insert is also the wake. `runnable_at` is set only when it is NULL, so a signal
-    # arriving at a run that is already runnable does not move it ahead of its queue.
-    await conn.execute(
-        "UPDATE runs SET runnable_at = COALESCE(runnable_at, now()),"
-        " runnable_reason = COALESCE(runnable_reason, 'WAKE'), updated_at = now()"
-        " WHERE run_id = %s AND terminal_at IS NULL",
-        (row.run_id,),
-    )
+    # arriving at a run that is already runnable does not move it ahead of its queue; on a held
+    # run the bump is the pending-wake flag its release guard reads. `RESUME` names a manual resume.
+    if wake:
+        await conn.execute(
+            "UPDATE runs SET runnable_reason = CASE WHEN runnable_at IS NULL THEN %s"
+            " ELSE runnable_reason END,"
+            " runnable_at = COALESCE(runnable_at, now()), updated_at = now()"
+            " WHERE run_id = %s AND terminal_at IS NULL",
+            ("RESUME" if row.type == "resume" else "WAKE", row.run_id),
+        )
     await conn.execute("SELECT pg_notify('keel_signals', %s)", (str(row.run_id),))
     return True
 
@@ -367,12 +413,17 @@ class PostgresJournal:
                       SELECT run_id, runnable_reason,
                              (lease_expires_at IS NOT NULL) AS was_lapsed
                         FROM runs
-                       WHERE runnable_at <= now()
+                       WHERE (runnable_at <= now()
+                              OR EXISTS (SELECT 1 FROM signals s
+                                          WHERE s.run_id = runs.run_id AND s.consumed_seq IS NULL))
                          AND terminal_at IS NULL
-                         AND paused_at IS NULL
+                         AND (paused_at IS NULL
+                              OR EXISTS (SELECT 1 FROM signals s
+                                          WHERE s.run_id = runs.run_id AND s.consumed_seq IS NULL
+                                            AND s.type IN ('resume', 'cancel')))
                          AND (lease_expires_at IS NULL OR lease_expires_at < now())
                          AND (attempt_deadline IS NULL OR attempt_deadline < now())
-                       ORDER BY runnable_at
+                       ORDER BY runnable_at NULLS LAST
                        LIMIT 1 FOR UPDATE SKIP LOCKED)
                     UPDATE runs r
                        SET lease_epoch = r.lease_epoch + 1, lease_owner = %s,
@@ -385,7 +436,7 @@ class PostgresJournal:
                     RETURNING r.run_id, r.lease_epoch, r.program_version, r.trace_id,
                               r.lease_expires_at,
                               CASE WHEN cand.was_lapsed THEN 'ORPHANED'
-                                   ELSE coalesce(cand.runnable_reason, 'START') END AS cause
+                                   ELSE coalesce(cand.runnable_reason, 'WAKE') END AS cause
                     """,
                     (worker_id, ttl),
                 )
@@ -559,6 +610,7 @@ class PostgresJournal:
             await cur.execute(
                 "SELECT run_id, wake_at FROM runs"
                 " WHERE wake_at IS NOT NULL AND wake_at <= now() AND terminal_at IS NULL"
+                "   AND lease_expires_at IS NULL"  # §5.4 (6): a held run drains its own timers
             )
             due = await cur.fetchall()
         fired = 0

@@ -163,21 +163,84 @@ def delegation_id(parent_run_id: Any, step_index: int, ordinal: int, retry_no: i
 
 
 def json_schema_ok(schema: dict[str, Any] | None, value: Any) -> tuple[bool, str | None]:
-    """A small structural check: required keys and top-level property types. Not a full JSON
-    Schema validator — the contract author who needs one passes a Pydantic model, which is dumped
-    to schema for the journal and used as a class for validation here when it is still importable."""
+    """The parent's grade of a child's result against the contract's `result_schema` (§17.8).
+
+    Judged on the *journaled* schema, never on a class: grading happens at the drain, possibly in
+    another process, and has to give the same answer there. Recursive over what a Pydantic model's
+    `model_json_schema()` emits — `type`, `required`, `properties`, `items`, `$ref`/`$defs`,
+    `enum`/`const`, `anyOf`/`oneOf`/`allOf` (Optional, unions), numeric bounds, string and array
+    lengths, `pattern`, `additionalProperties: false`. The injection wall is only as good as this.
+
+    # ponytail: a subset of JSON Schema (no `format`, `if/then`, `dependentRequired`, remote refs);
+    # add a real validator dependency when a contract needs one of those.
+    """
     if not schema:
         return True, None
-    if schema.get("type") == "object":
-        if not isinstance(value, dict):
-            return False, f"expected an object, got {type(value).__name__}"
-        for key in schema.get("required", []):
+    why = _violation(schema, value, schema.get("$defs") or schema.get("definitions") or {}, "result")
+    return why is None, why
+
+
+def _violation(schema: dict[str, Any], value: Any, defs: dict[str, Any], at: str) -> str | None:  # noqa: C901
+    import re
+
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/"):
+        target = defs.get(ref.rsplit("/", 1)[-1])
+        if target is None:
+            return f"{at}: unresolvable $ref {ref}"
+        return _violation(target, value, defs, at)
+    for sub in schema.get("allOf") or []:
+        if (why := _violation(sub, value, defs, at)) is not None:
+            return why
+    for key in ("anyOf", "oneOf"):
+        options = schema.get(key)
+        if options:
+            matches = sum(_violation(o, value, defs, at) is None for o in options)
+            if matches == 0 or (key == "oneOf" and matches > 1):
+                return f"{at}: matches {matches} of the {key} alternatives"
+    if "const" in schema and value != schema["const"]:
+        return f"{at}: expected {schema['const']!r}"
+    if "enum" in schema and value not in schema["enum"]:
+        return f"{at}: {value!r} is not one of {schema['enum']!r}"
+    if "type" in schema and not _is_type(value, schema["type"]):
+        return f"{at}: expected {schema['type']}, got {type(value).__name__}"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            return f"{at}: {value} < minimum {schema['minimum']}"
+        if "maximum" in schema and value > schema["maximum"]:
+            return f"{at}: {value} > maximum {schema['maximum']}"
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            return f"{at}: {value} <= exclusiveMinimum {schema['exclusiveMinimum']}"
+        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
+            return f"{at}: {value} >= exclusiveMaximum {schema['exclusiveMaximum']}"
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            return f"{at}: shorter than {schema['minLength']}"
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            return f"{at}: longer than {schema['maxLength']}"
+        if "pattern" in schema and re.search(schema["pattern"], value) is None:
+            return f"{at}: does not match {schema['pattern']!r}"
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            return f"{at}: fewer than {schema['minItems']} items"
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            return f"{at}: more than {schema['maxItems']} items"
+        if isinstance(schema.get("items"), dict):
+            for i, item in enumerate(value):
+                if (why := _violation(schema["items"], item, defs, f"{at}[{i}]")) is not None:
+                    return why
+    if isinstance(value, dict):
+        for key in schema.get("required") or []:
             if key not in value:
-                return False, f"missing required field {key!r}"
-        for key, prop in (schema.get("properties") or {}).items():
-            if key in value and "type" in prop and not _is_type(value[key], prop["type"]):
-                return False, f"field {key!r}: expected {prop['type']}, got {type(value[key]).__name__}"
-    return True, None
+                return f"{at}: missing required field {key!r}"
+        props = schema.get("properties") or {}
+        for key, item in value.items():
+            if key in props:
+                if (why := _violation(props[key], item, defs, f"{at}.{key}")) is not None:
+                    return why
+            elif schema.get("additionalProperties") is False:
+                return f"{at}: unexpected field {key!r}"
+    return None
 
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {

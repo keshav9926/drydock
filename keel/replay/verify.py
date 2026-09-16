@@ -165,9 +165,11 @@ async def verify(
     except Cancelled as exc:
         # A cancelled run reproduces *by* raising, at exactly the index CANCEL_ACKNOWLEDGED records
         # — that is the point of journaling the index at all. So this is the run being reproduced
-        # correctly rather than the program disagreeing, but only when the journal says the run was
-        # cancelled: a `Cancelled` raised while replaying anything else is still a failed pass.
-        if state.phase == "CANCELLED":
+        # correctly rather than the program disagreeing, but only when the journal says a cancel was
+        # acknowledged: a `Cancelled` raised while replaying anything else is still a failed pass.
+        # The acknowledgement, not the terminal event — a run that died between CANCEL_ACKNOWLEDGED
+        # and RUN_CANCELLED is reproduced exactly, and its successor will finish the cancel.
+        if state.cancel_acknowledged_at is not None:
             out.stopped = str(exc)
         else:
             out.ok = False

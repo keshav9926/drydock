@@ -284,3 +284,190 @@ async def test_a_granted_run_replays_without_asking_again(world) -> None:
     out = await run_verify(k.journal, handle.run_id, demo.gated_tool_chain.fn, tools=k.tools)
     assert out.ok, out.as_dict()
     assert await k.journal.pending_signals(handle.run_id) == []
+
+
+# --- the post-phase-8 audit: each test below is a finding that reproduced -----------------------
+from keel.client import program as _program  # noqa: E402
+
+
+@_program(name="two_gates", version="1.0")
+async def two_gates(ctx: Any, args: dict[str, Any]) -> str:
+    for env in ("staging", "prod"):
+        issue = {"title": f"deploy {env}", "body": env}
+        decision = await ctx.approve({"env": env}, gates=("create_issue", issue))
+        if decision["decision"] != "granted":
+            return decision["decision"]
+        await ctx.tool("create_issue", **issue)
+    return "both"
+
+
+async def test_a_click_naming_a_decided_gate_never_decides_the_next_one(world) -> None:
+    """A retried approve aimed at gate A, drained while gate B is open, used to grant B — deploying
+    to prod on a click nobody made for prod. The decision names its gate and is judged against it."""
+    clock = FakeClock()
+    k = _keel(clock)
+    k.register(two_gates)
+    handle = await k.start(two_gates, {})
+    await _work(k, "w1")
+    [a] = fold(await k.events(handle.run_id)).approvals.values()
+    await _send(k, handle.run_id, "approve", by="alice", approval_id=str(a.approval_id))
+    await _work(k, "w2")                                     # A granted, staging filed, parked on B
+    await _send(k, handle.run_id, "approve", by="retry", approval_id=str(a.approval_id))
+    await _work(k, "w3")                                     # the stale click is drained at B
+
+    state = fold(await k.events(handle.run_id))
+    b = next(x for x in state.approvals.values() if x.step_index == 2)
+    assert b.state == "REQUESTED", "prod was never approved"
+    assert sum(world.applied_counts().values()) == 1
+    ignored = [e.body.reason for e in await k.events(handle.run_id) if e.type == "SIGNAL_IGNORED"]
+    assert ignored == ["approval_terminal"]
+
+
+async def test_the_program_is_handed_exactly_the_decision_the_journal_records(world) -> None:
+    """Two copies of the decision once differed by `decided_at`: a program that passed it on issued
+    different args live than on replay, and suspended for nondeterminism with unchanged code."""
+
+    @_program(name="passes_it_on", version="1.0")
+    async def passes_it_on(ctx: Any, args: dict[str, Any]) -> Any:
+        decision = await ctx.approve({"what": "note it"})
+        return {"seen": decision}
+
+    clock = FakeClock()
+    k = _keel(clock)
+    k.register(passes_it_on)
+    handle = await k.start(passes_it_on, {})
+    await _work(k, "w1")
+    await _send(k, handle.run_id, "approve", by="alice")
+    await _work(k, "w2")
+
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "COMPLETED"
+    assert state.result["seen"] == state.steps[0].result
+    assert state.result["seen"]["decided_at"] is not None
+
+    from keel.replay.verify import verify as run_verify
+
+    out = await run_verify(k.journal, handle.run_id, passes_it_on.fn, tools=k.tools)
+    assert out.ok, out.as_dict()
+
+
+@pytest.mark.parametrize("slip", ["other_args", "other_kind"])
+async def test_a_bound_approval_refuses_anything_but_the_call_it_names(world, slip: str) -> None:
+    """`ApprovalBindingError` was declared and never raised: a granted approval for one issue let a
+    different issue — or anything else — run ungated at i+1. The step after a bound approval must be
+    exactly the bound call, or it fails before an attempt (§7.5, §24.2)."""
+
+    @_program(name=f"slips_{slip}", version="1.0")
+    async def slips(ctx: Any, args: dict[str, Any]) -> Any:
+        await ctx.approve({"what": "one issue"}, gates=("create_issue", {"title": "approved", "body": "b"}))
+        if slip == "other_args":
+            return await ctx.tool("create_issue", title="something else", body="b")
+        return await ctx.now()
+
+    clock = FakeClock()
+    k = _keel(clock)
+    k.register(slips)
+    handle = await k.start(slips, {})
+    await _work(k, "w1")
+    await _send(k, handle.run_id, "approve", by="alice")
+    await _work(k, "w2")
+
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "FAILED"
+    assert state.steps[1].error.startswith("ApprovalBindingError") and state.steps[1].attempts == 0
+    assert world.applied_counts() == {}
+    if slip == "other_args":
+        assert [e.status for e in await k.journal.effects(handle.run_id)] == ["DENIED"]
+
+
+async def test_expires_in_zero_is_a_deadline_already_due(world) -> None:
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(demo.gated_tool_chain, {"title": "now or never", "expires_in": 0})
+    await _work(k, "w1")
+    assert (await k.journal.run_row(handle.run_id)).wake_at == clock.now(), "0 was read as 'no deadline'"
+    assert await k.journal.sweep_timers() == 1
+    await _work(k, "w2")
+    [approval] = fold(await k.events(handle.run_id)).approvals.values()
+    assert approval.state == "EXPIRED"
+
+
+async def test_an_approve_drained_after_a_cancel_is_ignored(world) -> None:
+    """§7.5.1: cancel then approve in one drain used to record a GRANTED approval — an authorisation
+    nobody would ever act on — on a cancelled run."""
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(demo.gated_tool_chain, {"title": "never mind"})
+    await _work(k, "w1")
+    await _send(k, handle.run_id, "cancel", reason="changed my mind")
+    await _send(k, handle.run_id, "approve", by="alice")
+    await _work(k, "w2")
+
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "CANCELLED"
+    assert [a.state for a in state.approvals.values()] == ["REQUESTED"]
+    ignored = [e.body.reason for e in await k.events(handle.run_id) if e.type == "SIGNAL_IGNORED"]
+    assert ignored == ["step_terminal"]
+
+
+async def test_a_signal_racing_the_first_park_is_drained_not_parked_over(world) -> None:
+    """§5.4 (4): the release is the park's last statement, guarded by `runnable_at IS NULL`. A row
+    that lands after the boundary drain and before the park must roll the park back, be drained,
+    and the park then commits — once, with nothing left unconsumed."""
+    from keel.runtime import hooks
+
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(demo.gated_tool_chain, {"title": "race me"})
+
+    def land_a_signal(boundary: str, detail: dict[str, Any]) -> None:
+        if boundary == "before:intent_commit" and detail.get("kind") == "approval":
+            k.journal._put_signal(SignalRow(signal_id=uuid7(), run_id=handle.run_id, type="custom", payload={}))
+
+    hooks.install(land_a_signal)
+    try:
+        await _work(k, "w1")
+    finally:
+        hooks.reset()
+
+    events = await k.events(handle.run_id)
+    row = await k.journal.run_row(handle.run_id)
+    assert fold(events).phase == "WAITING_APPROVAL"
+    assert len([e for e in events if e.type == "APPROVAL_REQUESTED"]) == 1
+    assert row.lease_expires_at is None and row.runnable_at is None
+    assert await k.journal.pending_signals(handle.run_id) == [], "the racing row was drained"
+
+
+async def test_an_approve_racing_the_re_park_is_decided_not_lost(world, monkeypatch) -> None:
+    """The lost wakeup itself: an approve that commits between a woken run's drain and its re-park
+    used to have its wake erased by the release, leaving the human's decision unconsumed for ever."""
+    from keel.runtime.steps import StepEngine
+
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(demo.gated_tool_chain, {"title": "decide in the window"})
+    await _work(k, "w1")
+    await _send(k, handle.run_id, "custom")                  # a spurious wake: nothing decides
+    [approval] = fold(await k.events(handle.run_id)).approvals.values()
+
+    original = StepEngine._commit_park
+    raced: list[bool] = []
+
+    async def approve_in_the_window(self: Any, *args: Any, **kwargs: Any) -> bool:
+        if not raced:
+            raced.append(True)
+            self.journal._put_signal(SignalRow(
+                signal_id=uuid7(), run_id=handle.run_id, type="approve",
+                payload={"by": "alice", "approval_id": str(approval.approval_id)},
+            ))
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(StepEngine, "_commit_park", approve_in_the_window)
+    await _work(k, "w2")
+
+    assert raced
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "COMPLETED", state.phase
+    assert [a.state for a in state.approvals.values()] == ["GRANTED"]
+    assert world.applied_counts()["issues.create#1"] == 1
+    assert await k.journal.pending_signals(handle.run_id) == []

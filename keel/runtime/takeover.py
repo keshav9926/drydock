@@ -11,7 +11,10 @@ this order:
     CANCEL_ACKNOWLEDGED{step_index}               the replay anchor, exactly as for a cooperative cancel
     RUN_CANCELLED{reason=parent_cancel, forced_by}
     + child_result → the parent's inbox            in the same transaction, like every child's terminal event
-    + cancel → each of the child's own children    the cascade is the same mechanism at every depth
+
+Depth-first (§17.7): a child's own children are asked, and forced in their turn, *before* the child
+is taken over, so RUN_CANCELLED of a child always follows its descendants' terminal events (S8).
+Until they are all terminal the answer is `refused`, and the caller asks again after the grace.
 
 No RECOVERY_COMPLETED is appended, because no step goes live; the `recoveries` row says
 FORCED_CANCEL. Two callers: the parent's worker, on waking after `cancel_grace`, and the reaper,
@@ -25,6 +28,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from keel.core.errors import Fenced
 from keel.core.ids import RunId
 from keel.events import CancelAcknowledged, RecoveryStarted, RunCancelled, StepCancelled
 from keel.runtime.delegation import cancel_signal, child_result_signal, usage_of
@@ -45,9 +49,24 @@ async def force_cancel(
     forced_by: str,
     cancel_grace_s: float,
 ) -> str:
-    """Take the child's lease and cancel it. `refused` when the store's predicate says not yet —
-    the caller re-parks and asks again after the grace; `terminal` when the child got there on its
-    own between the caller's read and the takeover; `cancelled` when this epoch closed it."""
+    """Take the child's lease and cancel it. `refused` when the store's predicate says not yet, or
+    the child's own children are not all terminal yet — the caller re-parks and asks again after
+    the grace; `terminal` when the child got there on its own between the caller's read and the
+    takeover; `cancelled` when this epoch closed it; `lost_race` when another taker fenced this one
+    between its takeover and its close (two reapers on one stray)."""
+    open_grandchildren = [c for c in await journal.children(child_run_id) if c.terminal_at is None]
+    if open_grandchildren:
+        for g in open_grandchildren:
+            # Told first, keyed so every tick and every taker produce one row; forced in their turn.
+            await journal.insert_signal(
+                cancel_signal(g.run_id, client_key=f"cancel:forced:{child_run_id}", by=forced_by, reason="parent_cancel")
+            )
+            await force_cancel(
+                journal, g.run_id, worker_id=worker_id, ttl_s=ttl_s, forced_by=forced_by,
+                cancel_grace_s=cancel_grace_s,
+            )
+        if any(c.terminal_at is None for c in await journal.children(child_run_id)):
+            return "refused"
     lease = await journal.takeover(
         child_run_id,
         worker_id,
@@ -62,11 +81,18 @@ async def force_cancel(
         await journal.release(lease, phase=state.phase)
         await journal.set_recovery(child_run_id, lease.epoch, outcome="TERMINAL")
         return "terminal"
-    # Read before the transaction: the cascade needs the grandchildren's rows, and a backend that
-    # serialises appends with one lock must not be asked for a read while it holds it.
-    grandchildren = [c for c in await journal.children(child_run_id) if c.terminal_at is None]
     open_step = state.open_step
     at = open_step.step_index if open_step is not None else state.next_step_index
+    try:
+        return await _close(journal, lease, child_run_id, state, row, open_step, at, forced_by)
+    except Fenced:
+        await journal.set_recovery(child_run_id, lease.epoch, outcome="FENCED")
+        return "lost_race"
+
+
+async def _close(
+    journal: Any, lease: Any, child_run_id: RunId, state: Any, row: Any, open_step: Any, at: int, forced_by: str
+) -> str:
     async with journal.append(lease) as tx:
         started = await tx.append(
             RecoveryStarted(
@@ -96,15 +122,6 @@ async def force_cancel(
                     status="cancelled",
                     error="ChildCancelled",
                     usage=usage_of(state),
-                )
-            )
-        for g in grandchildren:
-            await tx.insert_signal(
-                cancel_signal(
-                    g.run_id,
-                    client_key=f"cancel:{child_run_id}:{ack}",
-                    by=forced_by,
-                    reason="parent_cancel",
                 )
             )
     await journal.set_recovery(child_run_id, lease.epoch, started_seq=started, outcome="FORCED_CANCEL")

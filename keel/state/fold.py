@@ -306,7 +306,13 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.epochs.append(b.lease_epoch)
         st.recovery_cause[b.lease_epoch] = b.cause
         st.recovery_open = True
-        if not st.terminal:
+        # §7.2.1: an acquisition moves CREATED and WAITING_* to RUNNING, lifts SUSPENDED only for a
+        # manual resume, and never lifts PAUSED — only RUN_PAUSE_LIFTED does. A woken paused or
+        # suspended run is still paused or suspended until the drain says otherwise.
+        if st.phase == "SUSPENDED":
+            if b.cause == "RESUME":
+                st.phase = "RUNNING"
+        elif st.phase != "PAUSED" and not st.terminal:
             st.phase = "RUNNING"
     elif t == "RECOVERY_COMPLETED":
         st.live_from_step[ev.lease_epoch] = b.live_from_step

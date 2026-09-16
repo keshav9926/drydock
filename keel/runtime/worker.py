@@ -125,17 +125,31 @@ class Worker:
     # --- one lease -----------------------------------------------------------
     async def execute(self, lease: Lease) -> None:
         journal = self.journal
-        started_seq = None
-        async with journal.append(lease) as tx:
-            started_seq = await tx.append(
-                RecoveryStarted(
-                    lease_epoch=lease.epoch,
-                    cause=lease.cause,
-                    from_seq=lease.next_seq - 1,
-                    from_segment=0,
+        row = await journal.run_row(lease.run_id)
+        cause = lease.cause
+        if cause != "ORPHANED" and row is not None and row.phase in ("PAUSED", "SUSPENDED"):
+            # §7.2.1: the cause is fixed at the first append, and it decides whether a suspension
+            # lifts — so peek the inbox before writing it. A pending `resume` makes this a RESUME;
+            # anything else woke a run that stays paused or suspended.
+            pending = await journal.pending_signals(lease.run_id)
+            cause = "RESUME" if any(s.type == "resume" for s in pending) else "WAKE"
+        try:
+            async with journal.append(lease) as tx:
+                started_seq = await tx.append(
+                    RecoveryStarted(
+                        lease_epoch=lease.epoch,
+                        cause=cause,
+                        from_seq=lease.next_seq - 1,
+                        from_segment=0,
+                    )
                 )
-            )
-        await journal.set_recovery(lease.run_id, lease.epoch, started_seq=started_seq)
+        except (Fenced, StoreUnavailable) as exc:
+            # A takeover can move the epoch between the claim and this first append (§7.6.2). That
+            # is a race this run lost, not a reason for the worker to stop serving every other run.
+            outcome = "FENCED" if isinstance(exc, Fenced) else "CRASHED"
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome=outcome)
+            return
+        await journal.set_recovery(lease.run_id, lease.epoch, started_seq=started_seq, cause=cause)
 
         events = await journal.read(lease.run_id)
         state = fold(events)
@@ -144,8 +158,9 @@ class Worker:
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="TERMINAL")
             return
 
-        row = await journal.run_row(lease.run_id)
         program = self.resolve(state.program or row.program)
+        detail = state.suspended_detail if isinstance(state.suspended_detail, dict) else {}
+        suspended_at = int(detail.get("step_index", state.next_step_index))
         engine = StepEngine(
             journal,
             lease,
@@ -171,6 +186,18 @@ class Worker:
             program_version=lease.program_version,
             tools=self.tools,
         )
+        if state.phase == "SUSPENDED":
+            # Woken without a `resume`: drain, act on `cancel`, and park again — never re-execute,
+            # which would only suspend again and leave the waking row unconsumed (§7.2.1).
+            async def program(ctx: Any, args: Any, _at: int = suspended_at) -> Any:
+                await engine.hold_suspended(_at)
+        elif cause == "RESUME" and row is not None and row.phase == "SUSPENDED":
+            # Lifted: consume the inbox before replaying, or a run that suspends again on the same
+            # step would be claimed for ever by the `resume` that lifted it.
+            async def program(ctx: Any, args: Any, _real: Any = program, _at: int = suspended_at) -> Any:
+                await engine.drain_before_resuming(_at)
+                return await _real(ctx, args)
+
         heart = asyncio.create_task(self._heartbeat(lease))
         t0 = time.monotonic()
         try:
@@ -211,17 +238,15 @@ class Worker:
             await self._finish(engine, lease, RunCancelled(reason=str(exc)), "CANCELLED")
             return
         except Parked as parked:
-            # RUN_WAITING is committed. Release with *both* NULLs — no lease and no `runnable_at` —
-            # keeping only `wake_at`. That pair is the zero-compute wait: nothing holds the run and
-            # nothing polls it, so a week of waiting costs one row and one timer sweep (§4.2).
-            await self._release(lease, runnable_at=None, wake_at=parked.wake_at)
-            await journal.set_recovery(lease.run_id, lease.epoch, outcome="WAITING")
+            # RUN_WAITING and the release committed together (§5.4 (4)): no lease, no
+            # `runnable_at`, only `wake_at`. That pair is the zero-compute wait — nothing holds the
+            # run and nothing polls it, so a week of waiting costs one row and one timer sweep.
+            outcome = "SUSPENDED" if parked.reason == "suspended" else "WAITING"
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome=outcome)
             return
         except Paused:
-            # RUN_PAUSED is committed. Release with `runnable_at = NULL` so nothing polls it: a
-            # paused run costs zero compute and zero ticks until a `resume` signal arrives, which
-            # is the same park the approval wait uses and the reason both are worth having.
-            await self._release(lease, runnable_at=None, phase="PAUSED")
+            # RUN_PAUSED, `paused_at` and the release committed together (§16.6): zero compute and
+            # zero ticks until a `resume` or `cancel` makes the claim consider it again.
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="SUSPENDED")
             return
         except Drain:
@@ -287,6 +312,11 @@ class Worker:
                     )
         except (Fenced, Abandon):
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="FENCED")
+            return
+        except StoreUnavailable:
+            # The same rule as `_run_program`'s: a worker that cannot write must not write a
+            # verdict, and must not die for it either — the lease lapses and a successor finishes.
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome="CRASHED")
             return
         await self._release(lease, phase=phase)
         await journal.set_recovery(

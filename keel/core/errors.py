@@ -53,6 +53,14 @@ class StoreUnavailable(KeelError):
     """
 
 
+class WakeRaced(Exception):
+    """A release guarded by `runnable_at IS NULL` found a signal it has not drained (§5.4 (4)).
+
+    Not a `KeelError`: it never leaves the step engine. The transaction it is raised in rolls back
+    — the waiting event with it — and the engine drains and parks again. That is how the lost
+    wakeup is closed without a subquery the statement's snapshot could miss."""
+
+
 class LeaseTooShort(KeelError):
     """lease_ttl <= max registered tool.timeout; the pre-dispatch gate could never clear (§8.4)."""
 

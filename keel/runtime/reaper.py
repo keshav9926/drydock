@@ -15,6 +15,7 @@ taken over — an acquisition like any other, with the fence doing what it alway
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from keel.core.ids import RunId
 from keel.journal.protocol import JournalBackend
@@ -22,6 +23,7 @@ from keel.runtime.delegation import cancel_signal
 from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S, force_cancel
 
 DEFAULT_PERIOD = 1.0
+log = logging.getLogger("keel.reaper")
 
 
 class Reaper:
@@ -77,10 +79,15 @@ class Reaper:
         return closed
 
     async def run_forever(self) -> None:
+        """Each sweep isolated: one that raises — a lost race, a store blip — is logged and the
+        loop goes on. A reaper task that died silently would stop orphaning lapsed leases, firing
+        expiry timers and closing strays on this process for good, and nothing would say why."""
         while not self._stop:
-            await self.sweep()
-            await self.timers()
-            await self.strays()
+            for sweep in (self.sweep, self.timers, self.strays):
+                try:
+                    await sweep()
+                except Exception:  # noqa: BLE001 - the loop outlives any one tick
+                    log.exception("reaper %s: %s failed; continuing", self.worker_id, sweep.__name__)
             await asyncio.sleep(self.period)
 
     def stop(self) -> None:

@@ -135,10 +135,18 @@ async def test_children_run_and_their_results_wake_the_parent(world) -> None:
     handle = await k.start(demo.orchestrator, {"tasks": ["a", "b"]})
     await _acquire(k, handle.run_id, "w1")
 
-    # Each child's terminal event commits with the parent's wake.
+    # Each child's terminal event commits with the parent's wake — the inbox row itself. The claim
+    # reads the inbox (§18.4), so no second `runs` row is bumped inside the child's transaction,
+    # which is what keeps parent and child locks in one order.
     a, b = await k.journal.children(handle.run_id)
     await _acquire(k, a.run_id, "ca")
-    assert (await k.journal.run_row(handle.run_id)).runnable_at is not None, "the child_result is the wake"
+    assert (await k.journal.run_row(handle.run_id)).runnable_at is None, "no cross-run bump"
+    claimable = []
+    while (lease := await k.journal.claim("probe", timedelta(seconds=TTL))) is not None:
+        claimable.append(lease)
+    assert handle.run_id in {l.run_id for l in claimable}, "the child_result is the wake"
+    for lease in claimable:
+        await k.journal.release(lease)  # hand them straight back; the work below is the workers'
     await _acquire(k, b.run_id, "cb")
     pending = await k.journal.pending_signals(handle.run_id)
     assert [s.type for s in pending] == ["child_result", "child_result"]
@@ -315,7 +323,8 @@ async def test_cancel_is_asked_first_and_forced_after_the_grace(world) -> None:
     parent = await _state(k, handle.run_id)
     assert parent.phase == "CANCELLED"
     assert parent.children[b.run_id].state == "CANCELLED" and parent.children[b.run_id].error == "ChildCancelled"
-    assert parent.children[b.run_id].usage_settled == {"max_tokens": 100}, "a cancelled child settles at its slice"
+    assert parent.children[b.run_id].usage_settled["tokens_charged"] == 100, "a cancelled child settles at its slice"
+    assert parent.charged.tokens_charged >= 100, "and the ledger keeps it charged, in its own unit"
     assert parent.steps[0].state == "CANCELLED"
     # STEP_CANCELLED closes the open step immediately before RUN_CANCELLED, in the epoch that saw
     # the last child terminal (§7.6.2) — and that epoch owes its RECOVERY_COMPLETED like any other.
@@ -444,3 +453,285 @@ async def test_the_delegate_step_replays_from_the_journal_and_a_new_schema_is_a_
 
     changed = await run_verify(k.journal, handle.run_id, redeployed, tools=k.tools)
     assert not changed.ok and changed.diff["step_index"] == 0
+
+
+# --- the post-phase-8 audit: each test below is a finding that reproduced -----------------------
+from keel.client import Budget  # noqa: E402
+from keel.providers.protocol import ModelRequest, ModelResponse, Usage  # noqa: E402
+from keel.runtime.delegation import Delegation, json_schema_ok  # noqa: E402
+
+
+class _BillsItsMaxTokens:
+    """A provider that charges exactly what a call reserves, so a budget test counts real spend."""
+
+    name = "bills"
+
+    async def count_tokens(self, req: ModelRequest) -> int:
+        return 0
+
+    async def complete(self, req: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="ok", usage=Usage(input_tokens=req.max_tokens, output_tokens=0))
+
+
+@as_program(name="spender", version="1.0")
+async def spender(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    if args["task"] != "free-fail":
+        await ctx.model([{"role": "user", "content": args["task"]}], name="m", max_tokens=100)
+    if "fail" in args["task"]:
+        raise RuntimeError("failed")
+    return {"hits": 1}
+
+
+@as_program(name="retrying_parent", version="1.0")
+async def retrying_parent(ctx: Any, args: dict[str, Any]) -> Any:
+    results = await ctx.delegate_many([
+        Delegation(program="spender", task=t, on_failure=args.get("on_failure", "retry"), max_retries=1,
+                   budget_slice={"max_tokens": 100}, result_schema=args.get("result_schema"))
+        for t in args["tasks"]
+    ])
+    return [r.status for r in results]
+
+
+def _budget_keel(clock: FakeClock) -> Keel:
+    return Keel(journal=MemoryJournal(clock=clock), provider=_BillsItsMaxTokens(),
+                programs=[spender, retrying_parent], clock=clock)
+
+
+async def test_a_child_has_its_own_root_so_a_retry_does_real_work(world) -> None:
+    """Children inherited the parent's `run_root_id`, so a retried child's first tool call had the
+    same effect key as the failed one's and died on DuplicateEffectKey — retry never did any work."""
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(
+        demo.orchestrator,
+        {"tasks": ["a"], "result_schema": {"type": "object", "required": ["verdict"]},
+         "on_failure": "retry", "max_retries": 1},
+    )
+    await _acquire(k, handle.run_id, "w1")
+    await _until_idle(k)
+    await _acquire(k, handle.run_id, "w2")
+    await _until_idle(k)
+    await _acquire(k, handle.run_id, "w3")
+
+    for c in await k.journal.children(handle.run_id):
+        assert c.run_root_id == c.run_id, "a child's effect keys are its own"
+    retried = [c for c in (await _state(k, handle.run_id)).children.values() if c.retry_no == 1]
+    assert retried[0].error == "ContractViolation", "the replacement ran and was graded, not refused a key"
+
+
+async def test_retry_admission_settles_first_and_counts_the_ordinals_still_waiting(world) -> None:
+    """Admission checked the failed child's slice before refunding it (refusing a retry that fits),
+    and ignored slices promised to ordinals still waiting for a slot (so six children billed 600
+    under a 500 budget). Σ reservations ≤ remaining must hold for the whole tree (§17.4, S9)."""
+    clock = FakeClock()
+    k = _budget_keel(clock)
+    fits = await k.start(retrying_parent, {"tasks": ["free-fail"]}, budget=Budget(max_tokens=100))
+    await _acquire(k, fits.run_id, "p1")
+    [c] = await k.journal.children(fits.run_id)
+    await _acquire(k, c.run_id, "c")
+    await _acquire(k, fits.run_id, "p2")
+    assert [x.policy_applied for x in (await _state(k, fits.run_id)).children.values()][0] == "retry"
+
+    k = _budget_keel(clock)
+    tree = await k.start(retrying_parent, {"tasks": ["fail", "b", "c", "d", "e"]}, budget=Budget(max_tokens=500))
+    await _until_idle(k, limit=40)
+    events = await k.events(tree.run_id)
+    peak = max(fold(events[:i]).charged.tokens_charged for i in range(1, len(events) + 1))
+    spent = sum([(await _state(k, ch.run_id)).charged.tokens_charged for ch in await k.journal.children(tree.run_id)])
+    assert peak <= 500 and spent <= 500, (peak, spent)
+
+
+async def test_nothing_is_retried_under_a_parent_that_is_cancelling(world) -> None:
+    """A child failing after the parent acknowledged a cancel was replaced anyway — by a child with
+    no cancel row, which the takeover could never force, running its whole program."""
+    clock = FakeClock()
+    k = _budget_keel(clock)
+    handle = await k.start(retrying_parent, {"tasks": ["a"], "result_schema": {"type": "object", "required": ["verdict"]}},
+                           budget=Budget(max_tokens=1000))
+    await _acquire(k, handle.run_id, "w1")
+    [c0] = await k.journal.children(handle.run_id)
+    await k.journal.insert_signal(SignalRow(signal_id=uuid7(), run_id=handle.run_id, type="cancel", payload={}))
+    clock.advance(0.001)
+    await _acquire(k, c0.run_id, "c0")          # completes with a result that violates the schema
+    await _acquire(k, handle.run_id, "w2")     # drains [cancel, child_result]
+
+    assert len(await k.journal.children(handle.run_id)) == 1, "no replacement"
+    assert (await _state(k, handle.run_id)).phase == "CANCELLED"
+
+
+async def test_fail_parent_cancels_the_siblings_and_spawns_nothing_more(world) -> None:
+    """§17.6/§17.7: a fatal child failure cancels the subtree first. Siblings used to run to their
+    end, and ordinals past the in-flight bound were still spawned after the fatal CHILD_FAILED."""
+
+    @as_program(name="fails_first", version="1.0")
+    async def fails_first(ctx: Any, args: dict[str, Any]) -> Any:
+        await ctx.now()
+        if args["task"] == "t0":
+            raise RuntimeError("boom")
+        return {"ok": True}
+
+    @as_program(name="fatal_parent", version="1.0")
+    async def fatal_parent(ctx: Any, args: dict[str, Any]) -> Any:
+        rs = await ctx.delegate_many([Delegation(program="fails_first", task=f"t{i}", on_failure="fail_parent")
+                                      for i in range(6)])
+        return [r.status for r in rs]
+
+    clock = FakeClock()
+    k = Keel(journal=MemoryJournal(clock=clock), programs=[fails_first, fatal_parent], clock=clock)
+    handle = await k.start(fatal_parent, {})
+    await _acquire(k, handle.run_id, "p1")
+    first = await k.journal.children(handle.run_id)
+    # By task, not by position: under a FakeClock every child shares one `created_at`.
+    failing = next(c for c in first if c.args["task"] == "t0")
+    await _acquire(k, failing.run_id, "c0")
+    await _acquire(k, handle.run_id, "p2")
+
+    for sibling in (c for c in first if c.run_id != failing.run_id):
+        assert [s.type for s in await k.journal.pending_signals(sibling.run_id)] == ["cancel"]
+    await _until_idle(k, limit=40)
+    assert len(await k.journal.children(handle.run_id)) == 4, "ordinals 4 and 5 never spawned"
+    state = await _state(k, handle.run_id)
+    assert state.phase == "FAILED" and state.error.startswith("ChildFailed")
+
+
+async def test_a_forced_cancel_closes_the_deepest_run_first(world) -> None:
+    """§17.7: RUN_CANCELLED of a child follows its own children's terminal events (S8). The parent
+    used to take a mid-tree child over while its leaf was still open."""
+
+    @as_program(name="leaf", version="1.0")
+    async def leaf(ctx: Any, args: dict[str, Any]) -> Any:
+        return {"ok": True}
+
+    @as_program(name="mid", version="1.0")
+    async def mid(ctx: Any, args: dict[str, Any]) -> Any:
+        [r] = await ctx.delegate_many([Delegation(program="leaf", task="x")])
+        return r.status
+
+    @as_program(name="top", version="1.0")
+    async def top(ctx: Any, args: dict[str, Any]) -> Any:
+        [r] = await ctx.delegate_many([Delegation(program="mid", task="y")])
+        return r.status
+
+    clock = FakeClock()
+    k = Keel(journal=MemoryJournal(clock=clock), programs=[leaf, mid, top], clock=clock)
+    handle = await k.start(top, {})
+    await _acquire(k, handle.run_id, "t1")
+    [m] = await k.journal.children(handle.run_id)
+    await _acquire(k, m.run_id, "m1")
+    [lf] = await k.journal.children(m.run_id)
+    await k.journal.insert_signal(SignalRow(signal_id=uuid7(), run_id=handle.run_id, type="cancel", payload={}))
+    await _acquire(k, handle.run_id, "t2")      # top acknowledges, asks mid
+    clock.advance(1)
+    await _acquire(k, m.run_id, "m2")           # mid acknowledges, asks leaf; leaf never answers
+
+    order: list[Any] = []
+    for _ in range(6):                          # grace after grace, until the tree is closed
+        clock.advance(GRACE + 1)
+        await k.journal.sweep_timers()
+        while (lease := await k.journal.claim("w", timedelta(seconds=TTL))) is not None:
+            if lease.run_id == lf.run_id:
+                await k.journal.release(lease)  # the leaf is wedged: claimed, never run
+                break
+            await _run(k, lease, "w")
+        for rid in (lf.run_id, m.run_id, handle.run_id):
+            if rid not in order and (await k.journal.run_row(rid)).terminal_at is not None:
+                order.append(rid)
+    assert order == [lf.run_id, m.run_id, handle.run_id], "leaf, then mid, then top"
+
+
+async def test_two_reapers_on_one_stray_lose_a_race_not_a_task(world) -> None:
+    """A second reaper's takeover fencing the first used to raise `Fenced` out of `Reaper.strays`,
+    silently ending that process's reaper loop for good."""
+    from keel.events import RunCompleted
+    from keel.journal.memory import memory_run_row
+
+    clock = FakeClock()
+    j = MemoryJournal(clock=clock)
+    pid, cid = uuid7(), uuid7()
+    await j.create_run(memory_run_row(run_id=pid, program="p", program_version="v", keel_version="t",
+                                      args={}, budget={}, model_config={}),
+                       RunCreated(program="p", program_version="v", args={}), runnable_at=clock.now())
+    lease = await j.acquire(pid, "w", timedelta(seconds=5))
+    async with j.append(lease) as tx:
+        await tx.append(RecoveryStarted(lease_epoch=lease.epoch, cause="RESUME", from_seq=1))
+        s = await tx.append(ChildSpawned(step_index=0, child_run_id=cid, delegation_id=uuid7()))
+        await tx.create_child(
+            RunRow(run_id=cid, run_root_id=cid, program="kid", program_version="v", keel_version="t",
+                   phase="CREATED", trace_id=pid, args={}, parent_run_id=pid),
+            RunCreated(program="kid", program_version="v", args={}, parent_run_id=pid),
+            DelegationRow(delegation_id=uuid7(), parent_run_id=pid, parent_step_index=0, child_run_id=cid,
+                          role="worker", contract={}, budget_reserved={}, spawned_seq=s),
+        )
+        await tx.append(RunCompleted(result={}))
+    await j.release(lease, phase="COMPLETED")
+
+    a, b = Reaper(j, cancel_grace=GRACE), Reaper(j, cancel_grace=GRACE)
+    await a.strays()
+    clock.advance(GRACE + 1)
+    real_run_row = j.run_row
+    ticked: list[int] = []
+
+    async def run_row(run_id: Any) -> Any:
+        # A has taken the lease and folded the journal; its closing append is next. B ticks now.
+        if run_id == cid and not ticked:
+            ticked.append(-1)                   # set first: B's own read comes back through here
+            ticked[0] = await b.strays()
+        return await real_run_row(run_id)
+
+    j.run_row = run_row  # type: ignore[method-assign]
+    assert await a.strays() == 0, "A lost the race — and did not raise"
+    j.run_row = real_run_row  # type: ignore[method-assign]
+    assert ticked == [1]
+    assert [r.outcome for r in await j.recoveries(cid)] == ["FENCED", "FORCED_CANCEL"]
+    assert (await j.run_row(cid)).terminal_at is not None
+
+
+async def test_a_paused_parent_stays_paused_when_its_child_finishes(world) -> None:
+    @as_program(name="quick", version="1.0")
+    async def quick(ctx: Any, args: dict[str, Any]) -> Any:
+        return {"ok": True}
+
+    @as_program(name="pausable", version="1.0")
+    async def pausable(ctx: Any, args: dict[str, Any]) -> Any:
+        await ctx.delegate_many([Delegation(program="quick", task="x")])
+        await ctx.now()
+        return "done"
+
+    clock = FakeClock()
+    k = Keel(journal=MemoryJournal(clock=clock), programs=[quick, pausable], clock=clock)
+    handle = await k.start(pausable, {})
+    await _acquire(k, handle.run_id, "p1")
+    [child] = await k.journal.children(handle.run_id)
+    await k.journal.insert_signal(SignalRow(signal_id=uuid7(), run_id=handle.run_id, type="pause", payload={}))
+    await _acquire(k, handle.run_id, "p2")
+    await _acquire(k, child.run_id, "c1")
+    await _until_idle(k)
+    assert (await _state(k, handle.run_id)).phase == "PAUSED", "a child_result does not lift a pause"
+
+
+def test_result_schema_is_graded_all_the_way_down() -> None:
+    """Grading checked top-level required keys and types only: bounds, literals, Optional unions and
+    nested models all passed (§17.8's injection wall)."""
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    class Item(BaseModel):
+        id: int
+
+    class Verdict(BaseModel):
+        score: int = Field(le=10)
+        kind: Literal["yes", "no"]
+        note: str | None = None
+        items: list[Item] = []
+
+    schema = Verdict.model_json_schema()
+    assert json_schema_ok(schema, {"score": 3, "kind": "yes", "note": None, "items": [{"id": 1}]}) == (True, None)
+    for bad in (
+        {"score": 99, "kind": "yes"},
+        {"score": 1, "kind": "maybe"},
+        {"score": 1, "kind": "no", "note": 7},
+        {"score": 1, "kind": "no", "items": [{"id": "not-an-int"}]},
+    ):
+        ok, why = json_schema_ok(schema, bad)
+        assert not ok and why, bad

@@ -17,6 +17,12 @@ from keel.core.ids import EffectKey, RunId, SignalId
 from keel.events import Event
 
 RecoveryCause = Literal["START", "WAKE", "ORPHANED", "RESUME", "DRAIN"]
+
+#: The constitution's nine signal types — the `signals.type` CHECK. Both backends refuse anything
+#: else at insert, so a test on memory cannot pass on a row Postgres would reject (§5.6).
+SIGNAL_TYPES = frozenset(
+    {"approve", "reject", "cancel", "pause", "resume", "rebind", "child_result", "timer", "custom"}
+)
 EffectStatus = Literal[
     "INTENDED",
     "STARTED",
@@ -228,7 +234,36 @@ class AppendTx(Protocol):
         cannot become terminal and die before notifying — the L1 hole a same-database design
         closes for free. The parent's CANCEL_ACKNOWLEDGED inserts a `cancel` per non-terminal child
         the same way. Not a foreign append: the constitution names child workers as inbox writers.
+
+        Unlike the API's insert it does **not** bump the target's `runnable_at`. That UPDATE would
+        lock a second `runs` row inside a transaction that already holds its own, and a child's
+        terminal transaction and its parent's cancel drain would then take the two rows in opposite
+        orders — a deadlock. The claim reads the inbox (§18.4), so the row alone makes the target
+        claimable; `NOTIFY` still fires on commit for the prompt wake.
         """
+        ...
+
+    async def pending_signals(self) -> list[SignalRow]:
+        """This run's unconsumed rows, read *inside* the fenced transaction (§5.4 (7)).
+
+        After the fence holds the row lock, any insert that sets `runnable_at` must wait for this
+        transaction — so the rows read here are exactly the ones whose wake bumps are already
+        committed, and clearing the flag at the end of the drain can never erase a bump for a row
+        this drain did not see."""
+        ...
+
+    async def clear_wake(self) -> None:
+        """§5.4 (7): the last statement of a drain — `runnable_at = NULL` on this held run."""
+        ...
+
+    async def release_park(self, *, phase: str, wake_at: datetime | None, paused: bool = False) -> None:
+        """§5.4 (4): the release, as the last statement of the waiting transaction.
+
+        `lease_expires_at = NULL, runnable_at = NULL, wake_at = $wake_at, phase = $phase` — guarded
+        by `runnable_at IS NULL`. A signal inserted since the last drain has set it, and the
+        transaction must not park over a wake it has not read: `WakeRaced` rolls the whole thing
+        back, waiting event included, and the engine drains and parks again. `paused` also sets
+        `paused_at = now()` (§16.6)."""
         ...
 
     async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:

@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from keel.core.errors import Cancelled, ContractInvalid, Fenced, KeelError, StepFailed, Rejected, UnknownOutcome
-from keel.core.errors import NondeterminismDetected
+from keel.core.errors import ApprovalBindingError, NondeterminismDetected, WakeRaced
 from keel.core.ids import uuid7
 from keel.core.protocols import (
     Ambiguous,
@@ -40,6 +40,7 @@ from keel.events import (
     RecoveryCompleted,
     RunCreated,
     RunPaused,
+    RunPauseLifted,
     RunWaiting,
     SignalIgnored,
     SignalReceived,
@@ -77,6 +78,7 @@ from keel.state.fold import (
     WAITING_KINDS,
     ChildState,
     RunState,
+    fold,
 )
 
 EXECUTORS: dict[StepKind, StepExecutor] = {}
@@ -107,17 +109,19 @@ class Drain(Exception):
 
 
 class Paused(Exception):
-    """A `pause` signal was drained. RUN_PAUSED is already committed; the worker releases the lease
-    with `runnable_at = NULL`, so the run costs nothing until a `resume` signal wakes it (§4.10)."""
+    """A `pause` signal was drained. RUN_PAUSED, `paused_at` and the release committed together, so
+    the run costs nothing until a `resume` or `cancel` makes the claim consider it again (§16.6)."""
 
 
 class Parked(Exception):
-    """The run is waiting on something that is not compute, and RUN_WAITING is already committed.
+    """The run is waiting on something that is not compute, and RUN_WAITING — with the release —
+    is already committed.
 
-    The worker releases the lease with `lease_expires_at = NULL` *and* `runnable_at = NULL`, keeping
-    only `wake_at`. Both NULLs matter: the first is what makes the wait cost no compute, the second
-    is what makes it cost no *ticks* — no worker holds the run and no scheduler polls it. Days pass
-    for the price of one row (§4.2).
+    `lease_expires_at = NULL` *and* `runnable_at = NULL`, keeping only `wake_at`, in the waiting
+    event's own transaction (§5.4 (4)). Both NULLs matter: the first is what makes the wait cost no
+    compute, the second is what makes it cost no *ticks* — no worker holds the run and no scheduler
+    polls it. Days pass for the price of one row (§4.2). A SUSPENDED run re-parked by a wake that
+    carried no `resume` raises this too, with reason `suspended`.
     """
 
     def __init__(self, reason: str, wake_at: Any = None) -> None:
@@ -205,6 +209,9 @@ class StepEngine:
         self.live_from_step: int | None = None
         self.replayed_steps = 0
         self.recovery_completed = False
+        #: §16.6. A paused run woken for a `resume` or `cancel` stays paused until its drain lifts
+        #: the pause, and a drain that finds neither parks it again rather than running on.
+        self._paused = state.phase == "PAUSED"
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
@@ -237,12 +244,30 @@ class StepEngine:
         # `asyncio.timeout(tool.timeout)`, which is what `shutdown_grace` must exceed.
         if self.should_drain is not None and self.should_drain():
             raise Drain(f"draining at step {intent.step_index}")
-        await self._drain_inbox(intent.step_index)
+        await self._drain_inbox(intent.step_index, force=self._paused)
         await self._reach_live(intent.step_index)
         return await self._live(intent)
 
+    async def hold_suspended(self, step_index: int) -> None:
+        """§7.2.1: a SUSPENDED run woken without a `resume` drains its inbox, acts on `cancel`, and
+        otherwise parks again *without re-executing* — replaying up to the step that suspended it
+        would only suspend it again, and would never consume the row that woke it."""
+        await self._drain_inbox(step_index, force=True, park_as="SUSPENDED")
+
+    async def drain_before_resuming(self, step_index: int) -> None:
+        """A SUSPENDED run lifted by `resume`: consume the inbox first, so a run that suspends
+        again on replay is not re-claimed for ever by the row that resumed it."""
+        await self._drain_inbox(step_index, force=True)
+
+    async def _refold(self) -> None:
+        """After a rolled-back transaction, the in-place fold may say things the journal does not.
+        Re-reading it is the undo, and the rare path (a signal raced a park) can afford it."""
+        self.state = fold(await self.journal.read(self.lease.run_id))
+
     # --- the inbox drain (§4.3, §4.10) ---------------------------------------
-    async def _drain_inbox(self, step_index: int, waiting: Any = None) -> None:
+    async def _drain_inbox(
+        self, step_index: int, waiting: Any = None, *, force: bool = False, park_as: str | None = None
+    ) -> None:
         """Apply every unconsumed signal, at the boundary before the step they precede.
 
         At *every* step boundary, not only at acquisition. Without that, a cancel sent to a held
@@ -254,20 +279,33 @@ class StepEngine:
         Only on the live path. A memoized step re-reads a decision already journaled, and draining
         there would let a signal that arrived *after* the original pass change what a replay does —
         the journal would stop being the whole history of the run.
+
+        `force` opens the transaction even when the peek found nothing: after a park lost the race
+        to a signal (§5.4 (4)), for a paused run that must park again, and for `park_as` — a
+        SUSPENDED run woken without a resume, which parks again in this same transaction.
         """
         if not self.allow_live or not hasattr(self.journal, "pending_signals"):
             return
-        pending = await self.journal.pending_signals(self.lease.run_id)
-        if not pending:
+        peek = await self.journal.pending_signals(self.lease.run_id)
+        if not peek and not force:
             return
 
-        cancel = pause = telling_children = False
+        cancel = telling_children = False
         # The drain is one fenced transaction, and these two boundaries bracket it. A crash before
         # it leaves every signal unconsumed and the run exactly as it was — the successor drains the
         # same rows. A crash after it leaves the decision durable and consumed, and nothing done
         # about it yet by the program — which is the window S7's "decided once" is about.
-        hooks.at("before:signal_consume", step_index=step_index, signals=len(pending))
+        if peek:
+            hooks.at("before:signal_consume", step_index=step_index, signals=len(peek))
+        resumed = False
         async with self.journal.append(self.lease) as tx:
+            # Read again *under the fence*: every row whose wake bump is committed is visible now,
+            # and none that lands later can commit before this transaction does (§5.4 (7)).
+            pending = await tx.pending_signals()
+            if park_as == "SUSPENDED" and any(r.type == "resume" for r in pending):
+                # A `resume` landed after the cause was chosen. Consuming it here would lose it;
+                # hand the run back instead, and the next holder's peek makes the cause RESUME.
+                resumed, pending = True, []
             # One `now()` for the whole drain: expiry is judged by the store's clock at drain time,
             # never by the worker's, and two signals in one transaction must be judged against the
             # same instant or the order they happen to be read in could change the answer (§7.5).
@@ -282,22 +320,32 @@ class StepEngine:
                 await tx.consume_signal(row.signal_id, seq)
                 applied = await self._apply_signal(tx, row, seq, step_index, waiting, now)
                 cancel = cancel or applied == "cancel"
-                pause = pause or applied == "pause"
                 telling_children = telling_children or applied == "cancel_children"
-        hooks.at("after:signal_consume", step_index=step_index, signals=len(pending))
-        # Cancel outranks pause: a run that has been told to stop for good does not first stop for
-        # a while. Both are raised after the commit, so the journal is already durable when the
-        # program is told.
+            stopping = cancel or (telling_children and waiting is None)
+            # §16.6: the lease is released and `paused_at` set in the pause's own transaction.
+            # Cancel outranks pause: a run told to stop for good does not first stop for a while.
+            park = None if stopping or resumed else ("PAUSED" if self._paused else park_as)
+            if not resumed:
+                await tx.clear_wake()
+            if park is not None:
+                await tx.release_park(phase=park, wake_at=None, paused=park == "PAUSED")
+        if peek:
+            hooks.at("after:signal_consume", step_index=step_index, signals=len(peek))
+        # Raised after the commit, so the journal is already durable when the program is told.
         #
         # A cancel with children still open is acknowledged but not raised: the parent's open
         # DELEGATE step waits for them to end (§7.6.2), and `_wait_children` owns that wait. The
         # one place that cannot be true — a cancel drained at a live boundary with open children,
         # which no program can reach because it cannot pass an open DELEGATE step — falls through
         # to the plain cancel, and the reaper's liveness rule collects the strays (§17.7).
-        if cancel or (telling_children and waiting is None):
+        if resumed:
+            raise Drain(f"resume for a suspended run at step {step_index}")
+        if stopping:
             raise Cancelled(f"cancelled at step {step_index}")
-        if pause:
+        if park == "PAUSED":
             raise Paused(f"paused at step {step_index}")
+        if park is not None:
+            raise Parked(park.lower())
 
     async def _decide_approval(self, tx: Any, row: Any, seq: int, waiting: Any, now: Any) -> None:
         """`approve` / `reject` / `timer`, against the open approval. §7.5's rules, in order.
@@ -309,33 +357,40 @@ class StepEngine:
         four seconds to be replaced — would be honoured on the wrong side of a deadline somebody
         else is relying on.
         """
-        approval = self.state.approval_at(waiting.step_index) if waiting is not None else None
-        if approval is None:
+        async def ignore(reason: str) -> None:
             await tx.append(
-                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="unknown_approval"),
+                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason=reason),
                 causation_seq=seq,
             )
+
+        approval = self.state.approval_at(waiting.step_index) if waiting is not None else None
+        # A decision that names its gate is judged against *that* gate (§7.5). Without this, a
+        # retried click aimed at an approval already decided would decide whichever approval
+        # happened to be open when it was drained — authorising an effect nobody approved.
+        named = (row.payload or {}).get("approval_id")
+        if named is not None and (approval is None or str(named) != str(approval.approval_id)):
+            known = next((a for a in self.state.approvals.values() if str(a.approval_id) == str(named)), None)
+            await ignore("approval_terminal" if known is not None and known.terminal else "unknown_approval")
+            return None
+        if approval is None:
+            await ignore("unknown_approval")
             return None
         if approval.terminal:
-            await tx.append(
-                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="approval_terminal"),
-                causation_seq=seq,
-            )
+            await ignore("approval_terminal")
+            return None
+        if self.state.cancel_acknowledged_at is not None:
+            # §7.5.1: the approval step is being cancelled; a grant drained after that must not
+            # record an authorisation nobody will act on.
+            await ignore("step_terminal")
             return None
 
         expired = approval.expires_at is not None and now is not None and now >= approval.expires_at
         if row.type == "timer" and not expired:
             # A timer that fired early, or one that raced a decision. Consumed, not acted on.
-            await tx.append(
-                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="not_yet_expired"),
-                causation_seq=seq,
-            )
+            await ignore("not_yet_expired")
             return None
         if expired and row.type != "timer":
-            await tx.append(
-                SignalIgnored(signal_id=row.signal_id, signal_type=row.type, reason="expired"),
-                causation_seq=seq,
-            )
+            await ignore("expired")
         decision = "expired" if expired else ("granted" if row.type == "approve" else "rejected")
         by = str(row.payload.get("by", "")) if row.payload else ""
         decided_seq = await tx.append(
@@ -352,12 +407,12 @@ class StepEngine:
         # observes a signal only through its own step" is implemented without a second channel
         # (§4.10). The APPROVAL step completes for all three decisions; what a rejection *means* is
         # the program's business, and a bound tool call is refused separately.
-        await tx.append(
-            StepCompleted(
-                step_index=approval.step_index,
-                attempt_no=1,
-                result={"decision": decision, "by": by, "decided_at": str(now) if now else None},
-            ),
+        #
+        # One dict, journaled and handed to the program. Two copies once differed by `decided_at`,
+        # and a program that passed the decision on made different args live than on replay.
+        result = {"decision": decision, "by": by, "decided_at": str(now) if now else None}
+        completed_seq = await tx.append(
+            StepCompleted(step_index=approval.step_index, attempt_no=1, result=result),
             causation_seq=decided_seq,
         )
         await tx.set_run(phase="RUNNING", wake_at=None)
@@ -367,35 +422,57 @@ class StepEngine:
         approval.by = by
         step = self.state.steps.get(approval.step_index)
         if step is not None:
-            step.state = COMPLETED
-            step.result = {"decision": decision, "by": by}
+            step.state, step.result = COMPLETED, result
+            step.outcome_seq, step.outcome_epoch = completed_seq, self.lease.epoch
         return None
 
     async def _settle_waiting(self, intent: StepIntent, journaled: Any) -> Any:
         """A parked step, woken. Drain; if a decision arrived the step is settled and its value is
         returned, and if not the run parks again for the price of one row."""
         self._waiting_intent = intent
-        await self._drain_inbox(intent.step_index, waiting=journaled)
-        settled = self.state.step(intent.step_index)
-        if settled is not None and settled.settled:
-            if settled.state == CANCELLED:
-                raise Cancelled(f"cancelled at step {intent.step_index}")
-            return _value_of(settled)
-        if journaled.kind == "DELEGATE":
-            return await self._wait_children(intent, journaled)
-        approval = self.state.approval_at(intent.step_index)
-        wake_at = approval.expires_at if approval else None
-        # Park *again*, with its own RUN_WAITING. The acquisition already appended
-        # RECOVERY_STARTED, which moves the run to RUNNING — so without this the fold would report
-        # a parked run as running for ever after its first spurious wake, and `keel runs` would
-        # show a queue of work nobody is doing. A re-park is a real transition and is journaled.
-        async with self.journal.append(self.lease) as tx:
-            await tx.append(
-                RunWaiting(reason="approval", wake_at=wake_at, step_index=intent.step_index)
-            )
-            await tx.set_run(phase="WAITING_APPROVAL", wake_at=wake_at)
-        hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=wake_at)
-        raise Parked("approval", wake_at=wake_at)
+        while True:
+            await self._drain_inbox(intent.step_index, waiting=journaled, force=self._paused)
+            journaled = self.state.step(intent.step_index) or journaled
+            if journaled.settled:
+                if journaled.state == CANCELLED:
+                    raise Cancelled(f"cancelled at step {intent.step_index}")
+                return _value_of(journaled)
+            if journaled.kind == "DELEGATE":
+                parked = await self._wait_children(intent, journaled)
+            else:
+                approval = self.state.approval_at(intent.step_index)
+                # Park *again*, with its own RUN_WAITING. The acquisition already appended
+                # RECOVERY_STARTED, which moves the run to RUNNING — so without this the fold would
+                # report a parked run as running for ever after its first spurious wake. A re-park
+                # is a real transition and is journaled, and it releases in the same transaction.
+                parked = await self._commit_park(
+                    "approval", intent.step_index, phase="WAITING_APPROVAL",
+                    wake_at=approval.expires_at if approval else None,
+                )
+                if parked:
+                    hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=self.state.wake_at)
+            if parked:
+                reason = "children" if journaled.kind == "DELEGATE" else "approval"
+                raise Parked(reason, wake_at=self.state.wake_at)
+            # A signal raced the release: drain it and decide again.
+
+    async def _commit_park(
+        self, reason: str, step_index: int, *, phase: str, wake_at: Any = None, wake_in: float | None = None
+    ) -> bool:
+        """RUN_WAITING and the release, one transaction (§5.4 (4)). False when a signal arrived
+        since the last drain: the transaction rolled back and the caller must drain again.
+        `wake_in` is measured from the store's `now()`, never the worker's."""
+        try:
+            async with self.journal.append(self.lease) as tx:
+                if wake_in is not None:
+                    wake_at = await tx.now() + timedelta(seconds=wake_in)
+                await tx.append(RunWaiting(reason=reason, wake_at=wake_at, step_index=step_index))
+                await tx.release_park(phase=phase, wake_at=wake_at)
+        except WakeRaced:
+            await self._refold()
+            return False
+        self.state.wake_at = wake_at
+        return True
 
     async def _apply_signal(
         self, tx: Any, row: Any, seq: int, step_index: int, waiting: Any = None, now: Any = None
@@ -428,6 +505,12 @@ class StepEngine:
                 return None
             ack = await tx.append(CancelAcknowledged(step_index=step_index), causation_seq=seq)
             self.state.cancel_acknowledged_at = step_index
+            if self._paused:
+                # Cancel overrides pause (§16.6): an operator must always be able to stop a paused
+                # run, and a paused parent must be free to wait out its children's cancellation.
+                # `PAUSED → CANCELLED` needs no lift event; `paused_at` is control plane.
+                self._paused = False
+                await tx.set_run(paused_at=None)
             # Propagation (§7.6.2): one `cancel` per child still open, in *this* transaction, so
             # the acknowledgement and the telling cannot be separated by a crash. The child is
             # asked, not forced — forcing is the takeover, after `cancel_grace`.
@@ -444,12 +527,28 @@ class StepEngine:
                 c.state = "CANCELLING"
             return "cancel_children" if open_children else "cancel"
         if kind == "pause":
+            if self._paused or self.state.cancel_acknowledged_at is not None:
+                reason = "already_paused" if self._paused else "already_cancelling"
+                await tx.append(
+                    SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason=reason),
+                    causation_seq=seq,
+                )
+                return None
+            # RUN_PAUSED now; `paused_at` and the release are the drain's last statement, so a
+            # `resume` later in this same drain can still lift it before anything is released.
             await tx.append(RunPaused(step_index=step_index), causation_seq=seq)
-            await tx.set_run(phase="PAUSED")
+            self._paused = True
+            self.state.phase = "PAUSED"
             return "pause"
         if kind == "resume":
-            # A resume for a run that is already running is the ordinary shape of a retried click,
-            # not an error: the signal is what woke the worker, and the worker is already here.
+            if self._paused:
+                await tx.append(RunPauseLifted(), causation_seq=seq)
+                await tx.set_run(paused_at=None, phase="RUNNING")
+                self._paused = False
+                self.state.phase = "RUNNING"
+                return "resume"
+            # A resume for a run that is not paused is the ordinary shape of a retried click, or of
+            # the row that lifted a suspension: the signal woke the worker, and the worker is here.
             await tx.append(
                 SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="not_paused"),
                 causation_seq=seq,
@@ -520,10 +619,12 @@ class StepEngine:
     async def _park_for_approval(self, intent: StepIntent) -> Any:
         """One transaction, then days of nothing.
 
-        INTENT, STARTED, APPROVAL_REQUESTED and RUN_WAITING commit together, and the same
-        transaction NULLs both `lease_expires_at` and `runnable_at`. A crash anywhere in here
-        leaves either no step at all or a parked one — never a half-requested approval, and never
-        a second `approval_id` for one gate (§7.3.1, §7.5).
+        INTENT, STARTED, APPROVAL_REQUESTED, RUN_WAITING and the release commit together — the
+        release guarded by `runnable_at IS NULL` (§5.4 (4)). A crash anywhere in here leaves either
+        no step at all or a parked, released one — never a half-requested approval, and never a
+        second `approval_id` for one gate (§7.3.1, §7.5). A signal that raced it rolls the whole
+        request back; the boundary is drained and the request made again with a fresh id, which is
+        safe precisely because nothing of the first one was ever committed.
         """
         from uuid import uuid4
 
@@ -531,42 +632,48 @@ class StepEngine:
         payload = dict(args.get("payload") or {})
         expires_in = args.get("expires_in")
         binds = args.get("binds_effect_key")
-        approval_id = uuid4()
         hooks.at("before:intent_commit", **_where(intent))
-        async with self.journal.append(self.lease) as tx:
-            now = await tx.now()
-            expires_at = now + timedelta(seconds=float(expires_in)) if expires_in else None
-            intent_seq = await tx.append(_intended(intent))
-            hooks.at("after:intent_commit", **_where(intent))
-            await tx.append(
-                StepAttemptStarted(
-                    step_index=intent.step_index,
-                    attempt_no=1,
-                    lease_epoch=self.lease.epoch,
-                    started_at=now,
-                ),
-                causation_seq=intent_seq,
-            )
-            hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
-            await tx.append(
-                ApprovalRequested(
-                    step_index=intent.step_index,
-                    approval_id=approval_id,
-                    payload=payload,
-                    expires_at=expires_at,
-                    binds_effect_key=binds,
-                ),
-                causation_seq=intent_seq,
-            )
-            await tx.append(
-                RunWaiting(reason="approval", wake_at=expires_at, step_index=intent.step_index),
-                causation_seq=intent_seq,
-            )
-            await tx.set_run(phase="WAITING_APPROVAL", wake_at=expires_at)
-        # The park is durable; the lease is not yet released. This is the only instant "during" a
-        # wait at which any code of ours runs, so it is where a fault can ask what a crash between
-        # the two leaves behind: a parked run under a lease nobody holds, which the reaper must
-        # reclaim as a wait rather than as an abandoned attempt (§7.3.1).
+        while True:
+            try:
+                async with self.journal.append(self.lease) as tx:
+                    now = await tx.now()
+                    # `0` is a deadline that is already due, not the absence of one.
+                    expires_at = now + timedelta(seconds=float(expires_in)) if expires_in is not None else None
+                    intent_seq = await tx.append(_intended(intent))
+                    await tx.append(
+                        StepAttemptStarted(
+                            step_index=intent.step_index,
+                            attempt_no=1,
+                            lease_epoch=self.lease.epoch,
+                            started_at=now,
+                        ),
+                        causation_seq=intent_seq,
+                    )
+                    await tx.append(
+                        ApprovalRequested(
+                            step_index=intent.step_index,
+                            approval_id=uuid4(),
+                            payload=payload,
+                            expires_at=expires_at,
+                            binds_effect_key=binds,
+                        ),
+                        causation_seq=intent_seq,
+                    )
+                    await tx.append(
+                        RunWaiting(reason="approval", wake_at=expires_at, step_index=intent.step_index),
+                        causation_seq=intent_seq,
+                    )
+                    await tx.release_park(phase="WAITING_APPROVAL", wake_at=expires_at)
+                break
+            except WakeRaced:
+                await self._refold()
+                await self._drain_inbox(intent.step_index, force=True)
+        # After the commit, as on every other live path: a fault at `after:intent_commit` means
+        # the intent is durable, and one fired inside the transaction would have rolled it back.
+        hooks.at("after:intent_commit", **_where(intent))
+        hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+        # The wait: durable, released, and this process still running but holding nothing. A
+        # crash here must cost the run nothing at all — the signal that wakes it is its only need.
         hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=expires_at)
         raise Parked("approval", wake_at=expires_at)
 
@@ -586,6 +693,33 @@ class StepEngine:
         error = {"REJECTED": "ApprovalRejected", "EXPIRED": "ApprovalExpired"}.get(
             approval.state, "ApprovalPending"
         )
+        await self._deny(intent, error)
+
+    async def _check_binding(self, intent: StepIntent) -> None:
+        """§7.5, §24.2: a bound approval authorises one call — `(tool, args)` at index i+1 — and
+        whatever the program issues at i+1 instead fails with `ApprovalBindingError` rather than
+        running ungated. Without this a redeploy that changed the tool's args, or a program that
+        called something else first, would carry out an effect nobody approved: `_gate` finds no
+        approval bound to the new key and lets it through.
+
+        Refused like every pre-dispatch refusal — INTENT + STEP_FAILED{attempt_no=0} in one
+        transaction, and a TOOL's effects row DENIED — so replay raises the same failure."""
+        bound = self.state.approval_at(intent.step_index - 1)
+        if bound is None or bound.binds_effect_key is None:
+            return
+        if intent.kind is StepKind.TOOL and intent.effect_key == bound.binds_effect_key:
+            return
+        error = (
+            f"ApprovalBindingError: approval {bound.approval_id} at step {bound.step_index} binds "
+            f"{bound.binds_effect_key}; step {intent.step_index} issued {intent.kind} {intent.name}"
+            + (f" with key {intent.effect_key}" if intent.effect_key else "")
+        )
+        if intent.kind is StepKind.TOOL and intent.effect_key is not None:
+            await self._deny(intent, error)
+        await self._refuse(intent, ApprovalBindingError(error))
+
+    async def _deny(self, intent: StepIntent, error: str) -> None:
+        """A TOOL refused before its first attempt: INTENT, a DENIED effects row, STEP_FAILED{0}."""
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent))
             await tx.write_effect(
@@ -631,30 +765,37 @@ class StepEngine:
             await self._refuse(intent, exc)
         hooks.at("before:intent_commit", **_where(intent))
         hooks.at("before:child_spawn", children=len(contracts), **_where(intent))
-        async with self.journal.append(self.lease) as tx:
-            now = await tx.now()
-            intent_seq = await tx.append(_intended(intent))
-            hooks.at("after:intent_commit", **_where(intent))
-            await tx.append(
-                StepAttemptStarted(
-                    step_index=intent.step_index,
-                    attempt_no=1,
-                    lease_epoch=self.lease.epoch,
-                    started_at=now,
-                ),
-                causation_seq=intent_seq,
-            )
-            hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
-            # Fan-out is bounded: `max_children_in_flight` now, the rest as slots free (§17.5).
-            for ordinal, c in enumerate(contracts[:MAX_CHILDREN_IN_FLIGHT]):
-                await self._spawn_one(tx, intent.step_index, ordinal, 0, c, causation_seq=intent_seq)
-            await tx.append(
-                RunWaiting(reason="children", wake_at=None, step_index=intent.step_index),
-                causation_seq=intent_seq,
-            )
-            await tx.set_run(phase="WAITING_CHILDREN", wake_at=None)
-        # The park is durable; the lease is not yet released — the same instant `during:approval_wait`
-        # names, for a run waiting on children instead of a human.
+        while True:
+            try:
+                async with self.journal.append(self.lease) as tx:
+                    now = await tx.now()
+                    intent_seq = await tx.append(_intended(intent))
+                    await tx.append(
+                        StepAttemptStarted(
+                            step_index=intent.step_index,
+                            attempt_no=1,
+                            lease_epoch=self.lease.epoch,
+                            started_at=now,
+                        ),
+                        causation_seq=intent_seq,
+                    )
+                    # Fan-out is bounded: `max_children_in_flight` now, the rest as slots free (§17.5).
+                    for ordinal, c in enumerate(contracts[:MAX_CHILDREN_IN_FLIGHT]):
+                        await self._spawn_one(tx, intent.step_index, ordinal, 0, c, causation_seq=intent_seq)
+                    await tx.append(
+                        RunWaiting(reason="children", wake_at=None, step_index=intent.step_index),
+                        causation_seq=intent_seq,
+                    )
+                    await tx.release_park(phase="WAITING_CHILDREN", wake_at=None)
+                break
+            except WakeRaced:
+                # Nothing of the spawn committed — no child exists — but `_spawn_one` advanced the
+                # in-memory fold. Re-read it, drain what raced, and spawn again.
+                await self._refold()
+                await self._drain_inbox(intent.step_index, force=True)
+        hooks.at("after:intent_commit", **_where(intent))
+        hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+        # The wait on children: durable, released, and this process holding nothing.
         hooks.at("during:child_wait", children=len(contracts), **_where(intent))
         raise Parked("children")
 
@@ -683,7 +824,11 @@ class StepEngine:
         await tx.create_child(
             RunRow(
                 run_id=child_id,
-                run_root_id=self.run_root_id,
+                # Its own root (§5.4: `run_root_id = run_id` unless a FORK; §17.6: a retried child
+                # has new effect keys). Sharing the parent's would give a retried child, and two
+                # siblings making the same call, the same key — refused as a duplicate at INTENT.
+                # `trace_id` is what joins the tree.
+                run_root_id=child_id,
                 program=contract.program,
                 program_version=version,
                 keel_version=KEEL_VERSION,
@@ -765,16 +910,26 @@ class StepEngine:
             else:
                 error, detail = "ContractViolation", why
         elif status == "cancelled":
-            # A cancelled child settles at its full slice (§17.4): what it spent is not knowable
-            # from outside its own journal, and a bound has to bound.
-            error, detail, usage = "ChildCancelled", payload.get("error"), dict(child.budget_reserved)
+            # A cancelled child stays charged at its full slice (§17.4): what it spent after the
+            # cancel is not knowable from outside its own journal, and a bound has to bound. In the
+            # ledger's own unit — `tokens_charged` — or the settlement adds nothing at all.
+            slice_tokens = int(child.budget_reserved.get("max_tokens") or 0)
+            reported = int(usage.get("tokens_charged") or 0)
+            usage = {**usage, "tokens_charged": max(slice_tokens, reported)}
+            error, detail = "ChildCancelled", payload.get("error")
         else:
             error, detail = str(payload.get("error") or "ChildFailed"), None
         if error is not None:
             policy = str(contract.get("on_failure") or "escalate")
+            # Settle the failed child *before* admitting its replacement: §17.6 re-reserves the
+            # same slice against what remains, and what remains includes this child's refund.
+            self.state.charged.settle_child(child_id, usage)
             can_retry = (
                 policy == "retry"
                 and error != "ChildCancelled"
+                # §17.7: nothing new is started under a parent that is cancelling.
+                and self.state.cancel_acknowledged_at != child.step_index
+                and not self._fatal(child.step_index)
                 and child.retry_no < int(contract.get("max_retries") or 0)
                 and self._admit_slice(child.budget_reserved)
             )
@@ -791,8 +946,9 @@ class StepEngine:
             )
             child.state = "CANCELLED" if error == "ChildCancelled" else "FAILED"
             child.error, child.policy_applied = error, applied
+        else:
+            self.state.charged.settle_child(child_id, usage)
         child.usage_settled = usage
-        self.state.charged.settle_child(child_id, usage)
         await tx.settle_delegation(
             child.delegation_id, status=child.state, usage_settled=usage, settled_seq=out_seq
         )
@@ -803,14 +959,41 @@ class StepEngine:
                 tx, child.step_index, child.child_ordinal, child.retry_no + 1,
                 Delegation.model_validate(contract), causation_seq=out_seq,
             )
+        if applied == "fail_parent":
+            # §17.6/§17.7: the parent will fail, so the subtree is cancelled first — asked now, in
+            # this transaction, and forced after `cancel_grace` by the same wake that forces a
+            # cancelled parent's children.
+            await self._cancel_open_children(tx, child.step_index, causation_seq=out_seq, reason="sibling_failed")
         await self._fill_slots(tx, child.step_index, causation_seq=out_seq)
         return await self._maybe_settle_delegate(tx, child.step_index)
+
+    def _fatal(self, step_index: int) -> bool:
+        """A child of this step failed under `fail_parent`: the step will fail once the subtree is
+        terminal. Derived from the fold alone, so every epoch — and every replay — agrees."""
+        return any(
+            c.state in ("FAILED", "CANCELLED") and c.policy_applied == "fail_parent"
+            for c in self.state.children_of(step_index)
+        )
+
+    async def _cancel_open_children(self, tx: Any, step_index: int, *, causation_seq: int, reason: str) -> None:
+        for c in self.state.children_of(step_index):
+            if c.terminal or c.state == "CANCELLING":
+                continue
+            await tx.insert_signal(
+                cancel_signal(
+                    c.child_run_id,
+                    client_key=f"cancel:{self.lease.run_id}:{causation_seq}",
+                    by=f"parent:{self.lease.run_id}",
+                    reason=reason,
+                )
+            )
+            c.state = "CANCELLING"
 
     async def _fill_slots(self, tx: Any, step_index: int, *, causation_seq: int) -> None:
         """`delegate_many` past `max_children_in_flight` waits for a slot rather than failing
         (§17.5): the next unspawned ordinal starts as a terminal child frees one."""
         contracts = self._contracts_of(step_index)
-        if contracts is None or self.state.cancel_acknowledged_at == step_index:
+        if contracts is None or self.state.cancel_acknowledged_at == step_index or self._fatal(step_index):
             return
         spawned = {c.child_ordinal for c in self.state.children_of(step_index)}
         in_flight = sum(1 for c in self.state.children_of(step_index) if not c.terminal)
@@ -835,7 +1018,10 @@ class StepEngine:
         latest = self._latest_children(step_index)
         if not latest or not all(c.terminal for c in latest):
             return None
-        if contracts is not None and len(latest) < len(contracts) and self.state.cancel_acknowledged_at != step_index:
+        if (
+            contracts is not None and len(latest) < len(contracts)
+            and self.state.cancel_acknowledged_at != step_index and not self._fatal(step_index)
+        ):
             return None  # ordinals still waiting for a slot
         if self.state.cancel_acknowledged_at == step_index:
             # §7.6.2: the acknowledged step closes with STEP_CANCELLED once the last child is
@@ -859,17 +1045,19 @@ class StepEngine:
         await tx.set_run(phase="RUNNING", wake_at=None)
         return None
 
-    async def _wait_children(self, intent: StepIntent, journaled: Any) -> Any:
-        """Woken with the step still open: re-park, for the price of one row.
+    async def _wait_children(self, intent: StepIntent, journaled: Any) -> bool:
+        """Woken with the step still open: re-park, for the price of one row. True when parked;
+        False when a signal raced the release and the caller must drain and decide again.
 
-        With a cancel acknowledged, the wake is also the moment to force (§7.6.2): every child
-        still open is offered to the store's takeover predicate, which refuses until the child has
-        had `cancel_grace` to acknowledge on its own. A takeover commits the child's `child_result`
-        into this inbox, so a second drain settles the step and raises `Cancelled` from here.
+        With the subtree being cancelled — the parent's own cancel, or a `fail_parent` failure —
+        the wake is also the moment to force (§7.6.2, §17.7): every child still open is offered to
+        the store's takeover predicate, which refuses until the child has had `cancel_grace` to
+        acknowledge on its own. A takeover commits the child's `child_result` into this inbox, so
+        the caller's next drain settles the step.
         """
         i = intent.step_index
-        wake_at = None
-        if self.state.cancel_acknowledged_at == i:
+        stopping = self.state.cancel_acknowledged_at == i or self._fatal(i)
+        if stopping:
             forced = False
             for c in [c for c in self.state.children_of(i) if not c.terminal]:
                 outcome = await force_cancel(
@@ -880,16 +1068,15 @@ class StepEngine:
                     forced_by=f"parent:{self.lease.run_id}",
                     cancel_grace_s=self.cancel_grace_s,
                 )
-                forced = forced or outcome != "refused"
+                forced = forced or outcome == "cancelled"
             if forced:
-                await self._drain_inbox(i, waiting=journaled)  # raises Cancelled when it settles
-        async with self.journal.append(self.lease) as tx:
-            if self.state.cancel_acknowledged_at == i:
-                wake_at = await tx.now() + timedelta(seconds=self.cancel_grace_s)
-            await tx.append(RunWaiting(reason="children", wake_at=wake_at, step_index=i))
-            await tx.set_run(phase="WAITING_CHILDREN", wake_at=wake_at)
-        hooks.at("during:child_wait", step_index=i, wake_at=wake_at)
-        raise Parked("children", wake_at=wake_at)
+                return False  # a child_result is waiting in this inbox: drain it first
+        parked = await self._commit_park(
+            "children", i, phase="WAITING_CHILDREN", wake_in=self.cancel_grace_s if stopping else None
+        )
+        if parked:
+            hooks.at("during:child_wait", step_index=i, wake_at=self.state.wake_at)
+        return parked
 
     def _latest_children(self, step_index: int) -> list[ChildState]:
         """One child per ordinal — the highest retry — in ordinal order."""
@@ -906,9 +1093,24 @@ class StepEngine:
         return list(w.args.get("contracts") or [])
 
     def _remaining_tokens(self) -> int | None:
+        """What the parent may still promise. Ordinals of the open DELEGATE step not yet spawned —
+        waiting for a slot — were admitted at the INTENT commit against the whole fan-out, so their
+        slices are spoken for: counting only spawned children would let a retry spend them twice
+        (§17.4, Σ reservations ≤ remaining)."""
         limits = self.state.budget if isinstance(self.state.budget, dict) else {}
         cap = limits.get("max_tokens")
-        return None if cap is None else int(cap) - self.state.charged.tokens_charged
+        if cap is None:
+            return None
+        promised = 0
+        w = self._waiting_intent
+        if w is not None and not self._fatal(w.step_index) and self.state.cancel_acknowledged_at != w.step_index:
+            spawned = {c.child_ordinal for c in self.state.children_of(w.step_index)}
+            promised = sum(
+                int((c.get("budget_slice") or {}).get("max_tokens") or 0)
+                for ordinal, c in enumerate(self._contracts_of(w.step_index) or [])
+                if ordinal not in spawned
+            )
+        return int(cap) - self.state.charged.tokens_charged - promised
 
     def _admit_slice(self, slice_: dict[str, Any]) -> bool:
         remaining = self._remaining_tokens()
@@ -923,6 +1125,7 @@ class StepEngine:
             raise ContractInvalid(str(exc)) from exc
 
     async def _live(self, intent: StepIntent) -> Any:
+        await self._check_binding(intent)
         if intent.kind is StepKind.APPROVAL:
             return await self._park_for_approval(intent)
         if intent.kind is StepKind.DELEGATE:

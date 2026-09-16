@@ -16,13 +16,14 @@ from typing import Any
 from uuid import UUID
 
 from keel.core.clock import Clock, SystemClock
-from keel.core.errors import AmbiguousRunRef, DuplicateEffectKey, Fenced, IllegalTransition
+from keel.core.errors import AmbiguousRunRef, DuplicateEffectKey, Fenced, IllegalTransition, WakeRaced
 from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.journal.blobs import MemoryBlobStore, externalise, internalise
 from keel.journal.protocol import (
     REPLAY_RESULTS,
+    SIGNAL_TYPES,
     DelegationRow,
     EffectRow,
     Lease,
@@ -53,6 +54,8 @@ class _MemoryAppendTx:
         self._signals_out: list[SignalRow] = []
         self._children: list[tuple[RunRow, Any, DelegationRow]] = []
         self._settlements: list[tuple[Any, str, dict[str, Any] | None, int]] = []
+        self._wake_cleared = False
+        self._release: dict[str, Any] | None = None
         self._start_seq = lease.next_seq
 
     async def now(self) -> datetime:
@@ -91,8 +94,24 @@ class _MemoryAppendTx:
     async def consume_signal(self, signal_id: Any, seq: int) -> None:
         self._consumed.append((signal_id, seq))
 
+    # --- the wake path (§5.4 (4), (7)) -------------------------------------------
+    async def pending_signals(self) -> list[SignalRow]:
+        # The append holds the journal lock for its whole life, so no insert can land between this
+        # read and the commit — the memory form of "the fence holds the row lock".
+        return self._j._pending(self._lease.run_id)
+
+    async def clear_wake(self) -> None:
+        self._wake_cleared = True
+
+    async def release_park(self, *, phase: str, wake_at: datetime | None, paused: bool = False) -> None:
+        run = self._j._runs[self._lease.run_id]
+        if run.runnable_at is not None and not self._wake_cleared:
+            raise WakeRaced(f"run {self._lease.run_id}: a signal arrived since the last drain")
+        self._release = {"phase": phase, "wake_at": wake_at, "paused": paused}
+
     # --- delegation (§17): three more things that commit with the append ----------
     async def insert_signal(self, row: SignalRow) -> None:
+        _check_type(row)
         self._signals_out.append(row)
 
     async def create_child(self, row: RunRow, created: Any, delegation: DelegationRow) -> None:
@@ -104,18 +123,40 @@ class _MemoryAppendTx:
         self._settlements.append((delegation_id, status, usage_settled, settled_seq))
 
     # --- commit / rollback ---------------------------------------------------
+    def _validate(self) -> None:
+        """Every guard Postgres would raise on, checked before anything is mutated. A violation in
+        Postgres rolls the whole transaction back; here it must leave the store untouched too, or a
+        fast test could pass on a half-committed state production never produces."""
+        j = self._j
+        log = list(j._events[self._lease.run_id])
+        for ev in self._events:
+            j._check_guards(log, ev)
+            log.append(ev)
+        keys = set(j._effects)
+        for row in self._effects:
+            if row.effect_key in keys:
+                raise DuplicateEffectKey(row.effect_key)
+            keys.add(row.effect_key)
+        spawned = {
+            (d.parent_run_id, d.parent_step_index, d.child_ordinal, d.retry_no)
+            for d in j._delegations.values()
+        }
+        for _, _, d in self._children:
+            key = (d.parent_run_id, d.parent_step_index, d.child_ordinal, d.retry_no)
+            if key in spawned:
+                raise IllegalTransition(f"delegation {key} already spawned")
+            spawned.add(key)
+
     def _commit(self) -> None:
+        self._validate()
         j = self._j
         run = j._runs[self._lease.run_id]
         log = j._events[self._lease.run_id]
         for ev in self._events:
-            j._check_guards(log, ev)
             log.append(ev)
             if ev.type in _TERMINAL:
                 run.terminal_at = ev.ts
         for row in self._effects:
-            if row.effect_key in j._effects:
-                raise DuplicateEffectKey(row.effect_key)
             j._effects[row.effect_key] = row
         for key, fields in self._effect_updates:
             row = j._effects[key]
@@ -130,16 +171,23 @@ class _MemoryAppendTx:
                 row.consumed_seq = seq
         for k, v in self._run_fields.items():
             setattr(run, k, v)
+        if self._wake_cleared:
+            run.runnable_at = None  # §5.4 (7)
+        if self._release is not None:
+            # §5.4 (4), the last statement: guarded in `release_park`, applied with the event.
+            run.lease_expires_at = None
+            run.runnable_at = None
+            run.runnable_reason = None
+            run.attempt_deadline = None
+            run.wake_at = self._release["wake_at"]
+            run.phase = self._release["phase"]
+            if self._release["paused"]:
+                run.paused_at = j.clock.now()
         # Delegation: the child's row, its RUN_CREATED at epoch 0 and the contract, in *this*
         # transaction beside the parent's CHILD_SPAWNED (§7.6.1). `delegations` is unique on
-        # (parent, step, ordinal, retry), so a re-executed spawn is a loud violation, not a twin.
+        # (parent, step, ordinal, retry), so a re-executed spawn is a loud violation, not a twin —
+        # checked in `_validate`, before anything above was touched.
         for child, created, delegation in self._children:
-            key = (delegation.parent_run_id, delegation.parent_step_index, delegation.child_ordinal, delegation.retry_no)
-            if any(
-                (d.parent_run_id, d.parent_step_index, d.child_ordinal, d.retry_no) == key
-                for d in j._delegations.values()
-            ):
-                raise IllegalTransition(f"delegation {key} already spawned")
             child.created_at = j.clock.now()
             child.runnable_at = j.clock.now()
             child.runnable_reason = "START"
@@ -158,10 +206,11 @@ class _MemoryAppendTx:
                 d.status, d.usage_settled, d.settled_seq = status, usage, seq
         # A row in *another* run's inbox — the child's terminal event and its parent's
         # `child_result`, or the parent's acknowledgement and its children's `cancel` — commits
-        # with this append or not at all (§5.10). The same routine as the API's insert: refused
-        # for a terminal target, deduplicated by client_key, and the target becomes claimable.
+        # with this append or not at all (§5.10). Refused for a terminal target and deduplicated by
+        # client_key like the API's insert, but no wake bump: the claim reads the inbox (§18.4),
+        # and Postgres cannot bump a second runs row here without inverting the lock order.
         for row in self._signals_out:
-            j._put_signal(row)
+            j._put_signal(row, wake=False)
 
     def _rollback(self) -> None:
         self._lease.next_seq = self._start_seq
@@ -200,6 +249,8 @@ class MemoryJournal:
                 raise IllegalTransition(f"second outcome for step {si} attempt {an}")
             if t == "RECOVERY_STARTED" and old.type == t and old.lease_epoch == ev.lease_epoch:
                 raise IllegalTransition(f"second RECOVERY_STARTED for epoch {ev.lease_epoch}")
+            if t == "APPROVAL_REQUESTED" and old.type == t and old.step_index == si:
+                raise IllegalTransition(f"second APPROVAL_REQUESTED for step {si}")  # events_approval_once
             if t in _TERMINAL and old.type in _TERMINAL:
                 raise IllegalTransition("second terminal event")
 
@@ -236,22 +287,31 @@ class MemoryJournal:
 
     # --- the four control-plane statements (§5.4) ---------------------------
     async def claim(self, worker_id: str, ttl: timedelta) -> Lease | None:
+        """§5.4 (2a) with §18.4's inbox clause: a run is a candidate when `runnable_at` is due *or*
+        an unconsumed signal is waiting for it, so a wake bump that was lost cannot strand a run;
+        a paused run only for a pending `resume` or `cancel` (§16.6)."""
         async with self._lock:
             now = self.clock.now()
-            for run in sorted(
-                (r for r in self._runs.values() if r.runnable_at is not None),
-                key=lambda r: r.runnable_at,  # type: ignore[arg-type,return-value]
-            ):
-                if run.runnable_at > now or run.terminal_at is not None:
+            pending: dict[RunId, set[str]] = {}
+            for s in self._signals.values():
+                if s.consumed_seq is None:
+                    pending.setdefault(s.run_id, set()).add(s.type)
+            candidates = [
+                r for r in self._runs.values()
+                if (r.runnable_at is not None and r.runnable_at <= now) or r.run_id in pending
+            ]
+            for run in sorted(candidates, key=lambda r: (r.runnable_at is None, r.runnable_at or now)):
+                if run.terminal_at is not None:
                     continue
-                if run.paused_at is not None:
+                if run.paused_at is not None and not pending.get(run.run_id, set()) & {"resume", "cancel"}:
                     continue
                 if run.lease_expires_at is not None and run.lease_expires_at >= now:
                     continue
                 if run.attempt_deadline is not None and run.attempt_deadline >= now:
                     continue
                 was_lapsed = run.lease_expires_at is not None
-                cause = "ORPHANED" if was_lapsed else (run.runnable_reason or "START")
+                # A run claimed through its inbox alone has no reason recorded: it was woken.
+                cause = "ORPHANED" if was_lapsed else (run.runnable_reason or "WAKE")
                 return self._take(run, worker_id, ttl, cause)  # type: ignore[arg-type]
             return None
 
@@ -316,10 +376,10 @@ class MemoryJournal:
             tx = _MemoryAppendTx(self, lease)
             try:
                 yield tx
+                tx._commit()  # validates before it mutates, so a refusal here rolls back cleanly
             except BaseException:
                 tx._rollback()
                 raise
-            tx._commit()
 
     async def heartbeat(self, lease: Lease, ttl: timedelta | None = None) -> bool:
         async with self._lock:
@@ -371,12 +431,13 @@ class MemoryJournal:
 
     # --- inbox (§5.6) --------------------------------------------------------
     async def insert_signal(self, row: SignalRow) -> bool:
+        _check_type(row)
         async with self._lock:
             return self._put_signal(row)
 
-    def _put_signal(self, row: SignalRow) -> bool:
+    def _put_signal(self, row: SignalRow, *, wake: bool = True) -> bool:
         """The insert, under the lock the caller holds: the API's own, or an append transaction
-        committing a row into *another* run's inbox (§5.10)."""
+        committing a row into *another* run's inbox (§5.10) — which does not bump (`wake=False`)."""
         run = self._runs.get(row.run_id)
         if run is None or run.terminal_at is not None:
             # §5.6: a signal addressed to a terminal run is refused before the insert — there
@@ -400,26 +461,32 @@ class MemoryJournal:
             now = latest + timedelta(microseconds=1)
         row.created_at = row.created_at or now
         self._signals[row.signal_id] = row
-        # The insert is also the wake: an unconsumed signal makes the run claimable, which is
-        # what turns a parked run back into a runnable one without anybody polling it.
-        run.runnable_at = run.runnable_at or self.clock.now()
-        run.runnable_reason = run.runnable_reason or "WAKE"
+        # The insert is also the wake (§5.4 (5)): the run becomes claimable, and on a held run the
+        # bump is the pending-wake flag its release guard reads. `RESUME` names a manual resume.
+        if wake and run.runnable_at is None:  # set only when unset, so a signal never jumps the queue
+            run.runnable_reason = "RESUME" if row.type == "resume" else "WAKE"
+            run.runnable_at = self.clock.now()
         return True
+
+    def _pending(self, run_id: RunId) -> list[SignalRow]:
+        rows = [r for r in self._signals.values() if r.run_id == run_id and r.consumed_seq is None]
+        return sorted(rows, key=lambda r: (r.created_at or datetime.min, str(r.signal_id)))
 
     async def pending_signals(self, run_id: RunId) -> list[SignalRow]:
         async with self._lock:
-            rows = [
-                r for r in self._signals.values()
-                if r.run_id == run_id and r.consumed_seq is None
-            ]
-        return sorted(rows, key=lambda r: (r.created_at or datetime.min, str(r.signal_id)))
+            return self._pending(run_id)
 
     async def sweep_timers(self) -> int:
+        """§5.4 (6). Only for a released run: a held one drains its own timers, and a row fired
+        under a lease would be keyed `timer:<wake_at>` and so block the re-fire after release."""
         due = []
         async with self._lock:
             now = self.clock.now()
             for run in self._runs.values():
-                if run.terminal_at is None and run.wake_at is not None and run.wake_at <= now:
+                if (
+                    run.terminal_at is None and run.lease_expires_at is None
+                    and run.wake_at is not None and run.wake_at <= now
+                ):
                     due.append((run.run_id, run.wake_at))
         fired = 0
         for run_id, wake_at in due:
@@ -542,6 +609,12 @@ class MemoryJournal:
 
     async def close(self) -> None:
         return None
+
+
+def _check_type(row: SignalRow) -> None:
+    """The `signals.type` CHECK, mirrored — refused before anything is written."""
+    if row.type not in SIGNAL_TYPES:
+        raise IllegalTransition(f"unknown signal type {row.type!r}; one of {sorted(SIGNAL_TYPES)}")
 
 
 def memory_run_row(

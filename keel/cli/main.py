@@ -456,8 +456,26 @@ def approve(
     dsn: Annotated[str | None, typer.Option("--dsn")] = None,
 ) -> None:
     """Grant the open approval. The decision is journaled by the *holder* at the drain, not here."""
-    payload = {"by": by} | ({"approval_id": approval} if approval else {})
-    _run(_send(_load_app(app_ref, dsn), run_ref, "approve", payload, client_key))
+    _run(_decide(_load_app(app_ref, dsn), run_ref, "approve", {"by": by}, approval, client_key))
+
+
+async def _decide(
+    keel: Keel, run_ref: str, type_: str, payload: dict[str, Any], approval: str | None, client_key: str | None
+) -> None:
+    """A decision always names its gate (§7.5). Omitting `--approval` means *the approval open
+    now*, resolved here from the journal and written into the row — so a click retried after that
+    approval was decided is ignored as `approval_terminal` at the drain, instead of deciding
+    whichever approval happens to be open by then."""
+    if approval is None:
+        from keel.state.fold import fold
+
+        run_id = await _resolve(keel, run_ref)
+        open_ = [a for a in fold(await keel.journal.read(run_id)).approvals.values() if not a.terminal]
+        if not open_:
+            err.print("[yellow]no open approval on this run; pass --approval to name one[/]")
+            raise typer.Exit(EXIT_ERROR)
+        approval = str(open_[-1].approval_id)
+    await _send(keel, run_ref, type_, payload | {"approval_id": approval}, client_key)
 
 
 @app.command()
@@ -472,8 +490,7 @@ def reject(
 ) -> None:
     """Refuse the open approval. The APPROVAL step still completes — with `rejected` — and the
     bound tool call is refused before it starts an attempt."""
-    payload = {"by": by, "reason": reason} | ({"approval_id": approval} if approval else {})
-    _run(_send(_load_app(app_ref, dsn), run_ref, "reject", payload, client_key))
+    _run(_decide(_load_app(app_ref, dsn), run_ref, "reject", {"by": by, "reason": reason}, approval, client_key))
 
 
 @app.command()
@@ -525,8 +542,6 @@ def resume(
     when it was written, and two ways to influence a run is one more than the fence can defend.
     """
     _run(_send(_load_app(app_ref, dsn), run_ref, "resume", {}, client_key))
-
-    _run(go())
 
 
 # --- replay ------------------------------------------------------------------

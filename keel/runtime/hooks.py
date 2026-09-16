@@ -52,14 +52,15 @@ BOUNDARIES = (
     "before:lease_heartbeat",
     "before:lease_release",
     # Week 2, with the inbox and approvals (§4.10). `signal_consume` brackets the drain's one fenced
-    # transaction; `during:approval_wait` is the instant the park is durable and the lease is not
-    # yet released — the only moment "during" a wait at which any code of ours is running.
+    # transaction; `during:approval_wait` is the instant after the park *and its release* committed
+    # — they are one transaction (§5.4 (4)) — the only moment "during" a wait at which any code of
+    # ours is running. A crash there must cost the run nothing: it holds no lease to lapse.
     "before:signal_consume",
     "after:signal_consume",
     "during:approval_wait",
     # Delegation (§4.11). `before:child_spawn` is the instant before the one transaction that
     # commits CHILD_SPAWNED, the child's row, its RUN_CREATED and the contract together;
-    # `during:child_wait` is the park on children, durable but not yet released.
+    # `during:child_wait` is the park on children, durable and released in that same transaction.
     "before:child_spawn",
     "during:child_wait",
 )

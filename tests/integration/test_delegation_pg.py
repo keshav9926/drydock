@@ -125,7 +125,15 @@ async def test_the_child_result_commits_with_the_terminal_event_and_wakes_the_pa
     await _acquire(k, a.run_id, "ca")
     [wake] = await _rows(journal, "SELECT * FROM signals WHERE run_id = %s", handle.run_id)
     assert wake["type"] == "child_result" and wake["client_key"] == f"child_result:{a.run_id}"
-    assert (await journal.run_row(handle.run_id)).runnable_at is not None, "the row is the wake"
+    # The row alone is the wake: the claim reads the inbox (§18.4), so the child's terminal
+    # transaction never locks the parent's `runs` row — the order a cancel drain takes the other way.
+    assert (await journal.run_row(handle.run_id)).runnable_at is None, "no cross-run bump"
+    claimed = []
+    while (lease := await journal.claim("probe", timedelta(seconds=TTL))) is not None:
+        claimed.append(lease)
+    assert handle.run_id in {l.run_id for l in claimed}, "the row is the wake"
+    for lease in claimed:
+        await journal.release(lease)
 
     await _acquire(k, b.run_id, "cb")
     await _acquire(k, handle.run_id, "w2")
