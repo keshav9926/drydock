@@ -37,6 +37,7 @@ from keel.events import (
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
+    ModelBindingChanged,
     RecoveryCompleted,
     RunCreated,
     RunPaused,
@@ -553,6 +554,24 @@ class StepEngine:
                 SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="not_paused"),
                 causation_seq=seq,
             )
+            return None
+        if kind == "rebind":
+            # §16.7: the binding the next LIVE MODEL step uses, and what children spawned from here
+            # inherit. Memoized steps keep the answers the old binding gave, so a provider switch in
+            # the middle of a recovery is never nondeterminism.
+            new = dict((row.payload or {}).get("model_config") or {})
+            if not new:
+                await tx.append(
+                    SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="empty_binding"),
+                    causation_seq=seq,
+                )
+                return None
+            await tx.append(
+                ModelBindingChanged.model_validate({"model_config": new, "previous": dict(self.model_config)}),
+                causation_seq=seq,
+            )
+            await tx.set_run(model_config=new)
+            self.model_config = new
             return None
         await tx.append(
             SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="no_handler"),

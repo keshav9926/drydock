@@ -196,6 +196,8 @@ class RunState:
     recovery_cause: dict[int, str] = field(default_factory=dict)
     recovery_open: bool = False
     budget: Mapping[str, Any] = field(default_factory=dict)
+    #: The current model binding — RUN_CREATED's, then each MODEL_BINDING_CHANGED (§16.7).
+    model_config: dict[str, Any] = field(default_factory=dict)
     charged: Charged = field(default_factory=Charged)
     approvals: dict[Any, Approval] = field(default_factory=dict)
     children: dict[Any, ChildState] = field(default_factory=dict)
@@ -301,6 +303,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.program_version = b.program_version
         st.args = b.args
         st.budget = b.budget
+        st.model_config = dict(b.model_config_)
         st.phase = "CREATED"
     elif t == "RECOVERY_STARTED":
         st.epochs.append(b.lease_epoch)
@@ -339,6 +342,8 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.phase = "PAUSED"
     elif t == "RUN_PAUSE_LIFTED":
         st.phase = "RUNNING"
+    elif t == "MODEL_BINDING_CHANGED":
+        st.model_config = dict(b.model_config_)
     elif t in ("SIGNAL_RECEIVED", "SIGNAL_IGNORED"):
         # Inert by design (§6.2). A signal arriving changes nothing; what the run *did* about it is
         # a separate event in the same transaction, and that one carries the state change. Folding

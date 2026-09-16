@@ -105,6 +105,16 @@ class RunPauseLifted(Body):
     type: Literal["RUN_PAUSE_LIFTED"] = "RUN_PAUSE_LIFTED"
 
 
+class ModelBindingChanged(Body):
+    """A drained `rebind` (§16.7): the binding the next LIVE MODEL step uses, with `runs.model_config`
+    updated in the same transaction. Memoized steps keep the answers the old binding gave — model
+    identity is a binding, not program input, so a provider switch is never nondeterminism."""
+
+    type: Literal["MODEL_BINDING_CHANGED"] = "MODEL_BINDING_CHANGED"
+    model_config_: dict[str, Any] = Field(alias="model_config", default_factory=dict)
+    previous: dict[str, Any] = Field(default_factory=dict)
+
+
 # --- the inbox (§4.10, §5.6) --------------------------------------------------
 class SignalReceived(Body):
     """Written at the drain, in the same fenced transaction that sets `signals.consumed_seq`.
@@ -300,6 +310,7 @@ EventBody = Annotated[
     | RunWaiting
     | RunPaused
     | RunPauseLifted
+    | ModelBindingChanged
     | ApprovalRequested
     | ApprovalDecided
     | StepCancelled

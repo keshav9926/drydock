@@ -473,3 +473,41 @@ async def test_verify_reproduces_a_run_that_died_between_acknowledge_and_cancell
     assert state.cancel_acknowledged_at is not None and state.phase != "CANCELLED"
     out = await run_verify(k.journal, handle.run_id, demo.tool_chain.fn, tools=k.tools)
     assert out.ok, out.as_dict()
+
+
+async def test_rebind_is_journaled_and_changes_the_binding_for_what_comes_next(world) -> None:
+    """§24.1/§16.7 were missing from the API: `Keel.rebind` (and pause/cancel/approve/reject) are
+    one inbox row each. The drain journals MODEL_BINDING_CHANGED and updates `runs.model_config`;
+    a replay of the run is unaffected, because model identity is a binding, not program input."""
+    clock = FakeClock()
+    k = _keel(clock)
+    handle = await k.start(demo.tool_chain, {"task": "file an issue"})
+    assert await k.rebind(handle.run_id, {"provider": "backup", "model": "m2"})
+    await _work(k)
+
+    events = await k.events(handle.run_id)
+    [changed] = [e for e in events if e.type == "MODEL_BINDING_CHANGED"]
+    assert changed.body.model_config_ == {"provider": "backup", "model": "m2"}
+    state = fold(events)
+    assert state.phase == "COMPLETED" and state.model_config == {"provider": "backup", "model": "m2"}
+    assert (await k.journal.run_row(handle.run_id)).model_config == {"provider": "backup", "model": "m2"}
+
+    from keel.replay.verify import verify as run_verify
+
+    assert (await run_verify(k.journal, handle.run_id, demo.tool_chain.fn, tools=k.tools)).ok
+
+
+async def test_the_python_approve_names_its_gate(world) -> None:
+    clock = FakeClock()
+    k = Keel(
+        journal=MemoryJournal(clock=clock), provider=ScriptedProvider(demo.SCRIPT),
+        tools=[demo.search, demo.create_issue_tool("EXTERNAL")], programs=[demo.gated_tool_chain], clock=clock,
+    )
+    handle = await k.start(demo.gated_tool_chain, {"title": "via the API"})
+    await _work(k, "w1")
+    [approval] = fold(await k.events(handle.run_id)).approvals.values()
+    assert await k.approve(handle.run_id, approval.approval_id, by="api")
+    [row] = await k.journal.pending_signals(handle.run_id)
+    assert row.payload["approval_id"] == str(approval.approval_id)
+    await _work(k, "w2")
+    assert fold(await k.events(handle.run_id)).phase == "COMPLETED"

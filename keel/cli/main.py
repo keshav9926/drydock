@@ -530,6 +530,24 @@ def signal(
 
 
 @app.command()
+def rebind(
+    run_ref: str,
+    provider: Annotated[str | None, typer.Option("--provider")] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    client_key: Annotated[str | None, typer.Option("--client-key")] = None,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+) -> None:
+    """Change the model binding for LIVE MODEL steps (§16.7) — one `rebind` row; the holder journals
+    MODEL_BINDING_CHANGED at the drain. Memoized steps keep what the old binding answered."""
+    binding = {k: v for k, v in (("provider", provider), ("model", model)) if v}
+    if not binding:
+        err.print("[red]give --provider and/or --model[/]")
+        raise typer.Exit(EXIT_USAGE)
+    _run(_send(_load_app(app_ref, dsn), run_ref, "rebind", {"model_config": binding}, client_key))
+
+
+@app.command()
 def resume(
     run_ref: str,
     client_key: Annotated[str | None, typer.Option("--client-key")] = None,

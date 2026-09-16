@@ -235,6 +235,32 @@ class Keel:
             )
         )
 
+    # --- §24.1's control calls: each one row in the inbox, the same row the CLI writes ---------
+    async def pause(self, run_id: RunId, *, client_key: str | None = None) -> bool:
+        return await self.signal(run_id, "pause", {}, client_key=client_key)
+
+    async def cancel(self, run_id: RunId, *, reason: str = "", client_key: str | None = None) -> bool:
+        """Cooperative; acknowledged at the next step boundary; propagates to children (§17.7)."""
+        return await self.signal(run_id, "cancel", {"reason": reason}, client_key=client_key)
+
+    async def approve(self, run_id: RunId, approval_id: Any, *, by: str, client_key: str | None = None) -> bool:
+        """Names its gate, always: a decision for an approval already decided is ignored at the
+        drain rather than applied to whichever approval is open by then (§7.5)."""
+        return await self.signal(
+            run_id, "approve", {"by": by, "approval_id": str(approval_id)}, client_key=client_key
+        )
+
+    async def reject(
+        self, run_id: RunId, approval_id: Any, *, by: str, reason: str = "", client_key: str | None = None
+    ) -> bool:
+        return await self.signal(
+            run_id, "reject", {"by": by, "reason": reason, "approval_id": str(approval_id)}, client_key=client_key
+        )
+
+    async def rebind(self, run_id: RunId, model_config: dict[str, Any], *, client_key: str | None = None) -> bool:
+        """Journaled as MODEL_BINDING_CHANGED at the drain; affects live MODEL steps only (§16.7)."""
+        return await self.signal(run_id, "rebind", {"model_config": dict(model_config)}, client_key=client_key)
+
     async def resume(self, run_id: RunId) -> bool:
         """One `resume` row in the inbox.
 
