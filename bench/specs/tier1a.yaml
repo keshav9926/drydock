@@ -2,8 +2,8 @@
 #
 # A timeout that becomes ambiguity rather than failure, a receiver that applies an effect and then
 # fails to say so, and a model that is slow or unavailable. Same workload, same World, same spec
-# per cell, same arms. The baselines here are the same eight that matrix v0 already ran, so these
-# cells are paired against trials that exist rather than re-measured.
+# per cell, same arms. The matrix always adds a baseline per (arm, config, variant), so this run
+# re-measures its own four baseline cells and pairs its fault cells against those, not matrix v0's.
 workload: tool_chain_1_effect
 mode: shim
 seeds: {count: 30, base: 7}

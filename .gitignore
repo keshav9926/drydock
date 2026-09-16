@@ -5,14 +5,22 @@ __pycache__/
 .hypothesis/
 *.egg-info/
 # Trial directories are hundreds of megabytes of per-trial journals, receipt logs and fault logs.
-# The published *rows* are five, and they are the unit the reports are folded from — a repository
-# that publishes conclusions without them is asking to be taken on trust (§15.10).
+# The published *rows* — one results.jsonl per published run — are the unit the reports are folded
+# from, and a repository that publishes conclusions without them is asking to be taken on trust
+# (§15.10).
 bench/results/**
 !bench/results/*/
 !bench/results/*/results.jsonl
-# Not published: a superseded partial run and a one-off probe.
+# Not published: a superseded partial run, a one-off probe, and the CLI's default output
+# directories (bench --out, chaos --out, demo --out, inject --out), so a default run never
+# leaves rows that look published.
 bench/results/tier1a-v1/
 bench/results/mcprobe/
+bench/results/latest/
+bench/results/chaos/
+bench/results/demo/
+bench/trials/
+out/
 .env
 
 # World receipt logs written by the demo

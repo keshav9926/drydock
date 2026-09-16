@@ -31,17 +31,29 @@ ALLOWED: dict[str, set[str]] = {
     "client": {"core", "events", "journal", "state", "runtime", "effects", "replay", "orchestration", "approvals", "agents", "providers"},
 }
 
-IO_MODULES = {"asyncio", "psycopg", "psycopg_pool", "httpx", "socket", "subprocess", "urllib"}
+IO_MODULES = {
+    "asyncio", "psycopg", "psycopg_pool", "httpx", "socket", "subprocess", "urllib", "http", "ssl",
+    "selectors",
+}
 
 
-def _imports(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf8"))
+def _imports(path: Path, source: str | None = None) -> set[str]:
+    """Every module a file imports, spelled absolutely. `from keel import effects` is `keel.effects`
+    as well as `keel`, and `from ..replay import verify` inside `keel/runtime` is `keel.replay` and
+    `keel.replay.verify` — either spelling would otherwise walk straight past the direction check."""
+    tree = ast.parse(source if source is not None else path.read_text(encoding="utf8"))
+    package = path.relative_to(ROOT).with_suffix("").parts[:-1]
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(a.name for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - (node.level - 1)] if node.level else ()
+            module = ".".join([*base, *([node.module] if node.module else [])])
+            if not module:
+                continue
+            names.add(module)
+            names.update(f"{module}.{alias.name}" for alias in node.names)
     return names
 
 
@@ -52,6 +64,17 @@ def _modules(pkg: str) -> list[Path]:
 def _package_of(path: Path) -> str:
     rel = path.relative_to(ROOT / "keel")
     return "client" if len(rel.parts) == 1 else rel.parts[0]
+
+
+def _is_keel_module(name: str) -> bool:
+    return (ROOT / "keel" / name).is_dir() or (ROOT / "keel" / f"{name}.py").exists()
+
+
+def test_the_import_walk_sees_every_spelling() -> None:
+    """The direction check is only as good as the walk under it."""
+    source = "from keel import effects\nfrom ..replay import verify\nfrom . import steps\nimport http.client\n"
+    names = _imports(ROOT / "keel" / "runtime" / "_probe.py", source)
+    assert {"keel.effects", "keel.replay", "keel.replay.verify", "keel.runtime.steps", "http.client"} <= names
 
 
 def test_keel_never_imports_crashproof() -> None:
@@ -67,8 +90,8 @@ def test_dependency_direction() -> None:
         allowed = ALLOWED.get(pkg, set()) | {pkg}
         for name in _imports(path):
             parts = name.split(".")
-            if parts[0] != "keel" or len(parts) == 1:
-                continue
+            if parts[0] != "keel" or len(parts) == 1 or not _is_keel_module(parts[1]):
+                continue  # `from keel import Keel` names a symbol, not a package
             target = "client" if parts[1] == "client" else parts[1]
             assert target in allowed, f"{path}: {pkg} may not import keel.{target}"
 
@@ -81,9 +104,11 @@ def test_state_is_pure() -> None:
         assert not offenders, f"{path}: state must stay a pure fold ({offenders})"
 
 
-def test_only_one_module_imports_anthropic() -> None:
+def test_only_the_reserved_provider_module_may_import_anthropic() -> None:
+    """The `anthropic` extra is reserved for the real provider, `keel/providers/anthropic.py`, which
+    is not built yet (§27 stages it). Until it is, no module imports the SDK at all."""
     for path in _modules("keel"):
-        if path.name == "anthropic.py":
+        if path.relative_to(ROOT).as_posix() == "keel/providers/anthropic.py":
             continue
         assert "anthropic" not in {n.split(".")[0] for n in _imports(path)}, path
 

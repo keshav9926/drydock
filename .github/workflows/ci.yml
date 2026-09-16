@@ -2,12 +2,17 @@
 # different things to run.
 #
 # `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 36 white-box
-# conformance cells, and the golden diff of the demo's printed lines — which is §28.7's named
-# mitigation for "a demo that only works on the author's machine".
+# conformance cells, the golden diff of the demo's printed lines — which is §28.7's named
+# mitigation for "a demo that only works on the author's machine" — and every published page
+# re-rendered from its committed rows. It installs the LangGraph extra, because a change to the
+# shared harness that breaks that arm should fail here and not in an overnight bench.
 #
 # `integration` needs Postgres, because the four control-plane statements are the one place the
 # MemoryJournal tests and the real store could disagree, and a durability claim checked only against
 # an in-memory fake is not checked.
+#
+# Both run the Python the published rows were measured on (every row pins 3.13), from the lockfile
+# as committed: `--locked` fails on a pyproject edit nobody re-locked instead of re-resolving it.
 name: ci
 
 on:
@@ -22,13 +27,21 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev
+          python-version: "3.13"
+      - run: uv sync --locked --extra dev --extra langgraph
       - name: unit, property and conformance
         run: uv run pytest tests/unit tests/property tests/conformance -q --hypothesis-seed=0
       # The conformance cells write their table. If the committed one differs, the code and the
       # published artefact have diverged — which is exactly what a generated file is for.
       - name: the conformance table is current
         run: git diff --exit-code -- bench/keel_conformance/table.md
+      # Every page is a pure function of its committed rows. `verify --recheck` needs the trial
+      # directories, which are not committed, so on a clone this is the publication check there is:
+      # the renderer and the rows still produce exactly the pages that were published.
+      - name: every published page re-renders from its rows
+        run: |
+          uv run python scripts/render_reports.py
+          git diff --exit-code -- bench/reports
 
   integration:
     runs-on: ubuntu-latest
@@ -50,7 +63,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev
+          python-version: "3.13"
+      - run: uv sync --locked --extra dev
       - name: control-plane statements against a real store
         env:
           KEEL_TEST_DSN: postgresql://keel:keel@localhost:5432/keel

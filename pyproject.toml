@@ -14,6 +14,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "hypothesis>=6.112"]
+# Reserved for the real provider, keel/providers/anthropic.py, which §27 stages and is not built:
+# nothing imports it yet (tests/unit/test_layering.py keeps it that way until the provider lands).
 anthropic = ["anthropic>=0.40"]
 langgraph = [
     "langgraph>=0.2",
