@@ -276,9 +276,11 @@ def render(a: Agreement, *, sources: list[tuple[str, list[dict[str, Any]]]] = ()
         "What the proxy realisation loses, per §11.2: `before:tool_call` fires on a request that",
         "has already left the SUT (the shim's fires with nothing sent); `after:tool_return` lands",
         "before the SUT parses the bytes (the shim's lands inside the checkpoint write, via",
-        "`call_soon`); a freeze parks the request at the proxy and forwards it at the thaw, so a",
-        "successor that has already re-attempted sees the thawed request land second. The",
-        "`after:tool_effect` window — applied, receipted, nobody told — is the same window in both.",
+        "`call_soon`); a freeze parks the request at the proxy and forwards it at the thaw, and the",
+        "process frozen is the one named by `sut/pid-<n>` — which, in rows from before a Keel",
+        "successor wrote its pid under its own name, may have been the idle successor rather than the",
+        "worker holding the run. The `after:tool_effect` window — applied, receipted, nobody told —",
+        "is the same window in both.",
         "",
     ]
     return "\n".join(lines)
