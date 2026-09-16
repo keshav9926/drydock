@@ -31,6 +31,7 @@ from keel.journal.protocol import JournalBackend, Lease, RunRow
 from keel.core.errors import StoreUnavailable
 from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
+from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended
@@ -73,6 +74,7 @@ class Worker:
         retry: RetryPolicy = NO_RETRY,
         model_timeout_s: float = 60.0,
         cancel_grace: float = DEFAULT_CANCEL_GRACE_S,
+        breaker: CircuitBreaker | None = None,
     ) -> None:
         self.journal = journal
         self.resolve = resolve
@@ -86,6 +88,9 @@ class Worker:
         self.retry = retry
         self.model_timeout_s = model_timeout_s
         self.cancel_grace = cancel_grace
+        #: One per process, per provider, shared by every lease this worker holds (§8): an outage
+        #: seen by one run holds back the next attempt of every run on the same provider.
+        self.breaker = breaker if breaker is not None else CircuitBreaker()
         self.draining = False
         # `lease_ttl` must exceed the largest registered non-PURE tool.timeout, or the pre-dispatch
         # gate could never clear and every attempt would abandon with STARTED open (§8.4).
@@ -177,6 +182,7 @@ class Worker:
             model_config=row.model_config,
             resolve_program=self.resolve,
             cancel_grace_s=self.cancel_grace,
+            breaker=self.breaker,
         )
         ctx = Ctx(
             engine,

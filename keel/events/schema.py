@@ -91,7 +91,7 @@ class RunWaiting(Body):
     holds it and no scheduler polls it — only a signal or `wake_at` brings it back (§4.2)."""
 
     type: Literal["RUN_WAITING"] = "RUN_WAITING"
-    reason: Literal["approval", "children", "sleep", "signal", "resolution"]
+    reason: Literal["approval", "children", "sleep", "signal", "resolution", "retry_backoff"]
     wake_at: AwareDatetime | None = None
     step_index: int | None = None
 

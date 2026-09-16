@@ -36,6 +36,7 @@ _WAITING_PHASE = {
     "sleep": "SLEEPING",
     "signal": "WAITING_SIGNAL",
     "resolution": "WAITING_RESOLUTION",
+    "retry_backoff": "SLEEPING",  # §7.2.1: a backoff of a second or more is a zero-compute wait
 }
 
 
@@ -59,10 +60,15 @@ class StepState:
     retryable: bool = False
     resolution: str | None = None
     method: str | None = None
+    #: A retryable failure the runtime decided to retry, and when (§8.7). None: the failure stands.
+    next_attempt_at: Any = None
 
     @property
     def settled(self) -> bool:
-        """Has this step a value the program can be handed without executing anything?"""
+        """Has this step a value the program can be handed without executing anything? A failure
+        the runtime journaled a retry for (`next_attempt_at`) is not: the step is still open."""
+        if self.state == FAILED and self.next_attempt_at is not None:
+            return False
         return self.state in _SETTLED
 
     def identity(self) -> tuple:
@@ -434,6 +440,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s.state = FAILED
         s.error = b.error
         s.retryable = b.retryable
+        s.next_attempt_at = b.next_attempt_at
         s.outcome_seq = ev.seq
         s.outcome_epoch = ev.lease_epoch
     elif t == "STEP_AMBIGUOUS":

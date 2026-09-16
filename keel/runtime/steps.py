@@ -89,6 +89,10 @@ EXECUTORS: dict[StepKind, StepExecutor] = {}
 #: and pinned small in the benchmark, where a trial cannot afford to wait a minute to learn nothing.
 DEFAULT_MODEL_TIMEOUT_S = 60.0
 
+#: §7.2.1: a retry backoff shorter than this is slept in-process under the lease; a longer one parks
+#: as RUN_WAITING{retry_backoff} and releases the lease, because waiting is zero compute everywhere.
+PARK_BACKOFF_AFTER_S = 1.0
+
 # A probe that cannot tell, distinguished from a step whose value happens to be None.
 _UNRESOLVED = object()
 
@@ -182,6 +186,7 @@ class StepEngine:
         model_config: Any = None,
         resolve_program: Callable[[str], Any] | None = None,
         cancel_grace_s: float = DEFAULT_CANCEL_GRACE_S,
+        breaker: Any = None,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -202,6 +207,9 @@ class StepEngine:
         self.model_config = dict(model_config or {})
         self.resolve_program = resolve_program
         self.cancel_grace_s = cancel_grace_s
+        #: The worker's per-provider circuit breaker (§8): below the journal, shared by every lease
+        #: this process holds. None means no breaker, which is what a bare engine gets.
+        self.breaker = breaker
         self._waiting_intent: StepIntent | None = None
         #: VERIFY (§10.9). One flag rather than a second loop: a separate replayer would drift from
         #: this one, and the drift would be invisible — VERIFY would keep passing while the thing
@@ -487,9 +495,9 @@ class StepEngine:
         kind = row.type
         if kind == "child_result":
             return await self._settle_child(tx, row, seq)
-        if kind == "timer" and waiting is not None and waiting.kind == "DELEGATE":
-            # The wake after `cancel_grace`, or a deadline: nothing to decide here — the drain's
-            # caller reads the children and acts. Consumed so it is not re-read for ever.
+        if kind == "timer" and (waiting is None or waiting.kind != "APPROVAL"):
+            # A wake with nothing to decide: `cancel_grace` on a DELEGATE, a retry backoff coming
+            # due. The drain's caller acts on the time; the row is consumed so it is not re-read.
             await tx.append(
                 SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="wake"),
                 causation_seq=seq,
@@ -1333,9 +1341,24 @@ class StepEngine:
     ) -> Any:
         is_tool = intent.kind is StepKind.TOOL
         key = intent.effect_key or ""
+        # The retry decision is made *before* the outcome commits, so it is journaled with it: a
+        # STEP_FAILED carrying `next_attempt_at` is a failure the runtime will retry, and a successor
+        # that finds it retries rather than failing the run (§8.7, §11.5 `provider_outage`).
+        retrying = isinstance(outcome, Failed) and outcome.retryable and self.retry.may_retry(attempt_no)
+        wait_s = 0.0
+        if isinstance(outcome, (Completed, Failed)):
+            self._breaker_saw(intent, ok=isinstance(outcome, Completed))
+        if retrying:
+            wait_s = max(
+                self.retry.backoff_s(attempt_no, lease_ttl_s=self.lease.ttl_seconds),
+                self._breaker_wait_s(intent),
+            )
+        next_attempt_at = None
         try:
             hooks.at("before:outcome_commit", attempt_no=attempt_no, **_where(intent))
             async with self.journal.append(self.lease) as tx:
+                if retrying:
+                    next_attempt_at = await tx.now() + timedelta(seconds=wait_s)
                 if isinstance(outcome, Completed):
                     seq = await tx.append(
                         StepCompleted(
@@ -1358,6 +1381,7 @@ class StepEngine:
                             attempt_no=attempt_no,
                             error=outcome.error,
                             retryable=outcome.retryable,
+                            next_attempt_at=next_attempt_at,
                         ),
                         causation_seq=started_seq,
                     )
@@ -1386,14 +1410,53 @@ class StepEngine:
             self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
             return outcome.result
         if isinstance(outcome, Failed):
-            if outcome.retryable and self.retry.may_retry(attempt_no):
+            if retrying:
                 # An EXTERNAL timeout never reaches here — it is AMBIGUOUS, because retrying a
                 # request that left the process is exactly how systems duplicate effects (§8.5).
-                delay = self.retry.backoff_s(attempt_no, lease_ttl_s=self.lease.ttl_seconds)
-                await asyncio.sleep(delay)  # inside the lease, with the heartbeat still running
-                return await self._start_attempt(intent, attempt_no + 1)
+                if wait_s < PARK_BACKOFF_AFTER_S:
+                    await asyncio.sleep(wait_s)  # inside the lease, with the heartbeat still running
+                    return await self._start_attempt(intent, attempt_no + 1)
+                return await self._retry_after_backoff(intent, attempt_no, next_attempt_at)
             raise StepFailed(intent.step_index, outcome.error, retryable=outcome.retryable)
         return await self._resolve(intent, attempt_no)
+
+    async def _retry_after_backoff(self, intent: StepIntent, attempt_no: int, due: Any) -> Any:
+        """A retry the journal already decided on: start it when `next_attempt_at` has passed and
+        the provider's breaker lets an attempt through, and until then park at zero compute —
+        `RUN_WAITING{retry_backoff}` with its release, woken by the timer sweep (§7.2.1, §11.5).
+        Signals are drained first, so a cancel or pause sent during an outage is honoured."""
+        while True:
+            await self._drain_inbox(intent.step_index, force=self._paused)
+            async with self.journal.append(self.lease) as tx:  # the fence alone: a heartbeat
+                now = await tx.now()
+            wake_at = max(due, now + timedelta(seconds=self._breaker_wait_s(intent)))
+            if now >= wake_at:
+                return await self._start_attempt(intent, attempt_no + 1)
+            if await self._commit_park("retry_backoff", intent.step_index, phase="SLEEPING", wake_at=wake_at):
+                raise Parked("retry_backoff", wake_at=wake_at)
+
+    def _provider_key(self) -> str:
+        return str(getattr(self.provider, "name", None) or "default")
+
+    def _breaker_saw(self, intent: StepIntent, *, ok: bool) -> None:
+        if self.breaker is None or intent.kind not in (StepKind.MODEL, StepKind.COMPACT):
+            return
+        if ok:
+            self.breaker.success(self._provider_key())
+        else:
+            self.breaker.failure(self._provider_key(), self._worker_now())
+
+    def _breaker_wait_s(self, intent: StepIntent) -> float:
+        """How long the breaker holds the next MODEL attempt back. The breaker keeps the worker's
+        clock; only this delta crosses into the store's, so the two clocks are never compared."""
+        if self.breaker is None or intent.kind not in (StepKind.MODEL, StepKind.COMPACT):
+            return 0.0
+        now = self._worker_now()
+        until = self.breaker.blocked_until(self._provider_key(), now)
+        return max(0.0, (until - now).total_seconds()) if until is not None else 0.0
+
+    def _worker_now(self) -> datetime:
+        return self.clock.now() if self.clock is not None else datetime.now(UTC)
 
     # --- the journal-state recovery table (§8.3) -----------------------------
     async def _recover_open(self, intent: StepIntent, journaled: Any) -> Any:
@@ -1448,6 +1511,10 @@ class StepEngine:
         if state == AMBIGUOUS:
             return await self._resolve(intent, journaled.attempts)
         if state == FAILED:
+            if journaled.retryable and journaled.next_attempt_at is not None:
+                # The retry was decided and journaled with the failure; a successor honours the
+                # journal's decision rather than re-deciding it under whatever policy it now has.
+                return await self._retry_after_backoff(intent, journaled.attempts, journaled.next_attempt_at)
             raise StepFailed(intent.step_index, journaled.error or "failed", retryable=journaled.retryable)
         raise Suspended("unrecoverable_step_state", {"step_index": intent.step_index, "state": state})
 

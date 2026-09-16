@@ -144,3 +144,129 @@ async def test_the_projection_bounds_what_the_provider_was_billed() -> None:
     )
     assert state.charged.model_calls == 3
     assert state.charged.tokens_charged >= reported > 0
+
+
+# --- the circuit breaker and the zero-compute backoff (§8, §11.5 provider_outage) ---------------
+async def test_an_outage_opens_the_breaker_and_the_run_waits_for_it_at_zero_compute() -> None:
+    """`provider_outage`'s claim, on the runtime side: retries back off, the breaker opens after
+    `n_open` failures and pushes the next attempt out, the run parks for that wait with its lease
+    released (RUN_WAITING{retry_backoff}), the timer sweep wakes it, and the half-open attempt
+    completes the run. No retry storm, and no worker held while the provider is down."""
+    from keel.client import program
+    from keel.core.errors import UnknownOutcome
+    from keel.runtime.breaker import CircuitBreaker
+
+    clock = FakeClock()
+    calls = {"n": 0}
+
+    class Outage:
+        name = "flaky-provider"
+
+        def __init__(self, inner: ScriptedProvider) -> None:
+            self.inner = inner
+
+        async def count_tokens(self, req):
+            return await self.inner.count_tokens(req)
+
+        async def complete(self, req):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise UnknownOutcome("503 from the provider")
+            return await self.inner.complete(req)
+
+    @program(name="asks_once", version="1.0")
+    async def asks_once(ctx, args):
+        resp = await ctx.model([{"role": "user", "content": "hi"}], name="m")
+        return resp.text
+
+    k = Keel(journal=MemoryJournal(clock=clock), provider=Outage(ScriptedProvider(demo.SCRIPT)),
+             programs=[asks_once], clock=clock)
+    handle = await k.start(asks_once, {})
+    breaker = CircuitBreaker(n_open=2, cooldown_s=10.0)
+    policy = RetryPolicy(max_attempts=5, base_s=0.01)
+
+    def worker(wid: str):
+        return k.worker(worker_id=wid, lease_ttl=5.0, retry=policy, breaker=breaker)
+
+    from datetime import timedelta
+
+    lease = await k.journal.claim("w1", timedelta(seconds=5))
+    await worker("w1").execute(lease)
+
+    events = await k.events(handle.run_id)
+    state = fold(events)
+    row = await k.journal.run_row(handle.run_id)
+    assert calls["n"] == 2, "two attempts, then the breaker opened: no storm"
+    assert state.phase == "SLEEPING" and state.waiting_reason == "retry_backoff"
+    assert row.lease_expires_at is None and row.runnable_at is None, "zero compute while the provider is down"
+    failed = [e for e in events if e.type == "STEP_FAILED"]
+    assert failed[-1].body.retryable and failed[-1].body.next_attempt_at is not None
+    assert row.wake_at == failed[-1].body.next_attempt_at
+    assert row.wake_at >= clock.now() + timedelta(seconds=9), "pushed out to the end of the cooldown"
+
+    assert await k.journal.claim("idle", timedelta(seconds=5)) is None
+    clock.advance(11)
+    assert await k.journal.sweep_timers() == 1
+    lease = await k.journal.claim("w2", timedelta(seconds=5))
+    await worker("w2").execute(lease)
+
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "COMPLETED", state.error
+    assert calls["n"] == 3, "one half-open attempt, and it succeeded"
+    assert not breaker.is_open("flaky-provider", clock.now())
+
+
+async def test_a_successor_honours_a_retry_the_journal_already_decided() -> None:
+    """A worker that dies during a backoff leaves STEP_FAILED{retryable, next_attempt_at}. Before,
+    any journaled FAILED ended the run on recovery; the decision to retry is now journal state."""
+    from keel.client import program
+    from keel.core.errors import UnknownOutcome
+    from keel.runtime import hooks
+
+    clock = FakeClock()
+    calls = {"n": 0}
+
+    class Blip:
+        name = "blip"
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def count_tokens(self, req):
+            return await self.inner.count_tokens(req)
+
+        async def complete(self, req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise UnknownOutcome("503")
+            return await self.inner.complete(req)
+
+    @program(name="asks_again", version="1.0")
+    async def asks_again(ctx, args):
+        return (await ctx.model([{"role": "user", "content": "hi"}], name="m")).text
+
+    k = Keel(journal=MemoryJournal(clock=clock), provider=Blip(ScriptedProvider(demo.SCRIPT)),
+             programs=[asks_again], clock=clock)
+    handle = await k.start(asks_again, {})
+
+    def crash(boundary, detail):
+        if boundary == "after:outcome_commit":
+            raise hooks.Crash("died during the backoff")
+
+    from datetime import timedelta
+
+    hooks.install(crash)
+    try:
+        lease = await k.journal.claim("w1", timedelta(seconds=2))
+        with pytest.raises(hooks.Crash):
+            await k.worker(worker_id="w1", lease_ttl=2.0, retry=RetryPolicy(max_attempts=3, base_s=0.01)).execute(lease)
+    finally:
+        hooks.reset()
+
+    clock.advance(5)
+    await k.journal.reap()
+    lease = await k.journal.claim("w2", timedelta(seconds=2))
+    await k.worker(worker_id="w2", lease_ttl=2.0, retry=NO_RETRY).execute(lease)  # a policy that would not retry
+    state = fold(await k.events(handle.run_id))
+    assert state.phase == "COMPLETED", state.error
+    assert calls["n"] == 2
