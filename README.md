@@ -493,7 +493,7 @@ generated. A row with no `facts.json` behind it exits 9 — a clone's rows, and 
 reask_alternate even on the machine that ran them, because those trials predate the file. An
 invariant added after a row was written and N/A for it is not drift (the row could not carry it), so
 the tier1p, W5 and W5-pre directories recheck with exit 0 on that machine: 1080, 450 and 270 rows,
-the one FAIL printed being W5's designed LangGraph expiry L1.
+the FAILs it prints being the 60 designed LangGraph `approval_expiry` L1s in W5.
 
 **`bench` is serial on purpose, and parallelism is sharding.** One run owns one `results.jsonl` and
 one `cursor.json`, which is what makes `--resume` safe and a re-taken void trial unambiguous; two
