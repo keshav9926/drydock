@@ -46,7 +46,7 @@ def kill(pid: int) -> None:
 
         subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True, check=False)
     else:
-        _ignore_gone(lambda: os.kill(pid, signal.SIGKILL))
+        _signal(pid, signal.SIGKILL)
 
 
 def freeze_self(thaw_marker: "Path | None" = None) -> None:
@@ -75,14 +75,14 @@ def suspend(pid: int) -> None:
     if WINDOWS:
         _with_handle(pid, "NtSuspendProcess")
     else:
-        _ignore_gone(lambda: os.kill(pid, signal.SIGSTOP))
+        _signal(pid, signal.SIGSTOP)
 
 
 def resume(pid: int) -> None:
     if WINDOWS:
         _with_handle(pid, "NtResumeProcess")
     else:
-        _ignore_gone(lambda: os.kill(pid, signal.SIGCONT))
+        _signal(pid, signal.SIGCONT)
 
 
 def terminate(pid: int) -> None:
@@ -90,7 +90,7 @@ def terminate(pid: int) -> None:
     if WINDOWS:
         kill(pid)  # Windows has no SIGTERM for another process; the drain cells are day 4 (POSIX)
     else:
-        _ignore_gone(lambda: os.kill(pid, signal.SIGTERM))
+        _signal(pid, signal.SIGTERM)
 
 
 # --- Windows plumbing --------------------------------------------------------
@@ -123,6 +123,15 @@ def _with_handle(pid: int, fn: str) -> None:
             raise OSError(f"{fn}({pid}) failed with NTSTATUS 0x{status:08x}")
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _signal(pid: int, sig: int) -> None:
+    """POSIX `kill(0, …)` signals the caller's whole process group and `kill(-1, …)` every process
+    the user owns; on Windows the same pids open nothing. A pid that names no one process is refused
+    here, where every outside signal passes, so no caller can take down the supervisor with it."""
+    if pid <= 0:
+        return
+    _ignore_gone(lambda: os.kill(pid, sig))
 
 
 def _ignore_gone(action) -> None:
