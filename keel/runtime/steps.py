@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from keel.core.clock import SystemClock
 from keel.core.errors import Cancelled, ContractInvalid, Fenced, KeelError, StepFailed, Rejected, UnknownOutcome
 from keel.core.errors import ApprovalBindingError, NondeterminismDetected, WakeRaced
 from keel.core.ids import uuid7
@@ -252,7 +253,7 @@ class StepEngine:
             return await self._recover_open(intent, journaled)
         # The one boundary where stopping is free: everything behind is journaled, nothing ahead
         # has been attempted. An in-flight step is never interrupted — it is already bounded by
-        # `asyncio.timeout(tool.timeout)`, which is what `shutdown_grace` must exceed.
+        # `clock.timeout(tool.timeout)`, which is what `shutdown_grace` must exceed.
         if self.should_drain is not None and self.should_drain():
             raise Drain(f"draining at step {intent.step_index}")
         await self._drain_inbox(intent.step_index, force=self._paused)
@@ -1303,7 +1304,7 @@ class StepEngine:
             # The write-ahead barrier is behind us: STARTED is durable, so a crash here is the
             # window the whole recovery table exists for.
             hooks.at("before:effect_exec", attempt_no=attempt_no, **_where(intent))
-            async with asyncio.timeout(remaining):
+            async with _waits(self.clock).timeout(remaining):
                 outcome: StepOutcome = await executor.execute(intent, sctx)
             hooks.at("after:effect_exec", attempt_no=attempt_no, **_where(intent))
         except TimeoutError:
@@ -1420,7 +1421,7 @@ class StepEngine:
                 # An EXTERNAL timeout never reaches here — it is AMBIGUOUS, because retrying a
                 # request that left the process is exactly how systems duplicate effects (§8.5).
                 if wait_s < PARK_BACKOFF_AFTER_S:
-                    await asyncio.sleep(wait_s)  # inside the lease, with the heartbeat still running
+                    await _waits(self.clock).sleep(wait_s)  # inside the lease, with the heartbeat still running
                     return await self._start_attempt(intent, attempt_no + 1)
                 return await self._retry_after_backoff(intent, attempt_no, next_attempt_at)
             raise StepFailed(intent.step_index, outcome.error, retryable=outcome.retryable)
@@ -1622,6 +1623,15 @@ class StepEngine:
         if intent.kind is not StepKind.TOOL or self.tools is None:
             return None
         return self.tools.get(intent.name)
+
+
+_SYSTEM_CLOCK = SystemClock()
+
+
+def _waits(clock: Any) -> Any:
+    """The clock every wait goes through (§12.2). An engine built without one — VERIFY's, which
+    never waits — gets the system clock rather than a second code path."""
+    return clock if clock is not None else _SYSTEM_CLOCK
 
 
 def _remaining(started_local: datetime, timeout: float, clock: Any = None) -> float:

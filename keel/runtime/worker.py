@@ -34,7 +34,7 @@ from keel.runtime.ctx import Ctx
 from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
 from keel.runtime.retry import NO_RETRY, RetryPolicy
-from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended
+from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended, _waits
 from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S
 from keel.state.fold import fold
 
@@ -347,7 +347,7 @@ class Worker:
         run: stop, and let the successor decide from the journal."""
         period = max(0.05, self.lease_ttl / HEARTBEAT_DIVISOR)
         while True:
-            await asyncio.sleep(period)
+            await _waits(self.clock).sleep(period)
             # A kill here is how a *live* worker becomes a zombie: the lease is still valid for up
             # to one TTL, and the run is not reclaimable until it lapses. The reaper predicate is
             # what bounds that window, and this is where a fault gets to test the bound.
