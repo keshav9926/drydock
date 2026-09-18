@@ -267,7 +267,7 @@ wrote a stale boundary (r005); and the K6 case above.
 
 **What the adapters found in the harness.** On POSIX `freeze_self` raised `SIGSTOP` on its own process
 and returned, and the shim thread ran on long enough to send the request 17 ms after the fault row
-([restate](adapters/restate.md)); the fix parks the thread on both platforms. A process mid-`taskkill` is
+([restate](adapters/restate.md)); the first fix parked the thread on the thaw marker as well, and the second (`8d90198`, after the week-2 run) stopped sending `SIGSTOP` at all, because a self-stop that landed after the supervisor's resume left the worker stopped for good — the 4 of 60 Restate freeze trials above. A process mid-`taskkill` is
 alive to `poll()` and refuses `NtResume` with `0xC000010A` (`crashproof/faults/process.py`); until that
 status was treated as gone the end-of-trial resume took a run down. Temporal's kill cells carried ~8 s of
 the SDK's 10 s sticky-queue default hiding behind the pinned 2 s heartbeat — a documented worker option,
