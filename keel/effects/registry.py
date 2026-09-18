@@ -43,6 +43,9 @@ class ToolCtx:
     workspace: Path | None = None
     credentials: dict[str, str] = field(default_factory=dict)
     resources: dict[str, Any] = field(default_factory=dict)
+    #: STREAMS only (§24.3): `await tctx.emit(chunk)` journals what the tool has produced so far, as
+    #: STEP_CHUNK batches. Observability, never the result; None for a tool that does not stream.
+    emit: Callable[..., Any] | None = None
 
 
 class ToolSpec:
@@ -194,6 +197,7 @@ class _ToolExecutor:
             deadline=sctx.deadline,
             credentials={n: os.environ[n] for n in spec.secrets if n in os.environ},
             resources=sctx.resources,
+            emit=sctx.emit,
         )
         result = await spec.run(intent.args, tctx)
         external_ref = result.get("external_ref") if isinstance(result, dict) else None

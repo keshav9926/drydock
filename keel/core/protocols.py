@@ -120,6 +120,8 @@ class StepCtx:
     tools: Any = None
     hooks: Any = None
     resources: dict[str, Any] = field(default_factory=dict)
+    #: A STREAMS attempt's chunk sink, `await emit(piece, usage_cum=None)`; None without STREAMS.
+    emit: Any = None
 
 
 @runtime_checkable

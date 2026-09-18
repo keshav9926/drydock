@@ -159,6 +159,12 @@ class UnknownOutcome(KeelError):
     """
 
 
+class StreamTruncated(UnknownOutcome):
+    """A stream ended before its final response (§10.7, `model_stream_truncate`). Unknown like any
+    receiver that stopped answering, so the class disposes of it; the partial text is never promoted
+    to a result, because a half-generated tool call is not a decision."""
+
+
 class Rejected(KeelError):
     """The receiver said no, definitively: a 4xx. That is knowledge, not ambiguity, so the step
     fails and is not retried for any class."""

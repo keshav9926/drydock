@@ -15,6 +15,7 @@ it is stable across restarts, and it is enough to drive `tool_chain_1_effect`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -79,9 +80,21 @@ class ScriptedProvider:
             provider_meta={"provider": self.name, "model": self._model, "model_version": "1"},
         )
 
-    async def stream(self, req: ModelRequest) -> AsyncIterator[ModelChunk]:  # pragma: no cover - v1
+    async def stream(self, req: ModelRequest) -> AsyncIterator[ModelChunk]:
+        """The answer `complete` gives, a word at a time, then the whole response (STREAMS, §9.3).
+        `usage_cum` climbs to the final usage, so the last chunk and the outcome agree."""
         resp = await self.complete(req)
-        yield ModelChunk(text=resp.text, usage_cum=resp.usage)
+        total, sent = len(resp.text) or 1, 0
+        for word in re.findall(r"\S+\s*", resp.text):
+            sent += len(word)
+            yield ModelChunk(
+                text=word,
+                usage_cum=Usage(
+                    input_tokens=resp.usage.input_tokens,
+                    output_tokens=resp.usage.output_tokens * sent // total,
+                ),
+            )
+        yield ModelChunk(usage_cum=resp.usage, response=resp)
 
     async def count_tokens(self, req: ModelRequest) -> int:
         """Exact by definition for this provider: the reservation and the settle use one formula."""

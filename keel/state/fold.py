@@ -154,6 +154,18 @@ class Charged:
         elif kind == "TOOL":
             self.tool_calls += 1
 
+    def chunk(self, step_index: int, attempt_no: int, usage_cum: dict[str, int] | None) -> None:
+        """A streamed attempt's running usage raises its floor, never lowers it (§9.1, §10.7): an
+        attempt that never settles stays charged at `max(reservation, last usage_cum)`, because the
+        tokens generated after the last batch are unrecorded and a closure settles nothing."""
+        held = self.reserved.get((step_index, attempt_no))
+        if held is None or not usage_cum:
+            return
+        seen = int(usage_cum.get("input_tokens", 0)) + int(usage_cum.get("output_tokens", 0))
+        if seen > held:
+            self.tokens_charged += seen - held
+            self.reserved[(step_index, attempt_no)] = seen
+
     def settle(self, step_index: int, attempt_no: int, usage: dict[str, int] | None) -> None:
         """Swap the reservation for what the attempt actually reported. An outcome carrying no
         usage — a provider error — leaves the reservation charged."""
@@ -477,6 +489,10 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s.state = RUNNING
         s.attempts = b.attempt_no
         st.charged.start(b.step_index, b.attempt_no, b.reservation, s.kind)
+    elif t == "STEP_CHUNK":
+        # Observability, and the budget: the one fold that reads a chunk (§10.7). Never the step's
+        # state, never the context — the semantic content of a streamed step is its outcome.
+        st.charged.chunk(b.step_index, b.attempt_no, b.usage_cum)
     elif t == "STEP_COMPLETED":
         s = st.steps[b.step_index]
         st.charged.settle(b.step_index, b.attempt_no, b.usage)

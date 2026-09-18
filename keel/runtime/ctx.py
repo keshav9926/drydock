@@ -17,7 +17,7 @@ from keel.core.errors import ConcurrentStepError, UnknownTool
 from keel.core.hashing import args_hash as _args_hash
 from keel.core.hashing import effect_key as _effect_key
 from keel.core.hashing import request_hash as _request_hash
-from keel.core.protocols import StepIntent, StepKind
+from keel.core.protocols import Modifier, StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
 from keel.runtime.segments import FORCED_SEGMENT_STEPS
@@ -189,10 +189,15 @@ class Ctx:
         *,
         name: str,
         max_tokens: int = 1024,
+        stream: bool = False,
         **sampling: Any,
     ) -> ModelResponse:
         """MODEL step; identity = (MODEL, name). No provider/model argument — that is
-        runs.model_config, resolved when the step executes LIVE (§1)."""
+        runs.model_config, resolved when the step executes LIVE (§1).
+
+        `stream=True` is the STREAMS modifier (§9.3): the answer is journaled as STEP_CHUNK batches
+        while it arrives, and the program still gets only the whole response — a partial answer never
+        becomes a decision. Not part of the identity or the request, so a replay is the same step."""
         index = self._open()
         req = ModelRequest(
             messages=[m if isinstance(m, Message) else Message(**m) for m in messages],
@@ -208,6 +213,7 @@ class Ctx:
             args=payload,
             args_hash=_args_hash(payload),
             request_hash=_request_hash(payload),
+            modifiers=(Modifier.STREAMS,) if stream else (),
             program_version=self.program_version,
         )
         return ModelResponse.model_validate(await self._run(intent))

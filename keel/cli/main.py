@@ -321,6 +321,8 @@ def _detail(e: Any) -> str:
         return f"{b.kind} {b.name}{cls}"
     if t == "STEP_ATTEMPT_STARTED":
         return f"attempt={b.attempt_no}" + (f" deadline={b.attempt_deadline:%H:%M:%S}" if b.attempt_deadline else "")
+    if t == "STEP_CHUNK":  # what streamed before an outcome, labelled by attempt (§10.7)
+        return f"attempt={b.attempt_no} chunk={b.chunk_no} " + _short(b.blob, 30)
     if t == "STEP_COMPLETED":
         return _short(b.result)
     if t == "STEP_FAILED":

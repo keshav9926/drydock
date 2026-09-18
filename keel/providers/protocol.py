@@ -52,9 +52,13 @@ class ModelResponse(BaseModel):
 
 
 class ModelChunk(BaseModel):
+    """One piece of a streamed answer. The last one carries the whole `response`; a stream that ends
+    without it was cut, and what came before is never the answer (§10.7)."""
+
     model_config = ConfigDict(frozen=True)
     text: str = ""
     usage_cum: Usage = Usage()
+    response: ModelResponse | None = None
 
 
 class ModelProvider(Protocol):

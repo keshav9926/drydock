@@ -295,6 +295,22 @@ class StepAttemptStarted(Body):
     reservation: int | None = None
 
 
+class StepChunk(Body):
+    """A batch of what a STREAMS attempt has emitted so far (§9.3, §10.7): observability and UI
+    resume, never semantics. `blob` is the delta since the previous chunk, `usage_cum` the attempt's
+    cumulative usage (MODEL only; a tool carries no token reservation). Replay reads chunks for three
+    things and never for control flow: the budget charges an attempt that never settled at
+    `max(reservation, last usage_cum)`; the timeline shows what streamed, by `attempt_no`; and a
+    diff can show where a truncated stream stopped. The semantic result is the outcome alone."""
+
+    type: Literal["STEP_CHUNK"] = "STEP_CHUNK"
+    step_index: int
+    attempt_no: int
+    chunk_no: int
+    blob: Any = None
+    usage_cum: dict[str, int] | None = None
+
+
 class StepCompleted(Body):
     type: Literal["STEP_COMPLETED"] = "STEP_COMPLETED"
     step_index: int
@@ -359,6 +375,7 @@ EventBody = Annotated[
     | PlanUpdated
     | StepIntended
     | StepAttemptStarted
+    | StepChunk
     | StepCompleted
     | StepFailed
     | StepAmbiguous

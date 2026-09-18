@@ -9,6 +9,7 @@ nothing but the provider (§23.2).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random as _random
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,8 @@ from uuid import UUID
 
 from keel.core.clock import SystemClock
 from keel.core.errors import Cancelled, ContractInvalid, Fenced, KeelError, StepFailed, Rejected, UnknownOutcome
+from keel.core.errors import StoreUnavailable, StreamTruncated
+from keel.core.hashing import canonical_json
 from keel.core.errors import ApprovalBindingError, NondeterminismDetected, WakeRaced
 from keel.core.ids import uuid7
 from keel.core.protocols import (
@@ -24,6 +27,7 @@ from keel.core.protocols import (
     Completed,
     EffectClass,
     Failed,
+    Modifier,
     StepCtx,
     StepExecutor,
     StepIntent,
@@ -51,6 +55,7 @@ from keel.events import (
     StepAmbiguous,
     StepAttemptStarted,
     StepCancelled,
+    StepChunk,
     StepCompleted,
     StepFailed as StepFailedEvent,
     StepIntended,
@@ -1451,13 +1456,15 @@ class StepEngine:
             tools=self.tools,
         )
         executor = EXECUTORS[intent.kind]
+        chunks = _Chunks(self, intent, attempt_no, started_seq) if Modifier.STREAMS in intent.modifiers else None
+        sctx.emit = chunks.emit if chunks is not None else None
         try:
             remaining = timeout if deadline is None else _remaining(started_local, timeout, self.clock)
             # The write-ahead barrier is behind us: STARTED is durable, so a crash here is the
             # window the whole recovery table exists for.
             hooks.at("before:effect_exec", attempt_no=attempt_no, **_where(intent))
             async with _waits(self.clock).timeout(remaining):
-                outcome: StepOutcome = await executor.execute(intent, sctx)
+                outcome: StepOutcome = await _execute(executor, intent, sctx, chunks)
             hooks.at("after:effect_exec", attempt_no=attempt_no, **_where(intent))
         except TimeoutError:
             # An EXTERNAL timeout is ambiguity, never failure: the request left the process and the
@@ -1478,8 +1485,27 @@ class StepEngine:
         except Rejected as exc:
             # The receiver spoke plainly. Retrying a refusal only wastes an attempt.
             outcome = Failed(f"rejected: {exc}", retryable=False)
+        except (Fenced, StoreUnavailable):
+            # A chunk's append failed: the worker's journal, not the tool. Leave the attempt open,
+            # exactly as a crash would, and let the class dispose of it (§8.3).
+            raise
         except Exception as exc:  # noqa: BLE001 - a tool's own error is an outcome, not a crash
-            outcome = Failed(f"{type(exc).__name__}: {exc}", retryable=False)
+            if chunks is not None and chunks.pieces:
+                # §9.3: a stream that broke once it had begun is an unknown outcome, disposed by the
+                # class — FAILED-retryable, or AMBIGUOUS for EXTERNAL — whatever broke it.
+                cause = f"mid_stream: {type(exc).__name__}: {exc}"
+                outcome = (
+                    Ambiguous(cause) if eff_class == EffectClass.EXTERNAL
+                    else Failed(cause, retryable=True, unknown=True)
+                )
+            else:
+                outcome = Failed(f"{type(exc).__name__}: {exc}", retryable=False)
+        if chunks is not None and isinstance(outcome, Failed) and outcome.unknown and chunks.pieces:
+            tool = self._tool_of(intent)
+            if getattr(tool, "partial_ok", False):
+                # PURE only, and only live (§9.3): the attempt completes with what arrived, marked
+                # partial. Never across a crash — a crashed attempt has no outcome to relax.
+                outcome = Completed(result={"partial": True, "chunks": list(chunks.pieces)})
         return await self._commit_outcome(intent, attempt_no, started_seq, outcome)
 
     async def _pre_dispatch_gate(self, timeout: float) -> None:
@@ -1825,6 +1851,78 @@ def _waits(clock: Any) -> Any:
     return clock if clock is not None and hasattr(clock, "timeout") else _SYSTEM_CLOCK
 
 
+#: §21.3 item 6: a STREAMS attempt journals a STEP_CHUNK every 256 tokens or 500 ms, whichever
+#: comes first — one commit per batch rather than one per token, which would be a 100x amplifier.
+CHUNK_BATCH_TOKENS = 256
+CHUNK_BATCH_S = 0.5
+
+
+class _Chunks:
+    """One STREAMS attempt's chunk writer (§9.3, §10.7, §21.2).
+
+    Each batch is its own fenced transaction, appended while the attempt is still open, so a crash
+    leaves STARTED(n) + STEP_CHUNK(n, 1..k) and no outcome — which the recovery table treats exactly
+    as STARTED(n) alone, the class deciding. A fenced or failed append ends the attempt the way a
+    crash would. `during:stream` fires once a batch is durable, carrying its `chunk_no`."""
+
+    def __init__(self, engine: StepEngine, intent: StepIntent, attempt_no: int, started_seq: int) -> None:
+        self.engine, self.intent, self.attempt_no, self.started_seq = engine, intent, attempt_no, started_seq
+        #: Every piece emitted, for a PURE `partial_ok` result; `pending` is the batch not yet journaled.
+        self.pieces: list[Any] = []
+        self.pending: list[Any] = []
+        self.pending_tokens = 0
+        self.usage_cum: dict[str, int] | None = None
+        self.chunk_no = 0
+        self.last_flush = engine._worker_now()
+
+    async def emit(self, piece: Any, usage_cum: dict[str, int] | None = None) -> None:
+        self.pieces.append(piece)
+        self.pending.append(piece)
+        if usage_cum is not None:
+            before = (self.usage_cum or {}).get("output_tokens", 0)
+            self.usage_cum = dict(usage_cum)
+            self.pending_tokens += max(0, int(usage_cum.get("output_tokens", 0)) - int(before))
+        else:
+            # A tool's pieces carry no usage; the scripted provider's four characters to a token.
+            self.pending_tokens += max(1, len(canonical_json(piece)) // 4)
+        waited = (self.engine._worker_now() - self.last_flush).total_seconds()
+        if self.pending_tokens >= CHUNK_BATCH_TOKENS or waited >= CHUNK_BATCH_S:
+            await self.flush()
+
+    async def flush(self) -> None:
+        if not self.pending:
+            return
+        blob = "".join(self.pending) if all(isinstance(p, str) for p in self.pending) else list(self.pending)
+        engine, i = self.engine, self.intent.step_index
+        async with engine.journal.append(engine.lease) as tx:
+            await tx.append(
+                StepChunk(
+                    step_index=i, attempt_no=self.attempt_no, chunk_no=self.chunk_no + 1,
+                    blob=blob, usage_cum=self.usage_cum,
+                ),
+                causation_seq=self.started_seq,
+            )
+        self.chunk_no += 1
+        self.pending, self.pending_tokens, self.last_flush = [], 0, engine._worker_now()
+        engine.state.charged.chunk(i, self.attempt_no, self.usage_cum)
+        hooks.at("during:stream", chunk=self.chunk_no, attempt_no=self.attempt_no, **_where(self.intent))
+
+
+async def _execute(executor: StepExecutor, intent: StepIntent, sctx: StepCtx, chunks: _Chunks | None) -> StepOutcome:
+    """The executor, and for a STREAMS attempt the tail of its stream: journaled before the outcome
+    whether the stream finished or broke, so a diff can show where a truncated stream stopped. Not
+    after a crash — a `BaseException` other than a cancel is a power cut, and a cut writes nothing."""
+    if chunks is None:
+        return await executor.execute(intent, sctx)
+    try:
+        outcome = await executor.execute(intent, sctx)
+    except (Exception, asyncio.CancelledError):
+        await chunks.flush()
+        raise
+    await chunks.flush()
+    return outcome
+
+
 def _remaining(started_local: datetime, timeout: float, clock: Any = None) -> float:
     """Count down from the STARTED commit, not from dispatch (§5.10): the time between the commit
     and the send is spent from the attempt's budget. The journaled `attempt_deadline` is on the
@@ -1888,7 +1986,20 @@ class _ModelExecutor:
 
     async def execute(self, intent: StepIntent, sctx: StepCtx) -> StepOutcome:
         req = ModelRequest.model_validate(intent.args)
-        resp = await sctx.provider.complete(req)
+        if sctx.emit is None:
+            resp = await sctx.provider.complete(req)
+        else:
+            # STREAMS (§9.3): the pieces go to the journal as they arrive; the answer is only ever the
+            # final response. A stream that ends without one was cut, and what came before is not it.
+            resp = None
+            async with contextlib.aclosing(sctx.provider.stream(req)) as stream:
+                async for chunk in stream:
+                    if chunk.response is not None:
+                        resp = chunk.response
+                        break
+                    await sctx.emit(chunk.text, chunk.usage_cum.model_dump())
+            if resp is None:
+                raise StreamTruncated("the stream ended before its final response")
         return Completed(
             result=resp.model_dump(mode="json"),
             usage=resp.usage.model_dump(),
