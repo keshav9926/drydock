@@ -281,6 +281,31 @@ class Keel:
         """
         return await self.signal(run_id, "resume")
 
+    async def resolve_step(
+        self,
+        run_id: RunId,
+        step_index: int,
+        outcome: str,
+        *,
+        evidence: str = "",
+        result: Any = None,
+        by: str = "",
+        client_key: str | None = None,
+    ) -> bool:
+        """A human's decision for a RESOLVED_UNKNOWN step: `completed`, `failed` or `cancelled`
+        (§7.3, §25.2's `keel signal --resolve STEP=…`). The first two are one `custom{kind:
+        resolve_step}` row, which also lifts the suspension (§7.2.1); `cancelled` is the ordinary
+        run cancel, which closes the step with STEP_CANCELLED at its acknowledgement."""
+        from keel.runtime import human
+
+        if outcome == "cancelled":
+            reason = f"resolved cancelled at step {step_index}" + (f": {evidence}" if evidence else "")
+            return await self.cancel(run_id, reason=reason, client_key=client_key)
+        if outcome not in human.OUTCOMES:
+            raise KeelError(f"resolve as completed | failed | cancelled, not {outcome!r}")
+        payload = human.signal_payload(step_index, outcome, evidence=evidence, result=result, by=by)
+        return await self.signal(run_id, "custom", payload, client_key=client_key)
+
     # --- reads ---------------------------------------------------------------
     async def get(self, run_id: RunId) -> RunView:
         row = await self.journal.run_row(run_id)

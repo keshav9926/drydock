@@ -540,12 +540,41 @@ def signal(
     run_ref: str,
     type_: Annotated[str, typer.Option("--type", help="custom | timer | child_result | …")] = "custom",
     payload: Annotated[str, typer.Option("--payload", help="JSON object")] = "{}",
+    resolve: Annotated[
+        str | None, typer.Option("--resolve", help="STEP=completed|failed|cancelled: a human's decision")
+    ] = None,
+    evidence: Annotated[str, typer.Option("--evidence", help="what the human saw; journaled")] = "",
+    result: Annotated[str | None, typer.Option("--result", help="JSON the step returns (completed)")] = None,
     client_key: Annotated[str | None, typer.Option("--client-key")] = None,
     app_ref: Annotated[str | None, typer.Option("--app")] = None,
     dsn: Annotated[str | None, typer.Option("--dsn")] = None,
 ) -> None:
-    """One raw row in the inbox. A type with no handler is consumed as SIGNAL_IGNORED, journaled."""
-    _run(_send(_load_app(app_ref, dsn), run_ref, type_, json.loads(payload), client_key))
+    """One raw row in the inbox. A type with no handler is consumed as SIGNAL_IGNORED, journaled.
+
+    `--resolve STEP=completed|failed` is the human decision for a RESOLVED_UNKNOWN step: one
+    `custom{kind: resolve_step}` row, which also lifts the suspension — no `keel resume` after it
+    (§7.2.1). `STEP=cancelled` is the ordinary cancel, closing that step with STEP_CANCELLED."""
+    keel = _load_app(app_ref, dsn)
+    if resolve is None:
+        _run(_send(keel, run_ref, type_, json.loads(payload), client_key))
+        return
+    step, _, outcome = resolve.partition("=")
+    if not step.isdigit() or outcome not in ("completed", "failed", "cancelled"):
+        err.print("[red]--resolve STEP=completed|failed|cancelled, STEP a step index[/]")
+        raise typer.Exit(EXIT_USAGE)
+
+    async def go() -> None:
+        run_id = await _resolve(keel, run_ref)
+        ok = await keel.resolve_step(
+            run_id, int(step), outcome, evidence=evidence,
+            result=json.loads(result) if result is not None else None, client_key=client_key,
+        )
+        if not ok:
+            err.print(f"[yellow]not sent: the run is terminal, or {client_key!r} was already used[/]")
+            raise typer.Exit(EXIT_ERROR)
+        out.print(f"resolve step {step} as {outcome} queued for {run_id}")
+
+    _run(go())
 
 
 @app.command()

@@ -64,6 +64,7 @@ from keel.events import (
 from keel.journal.protocol import DelegationRow, EffectRow, JournalBackend, Lease, RunRow
 from keel.providers.protocol import ModelRequest
 from keel.runtime import hooks
+from keel.runtime import human
 from keel.runtime.budget import BudgetExceeded, Reservation, admit, reserve_model, reserve_tool
 from keel.runtime.delegation import (
     MAX_CHILDREN_IN_FLIGHT,
@@ -337,7 +338,7 @@ class StepEngine:
             # Read again *under the fence*: every row whose wake bump is committed is visible now,
             # and none that lands later can commit before this transaction does (§5.4 (7)).
             pending = await tx.pending_signals()
-            if park_as == "SUSPENDED" and any(r.type == "resume" for r in pending):
+            if park_as == "SUSPENDED" and any(human.lifts_suspension(r) for r in pending):
                 # A `resume` landed after the cause was chosen. Consuming it here would lose it;
                 # hand the run back instead, and the next holder's peek makes the cause RESUME.
                 resumed, pending = True, []
@@ -670,6 +671,7 @@ class StepEngine:
                 return None
             ack = await tx.append(CancelAcknowledged(step_index=step_index), causation_seq=seq)
             self.state.cancel_acknowledged_at = step_index
+            await human.close_on_cancel(self, tx, step_index, ack)
             if self._paused:
                 # Cancel overrides pause (§16.6): an operator must always be able to stop a paused
                 # run, and a paused parent must be free to wait out its children's cancellation.
@@ -736,6 +738,9 @@ class StepEngine:
             )
             await tx.set_run(model_config=new)
             self.model_config = new
+            return None
+        if human.is_resolve(row):
+            await human.resolve(self, tx, row, seq)
             return None
         await tx.append(
             SignalIgnored(signal_id=row.signal_id, signal_type=kind, reason="no_handler"),

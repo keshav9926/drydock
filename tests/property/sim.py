@@ -55,6 +55,7 @@ from keel.events import ChildSpawned, RecoveryStarted, RunCompleted, RunCreated
 from keel.journal.memory import MemoryJournal
 from keel.journal.protocol import DelegationRow, RunRow, SignalRow
 from keel.providers.protocol import ModelChunk, ModelResponse, Usage
+from keel.runtime import human
 from keel.replay.verify import verify as run_verify
 from keel.runtime import hooks
 from keel.runtime.breaker import CircuitBreaker
@@ -752,6 +753,20 @@ class Sim:
     def deliver(self, run_id: Any, kind: str, which: str = "open") -> None:
         self.signals_tried += 1
         payload: dict[str, Any] = {"by": "sim"}
+        type_ = kind
+        if kind == "resolve":
+            # A truthful human (§7.3): `completed` naming what the World applied for that step, or
+            # `failed` when it applied nothing. A human who lies breaks S2/C3 by definition, and that
+            # is the human's error, not the runtime's. `unknown` names a step that is not unresolved.
+            st = fold(self.events(run_id))
+            unresolved = [s.step_index for s in st.steps.values() if s.state == "RESOLVED_UNKNOWN"]
+            step = unresolved[-1] if unresolved and which != "unknown" else st.next_step_index + 7
+            applied = self.world.applied_counts()
+            labels = [x.label for x in self.landings if x.run_id == run_id and x.step == step and applied.get(x.label)]
+            type_, payload = "custom", human.signal_payload(
+                step, "completed" if labels else "failed", evidence="sim",
+                result={"external_ref": labels[-1]} if labels else None, by="sim",
+            )
         if kind in ("approve", "reject"):
             approvals = list(fold(self.events(run_id)).approvals.values())
             open_ = [a for a in approvals if not a.terminal]
@@ -761,7 +776,7 @@ class Sim:
                 payload["approval_id"] = str(uuid7())
             elif named:
                 payload["approval_id"] = str(named[-1].approval_id)
-        row = SignalRow(signal_id=uuid7(), run_id=run_id, type=kind, payload=payload,
+        row = SignalRow(signal_id=uuid7(), run_id=run_id, type=type_, payload=payload,
                         client_key=f"sim:{len(self.signals_sent)}")
         if self.run(self.journal.insert_signal(row)):
             self.signals_sent.append(row)

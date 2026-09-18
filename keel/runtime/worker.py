@@ -29,7 +29,7 @@ from keel.events import (
 )
 from keel.journal.protocol import JournalBackend, Lease, RunRow
 from keel.core.errors import StoreUnavailable
-from keel.runtime import hooks
+from keel.runtime import hooks, human
 from keel.runtime.ctx import Ctx
 from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
@@ -140,10 +140,11 @@ class Worker:
         cause = lease.cause
         if cause != "ORPHANED" and row is not None and row.phase in ("PAUSED", "SUSPENDED"):
             # §7.2.1: the cause is fixed at the first append, and it decides whether a suspension
-            # lifts — so peek the inbox before writing it. A pending `resume` makes this a RESUME;
-            # anything else woke a run that stays paused or suspended.
+            # lifts — so peek the inbox before writing it. A pending `resume`, or a human's
+            # `resolve_step` (which implies resume), makes this a RESUME; anything else woke a run
+            # that stays paused or suspended.
             pending = await journal.pending_signals(lease.run_id)
-            cause = "RESUME" if any(s.type == "resume" for s in pending) else "WAKE"
+            cause = "RESUME" if any(human.lifts_suspension(s) for s in pending) else "WAKE"
         # §7.8 step 2 before step 3: the journal head and the latest boundary are read first, because
         # the first append names the segment re-execution will start from.
         prior = await journal.read(lease.run_id)

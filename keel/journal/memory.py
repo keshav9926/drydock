@@ -40,6 +40,8 @@ _TERMINAL = {"RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"}
 _RECOVERY_OUTCOMES = frozenset(
     {"LIVE", "WAITING", "TERMINAL", "SUSPENDED", "FENCED", "RELEASED", "CRASHED", "FORCED_CANCEL"}
 )
+#: `effects_resolution_check` (0004), for the same reason. `None` is "not set by this update".
+_EFFECT_RESOLUTIONS = frozenset({None, "probe", "assume_failed", "assume_succeeded", "escalate", "human"})
 
 
 class _MemoryAppendTx:
@@ -86,6 +88,9 @@ class _MemoryAppendTx:
         self._effects.append(row)
 
     async def update_effect(self, effect_key: EffectKey, **fields: Any) -> None:
+        if fields.get("resolution") not in _EFFECT_RESOLUTIONS:
+            # `effects_resolution_check`, mirrored: a label Postgres refuses must not pass here.
+            raise IllegalTransition(f"effects.resolution {fields['resolution']!r} violates the CHECK")
         self._effect_updates.append((effect_key, fields))
 
     async def set_run(self, **fields: Any) -> None:

@@ -14,7 +14,10 @@ Rules, mapped to §12.3 (the fault type each mirrors is in `sim.to_fault_spec`):
     restart_worker          the reaper's sweeps, then the real claim, into a free slot
     retry                   tick past a journaled `next_attempt_at` or an in-process backoff
     deliver_signal          approve · reject (naming the open, a decided, an unknown or no approval),
-                            cancel · pause · resume · custom — to the root or any open child
+                            cancel · pause · resume · custom — to the root or any open child; and
+                            resolve: a truthful human's `resolve_step` for the RESOLVED_UNKNOWN step
+                            (`completed` naming what the World applied, else `failed`), or for a
+                            step that is not unresolved
     duplicate_signal        the last signal again, same `client_key` or fresh
     duplicate_response      a request whose attempt timed out lands late
     timeout                 tick past a held attempt's deadline
@@ -49,6 +52,7 @@ import os
 from dataclasses import replace
 from typing import Any
 
+import pytest
 from hypothesis import HealthCheck, settings, target
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
@@ -211,7 +215,7 @@ class KeelMachine(RuleBasedStateMachine):
     # Signals are capped per example. Uncapped, they were a quarter of every run's steps and a cancel
     # ended most runs before an effect was ever in flight — the machine explored the inbox and little else.
     @precondition(lambda self: bool(self.sim.open_runs()) and self.sim.signals_tried < MAX_SIGNALS)
-    @rule(data=st.data(), kind=st.sampled_from(("approve", "reject", "cancel", "pause", "resume", "custom")),
+    @rule(data=st.data(), kind=st.sampled_from(("approve", "reject", "cancel", "pause", "resume", "custom", "resolve")),
           which=st.sampled_from(("open", "stale", "unknown", "none")))
     def deliver_signal(self, data: st.DataObject, kind: str, which: str) -> None:
         runs = self.sim.open_runs()
@@ -304,6 +308,35 @@ def test_the_sim_can_actually_lose_and_recover_a_run() -> None:
         assert state.phase == "COMPLETED", state.phase
         assert state.steps[0].state == "RESOLVED_COMPLETED", "probed, not re-fired"
         assert sim.world.applied_counts() == {"t0.call#1": 1}
+        sim.check()
+        sim.quiesce()
+        sim.check_teardown()
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("lands", [True, False])
+def test_the_sim_resolves_an_escalated_effect_by_hand(lands: bool) -> None:
+    """The `resolve` signal reached by the machine's own rule, pinned: an EXTERNAL `escalate` killed
+    mid-effect goes RESOLVED_UNKNOWN and SUSPENDED; a truthful human's `resolve_step` alone — no
+    `resume` — lifts it, and C1, C3 and S2 hold whichever way the World says it went."""
+    sim = Sim([ToolDecl("t0", cls="EXTERNAL", resolution="escalate", dedup=False)],
+              [{"op": "tool", "tool": "t0", "gated": False}, {"op": "model"}])
+    try:
+        assert sim.restart_worker("W0")
+        [held] = sim.completable()
+        sim.crash("W0", "during:effect_exec")
+        if lands:
+            sim.complete(held, "ok")
+        sim.tick(TTL + 2)
+        assert sim.restart_worker("W1")
+        assert fold(sim.events(sim.root)).phase == "SUSPENDED"
+        sim.deliver(sim.root, "resolve", "open")
+        assert sim.restart_worker("W0"), "the resolve row alone makes the run claimable"
+        sim.advance(1)
+        state = fold(sim.events(sim.root))
+        assert state.steps[0].state == ("RESOLVED_COMPLETED" if lands else "RESOLVED_FAILED")
+        assert state.phase == ("COMPLETED" if lands else "FAILED"), state.phase
         sim.check()
         sim.quiesce()
         sim.check_teardown()

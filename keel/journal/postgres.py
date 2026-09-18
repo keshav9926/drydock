@@ -366,7 +366,7 @@ class PostgresJournal:
     async def migrate(self) -> None:
         pool = await self._ready()
         async with pool.connection() as conn:
-            for name in ("0001_init.sql", "0002_indexes.sql", "0003_delegations.sql"):
+            for name in ("0001_init.sql", "0002_indexes.sql", "0003_delegations.sql", "0004_human_resolution.sql"):
                 await conn.execute((SQL_DIR / name).read_text(encoding="utf8"))
 
     async def register_program(self, **f: Any) -> None:
