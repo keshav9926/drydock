@@ -29,8 +29,9 @@ WINDOWS = sys.platform == "win32"
 KILL_CODE = 137  # 128 + SIGKILL, the exit status a SIGKILLed process reports on POSIX
 
 #: An upper bound on the park, in case the supervisor never arrives. Not the normal exit: the
-#: worker leaves as soon as the thaw marker appears.
-PARK_S = 30.0
+#: worker leaves as soon as the thaw marker appears. Well past the longest drawn pause (§13.4:
+#: 4 x the arm's detection timeout — Restate's 7 s makes 28 s) plus the supervisor's detection.
+PARK_S = 120.0
 
 
 def die_now() -> None:
@@ -50,26 +51,19 @@ def kill(pid: int) -> None:
 
 
 def freeze_self(thaw_marker: "Path | None" = None) -> None:
-    """Stop here, at the boundary, with nothing sent.
+    """Stop here, at the boundary, with nothing sent: park until the supervisor's thaw marker exists.
 
-    On POSIX that is a self-`SIGSTOP`, and every thread — heartbeat included — stops with it.
+    The supervisor does the stopping, on both platforms: it reads the fault row, freezes this
+    process from outside, waits out the pause, resumes it and only then writes the marker. So this
+    thread just polls — and polling is what makes it exact, because a frozen process cannot poll, so
+    the first successful read is necessarily after the thaw.
 
-    On Windows the supervisor does the stopping, so the worker parks instead: it polls for a marker
-    the supervisor writes *after* resuming it. Polling is what makes this exact rather than a
-    guess — a frozen process cannot poll, so the first successful read is necessarily after the
-    thaw. Timing heuristics ("did that sleep overrun?") miss when the freeze lands between two
-    iterations, and a missed detection is a worker parked for no reason.
-
-    **POSIX parks on the marker too.** A process-directed stop is taken by whichever thread the kernel
-    wakes for it (the group leader, when it can), so the thread that raised it — a shim thread, never
-    the leader — can run on until the stop reaches it. Under load that was long enough to send the
-    request the freeze exists to hold back: a Restate smoke's frozen attempt left a World receipt 17 ms
-    after its fault row. Parking closes it the same way it does on Windows.
+    **No self-`SIGSTOP`, on POSIX either.** It used to stop itself too, and that raced the supervisor:
+    when the supervisor read the fault row and froze the process between the row's write and this
+    thread's own `kill(getpid(), SIGSTOP)`, the self-stop ran *after* the supervisor's resume, and
+    nothing ever resumed the process again. Four of sixty Restate `pause_past_ttl` trials sat stopped
+    until the trial timed out — scored as Restate failing to recover (week 2, WSL).
     """
-    if not WINDOWS:
-        os.kill(os.getpid(), signal.SIGSTOP)
-        if thaw_marker is None:
-            return
     deadline = time.monotonic() + PARK_S
     while time.monotonic() < deadline:
         if thaw_marker is not None and thaw_marker.exists():

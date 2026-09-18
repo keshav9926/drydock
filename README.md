@@ -253,8 +253,12 @@ that ran them, as every published run's do.
   the issue twice, 30 of 30.
 - **Restate is judged against its own claim** ("Tool side effects are not duplicated", so
   `exactly_once`): S1 FAIL in 5 shim cells, 7 proxy cells and W5's `kill@after:tool_effect`. Its
-  `pause_past_ttl` cells also score L1 in 4 of 60 shim trials — still RUNNING at 60 s after drawn pauses
-  of 14–22 s, which is Restate's documented default retry backoff (×2, 60 s cap) outlasting the trial.
+  `pause_past_ttl` cells also scored L1 in 4 of 60 shim trials — still RUNNING at 60 s — and that was
+  **the harness, not Restate**: on POSIX the worker also stopped itself, and when the supervisor froze
+  it before that self-stop ran, the self-stop landed after the supervisor's resume and nothing resumed
+  it again (the trial directories show Restate retrying and the worker silent). Fixed after the run —
+  the worker only parks now, as on Windows — so Restate's two `pause_past_ttl` shim cells are pending a
+  re-run; its other cells never froze. Only the Restate shard ran on POSIX.
 - **W5-pre** reproduces H7's pre-interrupt clause on every LangGraph config — `notify` twice in the
   fault-free baseline (one `sync` trial three times) and under `approval_delay`, three times under `kill_while_waiting` — and on no
   other arm. LangGraph's `approval_expiry` is L1 FAIL by design on all three configs (no deadline
