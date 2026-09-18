@@ -29,10 +29,15 @@ Delegation's rules are the script's: `delegate` spawns 1–2 children whose own 
 or violate the contract under `escalate | retry | fail_parent`; a cancel to the parent with children
 open, then time past `cancel_grace`, is the forced takeover.
 
-**Seams, not rules.** §29.2's segments and streaming are Phase 9 mechanisms and do not exist:
-`truncate_stream(k)` (`model_stream_truncate`, `during:stream(chunk=k)`) and a segment rule (a forced
-`SEGMENT_STARTED` at `before:segment_write`, judged by C2) go beside `timeout` and `journal_fault`
-when they land — each is one `Sim` method and one `_entry` form in `sim.to_fault_spec`.
+Continuation segments (§12.3, §18.3) are the script's too: `continue` returns `Continue(state)`, and a
+worker drawn with N = 2 cuts a forced boundary at the program's safe points — so `crash_at_boundary`
+and `journal_fault` reach `before:segment_write`, and C2 (the plan and context rebuilt from each
+boundary alone equal the fold from seq 1; the step counter continues) is judged after every rule.
+`compact` and `sleep` put the other two week-3 mechanisms under the same rules.
+
+**A seam, not a rule.** Streaming is not built: `truncate_stream(k)` (`model_stream_truncate`,
+`during:stream(chunk=k)`) goes beside `timeout` and `journal_fault` when it lands — one `Sim` method
+and one `_entry` form in `sim.to_fault_spec`.
 """
 
 from __future__ import annotations
@@ -76,6 +81,10 @@ OP = st.one_of(
         "violate": st.sampled_from((False, True)),
         "fail": st.sampled_from((False, True)),
     }),
+    # Week 3 (§18): a continuation boundary the program asks for, a compaction, a durable sleep.
+    st.fixed_dictionaries({"op": st.just("continue")}),
+    st.fixed_dictionaries({"op": st.just("compact")}),
+    st.fixed_dictionaries({"op": st.just("sleep"), "s": st.sampled_from((1.0, 20.0))}),
 )
 
 
@@ -119,10 +128,13 @@ class KeelMachine(RuleBasedStateMachine):
         return self.sim
 
     @initialize(tools=st.lists(TOOL, min_size=1, max_size=3), script=st.lists(OP, min_size=1, max_size=6),
-                retry=st.sampled_from(("none", "retry")), model_retry=st.sampled_from(("none", "retry")))
-    def start(self, tools: list[ToolDecl], script: list[dict[str, Any]], retry: str, model_retry: str) -> None:
+                retry=st.sampled_from(("none", "retry")), model_retry=st.sampled_from(("none", "retry")),
+                segment_steps=st.sampled_from((400, 2)))
+    def start(self, tools: list[ToolDecl], script: list[dict[str, Any]], retry: str, model_retry: str,
+              segment_steps: int) -> None:
         tools = [replace(t, name=f"t{i}") for i, t in enumerate(tools)]
-        self.sim = Sim(tools, resolve(tools, script), retry=retry, model_retry=model_retry)
+        self.sim = Sim(tools, resolve(tools, script), retry=retry, model_retry=model_retry,
+                       segment_steps=segment_steps)
 
     # --- the workload progressing ---------------------------------------------------------------
     @precondition(lambda self: any(h.worker.state == "live" for h in self.sim.completable()))
@@ -275,6 +287,41 @@ def test_the_sim_can_actually_lose_and_recover_a_run() -> None:
         assert state.phase == "COMPLETED", state.phase
         assert state.steps[0].state == "RESOLVED_COMPLETED", "probed, not re-fired"
         assert sim.world.applied_counts() == {"t0.call#1": 1}
+        sim.check()
+        sim.quiesce()
+        sim.check_teardown()
+    finally:
+        sim.close()
+
+
+def test_the_sim_crosses_a_continuation_boundary_and_c2_holds() -> None:
+    """Segments reached by the machine's own rules, pinned so a generator change cannot quietly stop
+    reaching them: a kill at `before:segment_write` on a forced cut (N = 2), a successor that replays
+    the closed segment from memo and writes the boundary once, then a program-returned `Continue` —
+    C2 and C1 judged by the same `check` every rule runs."""
+    from crashproof.verifier import invariants
+
+    tool = {"op": "tool", "tool": "t0", "gated": False}
+    sim = Sim([ToolDecl("t0", cls="IDEMPOTENT", dedup=True)],
+              [tool, {"op": "model"}, {"op": "compact"}, {"op": "continue"}, tool], segment_steps=2)
+    try:
+        assert sim.restart_worker("W0")
+        sim.advance(1)  # the put lands; the model call is held
+        sim.crash("W0", "before:segment_write")
+        sim.advance(1)  # the model answers; the next safe point is past N: the cut, and the kill
+        assert sim.workers["W0"].state == "dead"
+        assert fold(sim.events(sim.root)).segment is None, "no torn boundary"
+        sim.check()
+
+        sim.tick(TTL + 2)
+        assert sim.restart_worker("W1")
+        sim.advance(2)  # the compaction, then the put after the program's own Continue
+        events = sim.events(sim.root)
+        state = fold(events)
+        assert state.phase == "COMPLETED", state.phase
+        segs = [(e.body.segment_no, e.body.first_step_index) for e in events if e.type == "SEGMENT_STARTED"]
+        assert segs == [(1, 2), (2, 3)]
+        assert invariants.verify(sim.facts(sim.root, events, state)).as_dict()["C2"] == "PASS"
         sim.check()
         sim.quiesce()
         sim.check_teardown()

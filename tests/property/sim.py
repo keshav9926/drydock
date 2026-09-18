@@ -36,13 +36,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel
 
 from crashproof.adapters.keel import KeelAdapter
 from crashproof.faults import spec as fault_spec
 from crashproof.verifier import invariants
 from crashproof.world import oracle
 from crashproof.world.services import Endpoint, World
-from keel import Keel
+from keel import Continue, Keel
 from keel.client import program
 from keel.core import aio
 from keel.core.clock import FakeClock
@@ -86,6 +87,7 @@ JOURNAL_FAULT_BOUNDARIES = (
     "before:signal_consume",
     "after:signal_consume",
     "before:child_spawn",
+    "before:segment_write",
 )
 SCHEMA = {"type": "object", "required": ["ok"]}
 
@@ -98,14 +100,34 @@ class SimLivelock(BaseException):
 
 
 # --- the program (§12.2): fixed code, generated script ------------------------------------------
-@program(name="sim_agent", version="1.0")
-async def sim_agent(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-    """`model` asks, `tool` calls (behind `ctx.approve` when the tool is gated), `delegate` fans
-    out. Tool args carry the run id so two runs never share a logical identity at the World."""
+class SimState(BaseModel):
+    """What restarts `sim_agent` at a continuation boundary: the script position and the results so
+    far. The plan and the compaction summary are Keel's, never in here (§18.3)."""
+
+    i: int = 0
     out: list[Any] = []
-    for i, op in enumerate(args["script"]):
+
+
+@program(name="sim_agent", version="1.0", state=SimState)
+async def sim_agent(ctx: Any, args: dict[str, Any], state: SimState | None = None) -> dict[str, Any]:
+    """`model` asks, `tool` calls (behind `ctx.approve` when the tool is gated), `delegate` fans
+    out, `compact` summarises, `sleep` parks on a timer, `continue` ends the segment. Every op is a
+    safe point, so a worker with a small N cuts forced boundaries too. Tool args carry the run id so
+    two runs never share a logical identity at the World."""
+    state = state or SimState()
+    out: list[Any] = list(state.out)
+    script = args["script"]
+    for i in range(state.i, len(script)):
+        op = script[i]
+        ctx.segment_point(SimState(i=i, out=out))
         if op["op"] == "model":
             await ctx.model([{"role": "user", "content": f"decide {i}"}], name=f"decide{i}", max_tokens=16)
+        elif op["op"] == "continue":
+            return Continue(SimState(i=i + 1, out=out))
+        elif op["op"] == "compact":
+            await ctx.compact(max_tokens=16)
+        elif op["op"] == "sleep":
+            await ctx.sleep(op["s"])
         elif op["op"] == "tool":
             call = {"n": i, "run": str(ctx.run_id)}
             if op.get("gated"):
@@ -342,10 +364,13 @@ class Sim:
         *,
         retry: str = "none",
         model_retry: str = "none",
+        segment_steps: int = 400,
     ) -> None:
         self.decls = {t.name: t for t in tools}
         self.script = script
         self.retry_name, self.model_retry_name = retry, model_retry
+        #: N for the forced continuation boundary (§18.3): 400 never cuts in an example; 2 cuts often.
+        self.segment_steps = segment_steps
         self.loop = aio.loop_factory()
         asyncio.set_event_loop(self.loop)
         self.clock = SimClock(self.loop)
@@ -557,6 +582,7 @@ class Sim:
             model_timeout_s=MODEL_TIMEOUT,
             cancel_grace=GRACE,
             breaker=CircuitBreaker(n_open=2, cooldown_s=10.0),
+            segment_steps=self.segment_steps,
         )
         self.workers[slot] = w
         w.crash_at = self.armed.pop(slot, None)
@@ -805,7 +831,7 @@ class Sim:
                 self._terminal[r] = st.phase
                 self._c1(r, st)
             verdicts = invariants.verify(self.facts(r, evs, st))
-            failed = {n: verdicts.findings[n].detail for n in ("S2", "S3", "S4", "S5", "S6", "S7")
+            failed = {n: verdicts.findings[n].detail for n in ("S2", "S3", "S4", "S5", "S6", "S7", "C2")
                       if verdicts.as_dict().get(n) == "FAIL"}
             assert not failed, {str(r): failed, "counterexamples": verdicts.counterexamples()}
             # S8 (a): a parent terminal only once every child is. A constructed stray is the exception
@@ -836,7 +862,8 @@ class Sim:
         self._checked = self.fingerprint()
 
     def _c1(self, run_id: Any, st: Any) -> None:
-        replay = self.run(run_verify(self.journal, run_id, self.keel.resolve(st.program).fn, tools=self.keel.tools))
+        # The Program, not its function: VERIFY restores a boundary's state through its model.
+        replay = self.run(run_verify(self.journal, run_id, self.keel.resolve(st.program), tools=self.keel.tools))
         v = invariants.verify(invariants.TrialFacts(replay=replay.as_dict()))
         assert v.as_dict()["C1"] != "FAIL", {"C1": v.findings["C1"].detail, "run": str(run_id)}
 
