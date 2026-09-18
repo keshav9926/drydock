@@ -54,7 +54,7 @@ from keel.effects.registry import tool
 from keel.events import ChildSpawned, RecoveryStarted, RunCompleted, RunCreated
 from keel.journal.memory import MemoryJournal
 from keel.journal.protocol import DelegationRow, RunRow, SignalRow
-from keel.providers.protocol import ModelResponse, Usage
+from keel.providers.protocol import ModelChunk, ModelResponse, Usage
 from keel.replay.verify import verify as run_verify
 from keel.runtime import hooks
 from keel.runtime.breaker import CircuitBreaker
@@ -88,8 +88,13 @@ JOURNAL_FAULT_BOUNDARIES = (
     "after:signal_consume",
     "before:child_spawn",
     "before:segment_write",
+    # A STEP_CHUNK append (§10.7): the store failing around a batch leaves the attempt open.
+    "during:stream",
 )
 SCHEMA = {"type": "object", "required": ["ok"]}
+#: A streamed model call is three chunks of 300 output tokens: each crosses the 256-token batch, so
+#: every chunk is its own STEP_CHUNK and `during:stream` fires three times (§10.7, §21.3 item 6).
+STREAM_CHUNKS, STREAM_CHUNK_TOKENS, STREAM_MAX_TOKENS = 3, 300, 1024
 
 CURRENT: contextvars.ContextVar[SimWorker | None] = contextvars.ContextVar("sim_worker", default=None)
 
@@ -120,7 +125,12 @@ async def sim_agent(ctx: Any, args: dict[str, Any], state: SimState | None = Non
     for i in range(state.i, len(script)):
         op = script[i]
         ctx.segment_point(SimState(i=i, out=out))
-        if op["op"] == "model":
+        if op["op"] == "model" and op.get("stream"):
+            # STREAMS (§9.3): room for every chunk the sim delivers inside the reservation, as a real
+            # provider stops at `max_tokens` — so a charge can only ever be the reservation or usage.
+            await ctx.model([{"role": "user", "content": f"decide {i}"}], name=f"decide{i}",
+                            max_tokens=STREAM_MAX_TOKENS, stream=True)
+        elif op["op"] == "model":
             await ctx.model([{"role": "user", "content": f"decide {i}"}], name=f"decide{i}", max_tokens=16)
         elif op["op"] == "continue":
             return Continue(SimState(i=i + 1, out=out))
@@ -317,6 +327,8 @@ class Held:
     landed: bool = False
     #: Its worker was killed while waiting on it. The request had left; it may still arrive.
     orphaned: bool = False
+    #: A streamed model call: its answer is a list of chunks, landed whole or cut (`truncate_stream`).
+    stream: bool = False
 
     @property
     def landmark(self) -> str:
@@ -353,6 +365,11 @@ class SimProvider:
 
     async def complete(self, req: Any) -> Any:
         return await self.sim.call(None, {}, None)
+
+    async def stream(self, req: Any) -> Any:
+        """The chunks a rule landed, in order; a cut stream ends without the final response."""
+        for chunk in await self.sim.call(None, {}, None, stream=True):
+            yield chunk
 
 
 # --- the sim ----------------------------------------------------------------------------------
@@ -407,6 +424,8 @@ class Sim:
         self.log: list[dict[str, Any]] = []
         self._terminal: dict[Any, str] = {}
         self._applied_high: dict[str, int] = {}
+        #: What the provider produced per run, streamed or not, landed to anyone (S9).
+        self.billed: Counter[Any] = Counter()
         hooks.install(self._hook)
         handle = self.loop.run_until_complete(self.keel.start(sim_agent, {"script": script}))
         self.root = handle.run_id
@@ -436,7 +455,7 @@ class Sim:
             spec.probe_hook(probe)
         return spec
 
-    async def call(self, decl: ToolDecl | None, args: dict[str, Any], key: str | None) -> Any:
+    async def call(self, decl: ToolDecl | None, args: dict[str, Any], key: str | None, *, stream: bool = False) -> Any:
         """Every call that leaves a worker. A PURE read lands at once; everything else is held."""
         w = CURRENT.get()
         at = dict(w.at) if w is not None else {}
@@ -445,9 +464,33 @@ class Sim:
         if decl is not None and decl.cls == "PURE":
             return self._land_request(run_id, step, attempt, decl, args, key)
         name = decl.name if decl is not None else str(at.get("name"))
-        h = Held(len(self.held), w, run_id, step, attempt, name, decl, args, key, self.loop.create_future())
+        h = Held(len(self.held), w, run_id, step, attempt, name, decl, args, key, self.loop.create_future(),
+                 stream=stream)
         self.held.append(h)
         return await h.future
+
+    def _answer(self, h: Held, k: int | None = None) -> Any:
+        """A model call's answer — one response, or a stream's chunks: all of them and the final
+        response, or the first `k` and nothing after. The provider bills what it produced, whoever
+        was still listening (§12.4 S9's sim form: completed *and* abandoned attempts)."""
+        if not h.stream:
+            self.billed[h.run_id] += 2
+            return ModelResponse(text="ok", usage=Usage(input_tokens=1, output_tokens=1))
+        n = STREAM_CHUNKS if k is None else k
+        usage = [Usage(input_tokens=10, output_tokens=STREAM_CHUNK_TOKENS * j) for j in range(1, n + 1)]
+        chunks = [ModelChunk(text=f"c{j} ", usage_cum=u) for j, u in enumerate(usage, 1)]
+        self.billed[h.run_id] += 10 + STREAM_CHUNK_TOKENS * n
+        if k is None:
+            chunks.append(ModelChunk(usage_cum=usage[-1], response=ModelResponse(text="ok", usage=usage[-1])))
+        return chunks
+
+    def truncate(self, h: Held, k: int) -> None:
+        """`truncate_stream(k)` (§12.3): k chunks, then the stream ends with no final response."""
+        self.log.append({"rule": "truncate_stream", "landmark": h.landmark, "k": k, "occurrence": h.attempt})
+        h.landed = True
+        if not h.future.done():
+            h.future.set_result(self._answer(h, k))
+        self.settle()
 
     def _land_request(self, run_id: Any, step: int, attempt: int, decl: ToolDecl, args: dict[str, Any],
                       key: str | None, current: bool = True) -> Any:
@@ -473,10 +516,7 @@ class Sim:
         if h.future.done() or outcome == "dropped":
             return
         if outcome == "ok":
-            h.future.set_result(
-                result if h.decl is not None
-                else ModelResponse(text="ok", usage=Usage(input_tokens=1, output_tokens=1))
-            )
+            h.future.set_result(result if h.decl is not None else self._answer(h))
         elif outcome == "error":
             h.future.set_exception(UnknownOutcome("500 after the request was applied"))
         else:
@@ -485,21 +525,23 @@ class Sim:
     def _hook(self, boundary: str, detail: dict[str, Any]) -> None:
         kind, name = detail.get("kind"), detail.get("name")
         landmark = f"{kind}:{name}" if kind and name else "lease:*"
-        self.observed[(landmark, boundary)] += 1
+        # The stream boundary is addressed by its batch, as the hook injector names it (§24.5).
+        named = f"during:stream(chunk={detail['chunk']})" if boundary == "during:stream" else boundary
+        self.observed[(landmark, named)] += 1
         w = CURRENT.get()
         if w is None:
             return
         w.at = {"boundary": boundary, **detail}
         if w.crash_at == boundary:
             w.crash_at = None
-            self.log.append({"rule": "crash_at_boundary", "boundary": boundary, "landmark": landmark,
-                             "occurrence": self.observed[(landmark, boundary)]})
+            self.log.append({"rule": "crash_at_boundary", "boundary": named, "landmark": landmark,
+                             "occurrence": self.observed[(landmark, named)]})
             self._kill(w)
             raise hooks.Crash(f"{w.name} killed at {boundary}")
         if self.journal_faults[boundary] > 0 and boundary in JOURNAL_FAULT_BOUNDARIES:
             self.journal_faults[boundary] -= 1
-            self.log.append({"rule": "journal_fault", "boundary": boundary, "landmark": landmark,
-                             "occurrence": self.observed[(landmark, boundary)]})
+            self.log.append({"rule": "journal_fault", "boundary": named, "landmark": landmark,
+                             "occurrence": self.observed[(landmark, named)]})
             raise StoreUnavailable(f"store unavailable at {boundary}")
 
     # --- the loop ---------------------------------------------------------------------------
@@ -799,7 +841,8 @@ class Sim:
 
     def fingerprint(self) -> tuple:
         return (sum(len(v) for v in self.journal._events.values()), len(self.landings), len(self.errors),
-                tuple(w.state for w in self.workers.values()), sum(self.world.applied_counts().values()))
+                tuple(w.state for w in self.workers.values()), sum(self.world.applied_counts().values()),
+                sum(self.billed.values()))
 
     # --- invariants (§12.4) -----------------------------------------------------------------
     def check(self) -> None:
@@ -840,6 +883,10 @@ class Sim:
                 open_children = [c for c, row in self.journal._runs.items()
                                  if row.parent_run_id == r and row.terminal_at is None]
                 assert not open_children, {"S8": f"{r} {st.phase} with children open: {open_children}"}
+            # S9, sim form (§12.4): the journal charges at least what the provider produced for this
+            # run — completed, abandoned and cut attempts alike, streamed chunks included.
+            assert st.charged.tokens_charged >= self.billed[r], {
+                "S9": f"{r}: charged {st.charged.tokens_charged} < billed {self.billed[r]}"}
         # S1, per endpoint, against each tool's own claim.
         for decl in self.decls.values():
             prefix = decl.endpoint + "#"
@@ -1059,6 +1106,10 @@ def _entry(rule: dict[str, Any]) -> dict[str, tuple[str, str, dict[str, Any]]] |
         return out
     if r == "duplicate_response":
         return {"proxy": ("tool_duplicate_response", "after:tool_effect", {})}
+    if r == "truncate_stream":
+        # The sim's k chunks are the provider's, which is what the shim counts (§11.2); model traffic
+        # never crosses the proxy, and no hook fault cuts a stream.
+        return {"shim": ("model_stream_truncate", f"during:model_stream(chunk={rule['k']})", {})}
     if r == "duplicate_signal":
         return {m: ("approval_delay", "supervisor", {"duplicate": True}) for m in ("hook", "shim", "proxy")}
     if r == "deliver_signal":

@@ -35,9 +35,12 @@ and `journal_fault` reach `before:segment_write`, and C2 (the plan and context r
 boundary alone equal the fold from seq 1; the step counter continues) is judged after every rule.
 `compact` and `sleep` put the other two week-3 mechanisms under the same rules.
 
-**A seam, not a rule.** Streaming is not built: `truncate_stream(k)` (`model_stream_truncate`,
-`during:stream(chunk=k)`) goes beside `timeout` and `journal_fault` when it lands — one `Sim` method
-and one `_entry` form in `sim.to_fault_spec`.
+Streaming (§12.3, §10.7) is the script's and one rule's: a `model` op may stream (three chunks of 300
+tokens, each its own STEP_CHUNK), and `truncate_stream(k)` delivers k chunks of a held stream and then
+ends it with no final response (`model_stream_truncate`). `crash_at_boundary` and `journal_fault` reach
+`during:stream` through `hooks.BOUNDARIES`, so a stream is also killed or cut off from its store after a
+batch is durable. S9's sim form — the journal charges a run at least what the provider produced for it,
+abandoned and cut attempts included — is checked after every rule.
 """
 
 from __future__ import annotations
@@ -85,6 +88,8 @@ OP = st.one_of(
     st.fixed_dictionaries({"op": st.just("continue")}),
     st.fixed_dictionaries({"op": st.just("compact")}),
     st.fixed_dictionaries({"op": st.just("sleep"), "s": st.sampled_from((1.0, 20.0))}),
+    # STREAMS (§9.3): a model call whose answer arrives as chunks.
+    st.fixed_dictionaries({"op": st.just("model"), "stream": st.just(True)}),
 )
 
 
@@ -224,6 +229,13 @@ class KeelMachine(RuleBasedStateMachine):
     def journal_fault(self, boundary: str, n: int) -> None:
         self.go.journal_faults[boundary] += n
 
+    # --- streams --------------------------------------------------------------------------------
+    @precondition(lambda self: bool(_streams(self.sim)))
+    @rule(data=st.data(), k=st.sampled_from((1, 2)))
+    def truncate_stream(self, data: st.DataObject, k: int) -> None:
+        held = _streams(self.sim)
+        self.go.truncate(held[data.draw(st.integers(0, len(held) - 1), label="stream")], k)
+
     @precondition(lambda self: not self.sim.stray_parents and bool(self.sim.open_runs()))
     @rule(child=st.lists(CHILD_OP, max_size=2))
     def stray_child(self, child: list[dict[str, Any]]) -> None:
@@ -259,6 +271,11 @@ def _backoffs(sim: Sim) -> list[Any]:
     parked = [r.wake_at for r in sim.journal._runs.values() if r.phase == "SLEEPING" and r.wake_at is not None]
     sleeping = [t[0] for t in sim.clock.timers if t[2] == "sleep" and t[1] is not None and t[1].state == "live"]
     return parked + sleeping
+
+
+def _streams(sim: Sim) -> list[Any]:
+    """A streamed model call in flight on a live worker: what `truncate_stream` may cut."""
+    return [h for h in sim.held if h.stream and not h.landed and h.awaited and h.worker.state == "live"]
 
 
 def _approval_deadlines(sim: Sim) -> list[Any]:
@@ -322,6 +339,43 @@ def test_the_sim_crosses_a_continuation_boundary_and_c2_holds() -> None:
         segs = [(e.body.segment_no, e.body.first_step_index) for e in events if e.type == "SEGMENT_STARTED"]
         assert segs == [(1, 2), (2, 3)]
         assert invariants.verify(sim.facts(sim.root, events, state)).as_dict()["C2"] == "PASS"
+        sim.check()
+        sim.quiesce()
+        sim.check_teardown()
+    finally:
+        sim.close()
+
+
+def test_the_sim_cuts_a_stream_kills_one_mid_stream_and_the_charge_holds() -> None:
+    """Streaming reached by the machine's own rules, pinned: a stream cut after two chunks is a
+    retryable failure and the next attempt answers whole; a stream killed once its first batch is
+    durable is disposed as STARTED alone and re-asked by the successor; S9 after every step."""
+    sim = Sim([ToolDecl("t0")], [{"op": "model", "stream": True}], model_retry="retry")
+    try:
+        assert sim.restart_worker("W0")
+        [held] = sim.completable()
+        sim.truncate(held, 2)
+        events = sim.events(sim.root)
+        assert [e.body.attempt_no for e in events if e.type == "STEP_CHUNK"] == [1, 1], "two batches"
+        failed = next(e for e in events if e.type == "STEP_FAILED")
+        assert failed.body.retryable and "stream ended" in failed.body.error
+        sim.check()
+
+        sim.tick(5.0)  # past the in-process backoff: attempt 2 is held
+        [second] = [h for h in sim.completable() if h.attempt == 2]
+        sim.crash("W0", "during:stream")
+        sim.complete(second, "ok")
+        assert sim.workers["W0"].state == "dead", "killed once its first batch was durable"
+        assert sim.log[-1]["boundary"] == "during:stream(chunk=1)"
+        sim.check()
+
+        sim.tick(TTL + 2)
+        assert sim.restart_worker("W1")
+        sim.advance(1)
+        state = fold(sim.events(sim.root))
+        assert state.phase == "COMPLETED", state.phase
+        assert [e.body.error for e in sim.events(sim.root) if e.type == "STEP_FAILED"][-1] == "attempt_abandoned"
+        assert state.charged.tokens_charged >= sim.billed[sim.root] > 0
         sim.check()
         sim.quiesce()
         sim.check_teardown()
