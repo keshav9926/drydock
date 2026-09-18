@@ -237,6 +237,8 @@ class RunState:
     children: dict[Any, ChildState] = field(default_factory=dict)
     #: The durable plan (§16.2): a fold of PLAN_UPDATED from seq 1, never touched by compaction.
     plan: list[dict[str, Any]] = field(default_factory=list)
+    #: Plan item id -> the step that completed it: what §18.6's `items_completed_without_effects` needs.
+    plan_completed_at: dict[str, int] = field(default_factory=dict)
     #: The context projection (§16.2): outcomes since the latest compaction, summary first.
     context: list[dict[str, Any]] = field(default_factory=list)
     #: The seq of the latest COMPACT step's outcome, None until the run has compacted (§10.8).
@@ -401,6 +403,8 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.signals_drained += 1
     elif t == "PLAN_UPDATED":
         st.plan = _plan.apply(st.plan, b.op, b.diff)
+        if b.op == "complete" and b.step_index is not None:
+            st.plan_completed_at[b.diff["id"]] = b.step_index
         if b.step_index is None:  # the snapshot a boundary's own transaction writes (§10.8)
             st.segment_plan = [dict(i) for i in st.plan]
     elif t == "SEGMENT_STARTED":

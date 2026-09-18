@@ -30,7 +30,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from keel.core.protocols import StepIntent
+from keel.core.protocols import EffectClass, StepIntent
+from keel.state import drift
 from keel.state.fold import RunState, _apply, fold
 
 Verdict = Literal["allow", "deny", "require_approval"]
@@ -38,22 +39,35 @@ Verdict = Literal["allow", "deny", "require_approval"]
 
 class StaticPolicy:
     """§20.2's default Policy: `deny` a tool outside `allowed_tools` (None: every registered tool),
-    `require_approval` for a tool named in `require_approval`, else `allow`."""
+    `require_approval` for a tool named in `require_approval`, else `allow`.
+
+    `stale_plan_after` is §18.6's drift threshold (`drift.STALE_PLAN_AFTER` = 25 is the document's
+    number; None, the default, is off): a non-PURE call made more than that many steps after the
+    run's plan last changed waits for a human. PURE reads never do — they carry no risk to gate, and
+    a stalled plan is exactly when a run should be free to look around. The other detector,
+    `items_completed_without_effects`, is shown and not gated on: an item once ticked off stays
+    ticked, so a gate on it would hold every later effect of the run for good."""
 
     def __init__(
         self,
         *,
         allowed_tools: Iterable[str] | None = None,
         require_approval: Iterable[str] = (),
+        stale_plan_after: int | None = None,
     ) -> None:
         self.allowed_tools = frozenset(allowed_tools) if allowed_tools is not None else None
         self.require_approval = frozenset(require_approval)
+        self.stale_plan_after = stale_plan_after
 
     async def pre_step(self, intent: StepIntent, run: RunState) -> Verdict:
         if self.allowed_tools is not None and intent.name not in self.allowed_tools:
             return "deny"
         if intent.name in self.require_approval:
             return "require_approval"
+        if self.stale_plan_after is not None and intent.effect_class not in (None, EffectClass.PURE):
+            stale = drift.steps_since_plan_update(run)
+            if stale is not None and stale > self.stale_plan_after:
+                return "require_approval"
         return "allow"
 
 

@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from keel.journal.protocol import EffectRow, RunRow
+from keel.state import drift
 from keel.state.fold import RunState
 
 
@@ -52,6 +53,9 @@ class RunView:
     epochs: list[int] = field(default_factory=list)
     live_from_step: dict[int, int] = field(default_factory=dict)
     plan: list[dict[str, Any]] = field(default_factory=list)
+    #: §18.6's plan-vs-journal drift detectors (`keel/state/drift.py`): projection fields, not events.
+    steps_since_plan_update: int | None = None
+    items_completed_without_effects: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -112,6 +116,8 @@ def run_view(row: RunRow, state: RunState, now: datetime, effects: list[EffectRo
         epochs=list(state.epochs),
         live_from_step=dict(state.live_from_step),
         plan=[dict(i) for i in state.plan],
+        steps_since_plan_update=drift.steps_since_plan_update(state),
+        items_completed_without_effects=drift.items_completed_without_effects(state),
     )
 
 

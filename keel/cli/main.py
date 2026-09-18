@@ -212,6 +212,12 @@ def show(
             for item in view.plan:
                 plan.add_row(str(item["id"]), item["status"], item["title"])
             out.print(plan)
+            # §18.6: surfaced, never corrected — Keel does not know what the plan should say.
+            unmet = ", ".join(view.items_completed_without_effects) or "none"
+            out.print(
+                f"drift: {view.steps_since_plan_update} steps since the plan last changed; "
+                f"completed without an effect: {unmet}"
+            )
         # The parent's view of its children is the `delegations` row and nothing else (§17.3):
         # contract, status, what was reserved and what was settled. Never the child's journal.
         delegations = await keel.journal.delegations(run_id)
