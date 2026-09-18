@@ -9,6 +9,7 @@ that is the documented determinism contract.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +21,24 @@ from keel.core.protocols import StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
 from keel.runtime.steps import StepEngine
+from keel.state import context as _context
 from keel.state import plan as _plan
+
+#: What a COMPACT step asks the model (§16.2). A constant, so a compaction's request — and its
+#: `request_hash` — is a function of the context alone, and VERIFY reports PromptDrift if it moves.
+COMPACT_SYSTEM = (
+    "Summarize the conversation so far for your own later use. Keep every decision, constraint and "
+    "open question; drop what no later step needs. The durable plan is kept separately."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextView:
+    """`ctx.context` (§16.2): the context projection at the replay cursor. `tokens` is cut: it needs
+    `ModelProvider.count_tokens` over the outcomes since the last MODEL step, and nothing in week 3
+    compacts on size rather than on a schedule."""
+
+    messages: list[dict[str, Any]]
 
 
 class PlanApi:
@@ -81,6 +99,8 @@ class Ctx:
         #: The plan at the replay cursor (§16.2). Seeded by the worker at a segment boundary.
         self._plan: list[dict[str, Any]] = []
         self.plan = PlanApi(self)
+        #: The context projection at the replay cursor (§16.2), advanced as each outcome is handed back.
+        self._context: list[dict[str, Any]] = _context.initial(args)
 
     @property
     def step_index(self) -> int:
@@ -100,9 +120,18 @@ class Ctx:
 
     async def _run(self, intent: StepIntent) -> Any:
         try:
-            return await self._engine.execute(intent)
+            result = await self._engine.execute(intent)
         finally:
             self._in_flight = False
+        # Only an outcome the program is handed moves the cursor context: memoized or live, the same
+        # value, so a replay reads the context the original read (§16.2).
+        self._context = _context.apply(self._context, str(intent.kind), intent.name, result)
+        return result
+
+    @property
+    def context(self) -> ContextView:
+        """The context projection at the replay cursor: the latest summary, then what came since."""
+        return ContextView([dict(m) for m in self._context])
 
     # --- steps ---------------------------------------------------------------
     async def model(
@@ -134,6 +163,28 @@ class Ctx:
             program_version=self.program_version,
         )
         return ModelResponse.model_validate(await self._run(intent))
+
+    async def compact(self, *, name: str = "compact", max_tokens: int = 1024) -> str:
+        """COMPACT step: MODEL identity and MODEL semantics — retried, budgeted, memoized — whose
+        outcome is the summary (§16.1, §16.2). The request is the context at the cursor; after it the
+        context projection is `[summary]` plus what follows. The plan is untouched."""
+        index = self._open()
+        req = ModelRequest(
+            system=COMPACT_SYSTEM,
+            messages=[Message(**m) for m in self._context],
+            max_tokens=max_tokens,
+        )
+        payload = req.model_dump(mode="json")
+        intent = StepIntent(
+            step_index=index,
+            kind=StepKind.COMPACT,
+            name=name,
+            args=payload,
+            args_hash=_args_hash(payload),
+            request_hash=_request_hash(payload),
+            program_version=self.program_version,
+        )
+        return ModelResponse.model_validate(await self._run(intent)).text
 
     async def approve(
         self,

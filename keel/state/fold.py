@@ -13,6 +13,7 @@ from uuid import UUID
 
 from keel.core.hashing import projection_hash as _hash
 from keel.events import Event
+from keel.state import context as _context
 from keel.state import plan as _plan
 
 # step states (§7.3); the `effects` mirror uses its own vocabulary (INTENDED/STARTED/COMMITTED/…)
@@ -212,6 +213,10 @@ class RunState:
     children: dict[Any, ChildState] = field(default_factory=dict)
     #: The durable plan (§16.2): a fold of PLAN_UPDATED from seq 1, never touched by compaction.
     plan: list[dict[str, Any]] = field(default_factory=list)
+    #: The context projection (§16.2): outcomes since the latest compaction, summary first.
+    context: list[dict[str, Any]] = field(default_factory=list)
+    #: The seq of the latest COMPACT step's outcome, None until the run has compacted (§10.8).
+    compact_seq: int | None = None
 
     def children_of(self, step_index: int) -> list[ChildState]:
         """The delegations one DELEGATE step spawned, in ordinal order."""
@@ -313,6 +318,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.program = b.program
         st.program_version = b.program_version
         st.args = b.args
+        st.context = _context.initial(b.args)
         st.budget = b.budget
         st.model_config = dict(b.model_config_)
         st.phase = "CREATED"
@@ -444,6 +450,9 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s.result = b.result
         s.outcome_seq = ev.seq
         s.outcome_epoch = ev.lease_epoch
+        st.context = _context.apply(st.context, s.kind, s.name, b.result)
+        if s.kind == "COMPACT":
+            st.compact_seq = ev.seq
     elif t == "STEP_FAILED":
         s = st.steps[b.step_index]
         s.state = FAILED
@@ -467,5 +476,6 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s.outcome_epoch = ev.lease_epoch
         if b.resolution == RESOLVED_COMPLETED:
             s.result = b.evidence.get("result")
+            st.context = _context.apply(st.context, s.kind, s.name, s.result)
         elif b.resolution == RESOLVED_FAILED:
             s.error = b.evidence.get("evidence") or "resolved failed"

@@ -1452,7 +1452,7 @@ class StepEngine:
         # The retry decision is made *before* the outcome commits, so it is journaled with it: a
         # STEP_FAILED carrying `next_attempt_at` is a failure the runtime will retry, and a successor
         # that finds it retries rather than failing the run (§8.7, §11.5 `provider_outage`).
-        policy = self.model_retry if intent.kind is StepKind.MODEL else self.retry
+        policy = self.model_retry if intent.kind in (StepKind.MODEL, StepKind.COMPACT) else self.retry
         retrying = isinstance(outcome, Failed) and outcome.retryable and policy.may_retry(attempt_no)
         if (
             isinstance(outcome, Failed) and outcome.unknown and not retrying
@@ -1844,6 +1844,12 @@ class _ModelExecutor:
         )
 
 
+class _CompactExecutor(_ModelExecutor):
+    """COMPACT is a MODEL call with a fixed question (§16.1): same executor, its own kind."""
+
+    kind = StepKind.COMPACT
+
+
 class _NowExecutor:
     kind = StepKind.NOW
 
@@ -1859,5 +1865,6 @@ class _RandomExecutor:
 
 
 register(_ModelExecutor())
+register(_CompactExecutor())
 register(_NowExecutor())
 register(_RandomExecutor())
