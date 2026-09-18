@@ -22,6 +22,7 @@ embeds the same rows beside a counterexample without re-running anything.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from crashproof.verifier.invariants import AT_MOST_ONE_APPLIED, TrialFacts, iso
@@ -33,6 +34,133 @@ OUTCOME_TYPES = ("STEP_COMPLETED", "STEP_FAILED", "STEP_AMBIGUOUS", "STEP_RESOLV
 
 #: The boundaries K3's window is defined at: a tool call, seen from the World and from the SUT.
 WINDOW_BOUNDARIES = ("before:tool_call", "after:tool_effect", "after:tool_return")
+
+#: Each runtime's own record of a step's outcome committing — K3's "next committed record" and
+#: `ambiguity_window_width`'s "outcome-commit ts" — and the clock that stamps it. The World's receipts
+#: are the host's `time.time()`; every source here is on that clock except Restate's, whose server
+#: ran under WSL beside its World and its worker, so there all three sides share the WSL clock.
+COMMIT_SOURCES = {
+    "journal": ("journal outcome event (STEP_COMPLETED/FAILED/AMBIGUOUS/RESOLVED/CANCELLED)",
+                "host: the store's clock shifted by the trial's measured store_clock offset"),
+    "checkpoints": ("checkpoint write (`checkpoints.ts`)", "host: stamped in the SUT's own process"),
+    "dbos": ("`operation_outputs.completed_at_epoch_ms` (sut/steps.json)",
+             "host: the worker's `time.time()` just before the insert, 1 ms resolution"),
+    "temporal": ("`ActivityTask{Completed,Failed,TimedOut}` event_time (sut/history.json)",
+                 "host: the Temporal dev server's"),
+    "restate": ("`sys_journal` `Notification: Run` appended_at (sut/journal.json)",
+                "WSL: restate-server's, which the World and the worker share"),
+}
+
+
+def commits_from_export(doc: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """An engine's commit records read out of its adapter's export: `{ts, step, name, tool, source}`,
+    `ts` in unix seconds, `tool` the tool the record names (None where it names none). `None` for an
+    export that is none of DBOS's, Temporal's or Restate's — Keel and LangGraph reach the facts as
+    `journal` and `checkpoints` instead."""
+    if isinstance(doc.get("steps"), list):  # DBOS: sut/steps.json
+        return [
+            {"ts": s["completed_at_epoch_ms"] / 1000, "step": s.get("function_id"), "name": s.get("function_name"),
+             # `crashproof.tool.<name>` names its tool (pydantic_ai); the native loop's one
+             # `crashproof.tool` step serves every tool and names none.
+             "tool": (s.get("function_name") or "").removeprefix("crashproof.tool.")
+             if (s.get("function_name") or "").startswith("crashproof.tool.") else None,
+             "source": "dbos"}
+            for s in doc["steps"] if s.get("completed_at_epoch_ms") is not None
+        ]
+    if isinstance(doc.get("history"), dict):  # Temporal: sut/history.json, `to_json_dict()`
+        return _temporal_commits(doc["history"].get("events") or [])
+    if isinstance(doc.get("journal"), list):  # Restate: sut/journal.json (Keel's is `events`)
+        names: dict[int, str] = {}
+        out = []
+        for row in doc["journal"]:
+            entry = json.loads(row.get("entry_json") or "{}")
+            run = entry.get("Command", {}).get("Run")
+            if run is not None:
+                names[run["completion_id"]] = run.get("name", "")
+                continue
+            done = entry.get("Notification", {}).get("Completion", {}).get("Run")
+            if done is not None:
+                name = names.get(done["completion_id"], "")
+                out.append({"ts": iso(row["appended_at"]), "step": row.get("index"), "name": name,
+                            "tool": name, "source": "restate"})
+        return out
+    return None
+
+
+_ACTIVITY_OUTCOMES = ("activityTaskCompletedEventAttributes", "activityTaskFailedEventAttributes",
+                      "activityTaskTimedOutEventAttributes")
+
+
+def _temporal_commits(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every activity outcome the server recorded, named by its scheduled event: the activity type,
+    and for a tool-call activity the tool its input names."""
+    import base64
+
+    scheduled: dict[str, tuple[str, str | None]] = {}
+    out = []
+    for e in events:
+        attrs = e.get("activityTaskScheduledEventAttributes")
+        if attrs is not None:
+            kind = (attrs.get("activityType") or {}).get("name", "")
+            tool = None
+            payloads = (attrs.get("input") or {}).get("payloads") or []
+            if kind.endswith("call_tool") and payloads:
+                try:
+                    tool = json.loads(base64.b64decode(payloads[0].get("data") or "")).get("name")
+                except (ValueError, AttributeError):
+                    tool = None
+            scheduled[str(e.get("eventId"))] = (kind, tool)
+            continue
+        outcome = next((e[k] for k in _ACTIVITY_OUTCOMES if k in e), None)
+        if outcome is not None:
+            kind, tool = scheduled.get(str(outcome.get("scheduledEventId")), ("", None))
+            out.append({"ts": iso(e["eventTime"]), "step": outcome.get("scheduledEventId"), "name": kind,
+                        "tool": tool, "source": "temporal"})
+    return out
+
+
+def commit_records(facts: TrialFacts) -> tuple[list[dict[str, Any]] | None, str]:
+    """The runtime's outcome records as `{ts, tool}`, sorted, and which of `COMMIT_SOURCES` they
+    came from — `(None, "")` where it exported none."""
+    if facts.journal is not None:
+        names = {e.get("step_index"): (e.get("body") or {}).get("name")
+                 for e in facts.journal if e["type"] in ("STEP_INTENDED", "STEP_INTENT")}
+        records = [{"ts": iso(e["ts"]), "tool": names.get(e.get("step_index"))}
+                   for e in facts.journal if e["type"] in OUTCOME_TYPES]
+        source = "journal"
+    elif facts.sut_checkpoints is not None:
+        records = [{"ts": iso(c["ts"]), "tool": None} for c in facts.sut_checkpoints]
+        source = "checkpoints"
+    elif facts.sut_commits is not None:
+        records = [{"ts": iso(c["ts"]), "tool": c.get("tool")} for c in facts.sut_commits]
+        source = next((c["source"] for c in facts.sut_commits if c.get("source")), "")
+    else:
+        return None, ""
+    return sorted(records, key=lambda r: r["ts"]), source
+
+
+NO_RECORDS = "no journal, no checkpoints and no commit records in the facts"
+
+
+def window_width(facts: TrialFacts, tool: str, endpoint: str) -> tuple[float | None, str]:
+    """`ambiguity_window_width` for one trial (§27, §29.2): the World's first receipt at the tool's
+    endpoint → the runtime's record of that call's outcome committing, in seconds. Where the records
+    name their tool, the tool's first outcome record — a clock that disagrees then shows as a negative
+    width rather than as the next step's commit; where they name none, the first record at or after
+    the receipt. `(width, commit source)`, or `(None, why not)`."""
+    records, source = commit_records(facts)
+    if records is None:
+        return None, NO_RECORDS
+    receipts = sorted(iso(r["ts"]) for r in facts.world_receipts if r.get("endpoint") == endpoint)
+    if not receipts:
+        return None, f"no World receipt at {endpoint}"
+    if any(r["tool"] for r in records):
+        outcome = next((r for r in records if r["tool"] == tool), None)
+    else:
+        outcome = next((r for r in records if r["ts"] >= receipts[0]), None)
+    if outcome is None:
+        return None, f"no {tool} outcome recorded after the receipt"
+    return outcome["ts"] - receipts[0], source
 
 
 def placement(facts: TrialFacts, endpoints: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -48,6 +176,8 @@ def placement(facts: TrialFacts, endpoints: dict[str, str] | None = None) -> lis
       journal columns are empty and `join` says why.
     - **checkpoints, where the runtime keeps them instead** (LangGraph): each checkpoint's `ts` is
       stamped in the SUT's process, on the same host clock as the trigger.
+    - **an engine's commit records** (DBOS, Temporal, Restate: `sut_commits`), read the same way as
+      checkpoints, each on the clock `COMMIT_SOURCES` names — the trigger's own.
     - **the World**, whose receipt timestamps are the same host clock.
 
     `in_window` is K3's test (§30): the trigger fell between the World receipt of the aimed tool and
@@ -58,7 +188,7 @@ def placement(facts: TrialFacts, endpoints: dict[str, str] | None = None) -> lis
     """
     events = sorted(facts.journal or [], key=lambda e: e["seq"])
     receipts = sorted(facts.world_receipts, key=lambda r: iso(r["ts"]))
-    checkpoints = sorted(facts.sut_checkpoints or [], key=lambda c: iso(c["ts"]))
+    checkpoints = sorted(_committed(facts), key=lambda c: iso(c["ts"]))
     rows = []
     for fault in facts.faults:
         at = float(fault.get("trigger_observed_at") or 0.0)
@@ -94,6 +224,17 @@ def placement(facts: TrialFacts, endpoints: dict[str, str] | None = None) -> lis
         row["in_window"] = _in_window(facts, events, fault, row, receipts, checkpoints, endpoints, cut)
         rows.append(row)
     return rows
+
+
+def _committed(facts: TrialFacts) -> list[dict[str, Any]]:
+    """The committed records the trigger's clock can be compared with: LangGraph's checkpoints, or
+    an engine's commit records in the checkpoints' shape. Never beside a journal, which is joined
+    causally instead."""
+    if facts.sut_checkpoints is not None:
+        return facts.sut_checkpoints
+    if facts.journal is None and facts.sut_commits is not None:
+        return [{"ts": c["ts"], "step": c.get("step"), "source": c.get("tool") or c.get("name")} for c in facts.sut_commits]
+    return []
 
 
 def _cut(facts: TrialFacts, events: list[dict[str, Any]], ref: dict[str, Any]) -> tuple[int | None, str]:
@@ -132,8 +273,9 @@ def _where(facts, events, row, open_attempt, last_ckpt, cut) -> str:
             return "between steps"
         step = int(open_attempt.split(".")[0])
         return f"step {open_attempt} {_step_name(events, step)}".rstrip()
-    if facts.sut_checkpoints is not None:
-        return f"after checkpoint step {last_ckpt[-1].get('step')}" if last_ckpt else "before the first checkpoint"
+    if facts.sut_checkpoints is not None or (facts.journal is None and facts.sut_commits is not None):
+        kind = "checkpoint" if facts.sut_checkpoints is not None else "commit"
+        return f"after {kind} step {last_ckpt[-1].get('step')}" if last_ckpt else f"before the first {kind}"
     return "unobservable"
 
 
@@ -156,7 +298,7 @@ def _in_window(facts, events, fault, row, receipts, checkpoints, endpoints, cut)
         if row["open_step"] is None:
             return False
         return receipt_side and _step_name(events, int(row["open_step"].split(".")[0])) == tool
-    if facts.sut_checkpoints is not None:
+    if facts.sut_checkpoints is not None or (facts.journal is None and facts.sut_commits is not None):
         if not receipt_side or boundary == "before:tool_call":
             return receipt_side
         receipt_ts = iso(landed[-1]["ts"])

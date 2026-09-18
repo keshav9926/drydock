@@ -192,6 +192,7 @@ async def run_trial(
             sut_effects=_effects(result.export),
             gated_tools=_gated(workload, variant),
             sut_checkpoints=_export(result.export, "checkpoints"),
+            sut_commits=_commits(result.export),
         )
         verdicts = invariants.verify(facts)
         # The verifier's inputs, in the trial directory, before the verdict computed from them.
@@ -356,6 +357,20 @@ def _effects(export: Path | None) -> list[dict[str, Any]] | None:
     """The runtime's own effect ledger, where it keeps one. A runtime with no such table has none
     to export, and §19.5's journal columns print empty for it rather than being invented."""
     return _export(export, "effects")
+
+
+def _commits(export: Path | None) -> list[dict[str, Any]] | None:
+    """An engine's commit records (DBOS steps, Temporal activity outcomes, Restate run completions)
+    in the facts, so K3 and `ambiguity_window_width` read them from `facts.json` rather than from an
+    export a copied trial directory may not carry. `None` for Keel and LangGraph, whose committed
+    records are the journal and the checkpoints."""
+    if export is None or not export.exists():
+        return None
+    import json
+
+    from crashproof.verifier.views import commits_from_export
+
+    return commits_from_export(json.loads(export.read_text(encoding="utf8")))
 
 
 def _export(export: Path | None, key: str) -> list[dict[str, Any]] | None:

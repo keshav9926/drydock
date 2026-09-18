@@ -9,9 +9,11 @@ And the page over a results directory must compute K3 only where every fault was
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -19,9 +21,9 @@ from crashproof.faults.injectors.shim import ToolShim
 from crashproof.faults.log import TrialDir
 from crashproof.faults.schedule import expand
 from crashproof.faults.spec import from_doc
-from crashproof.report.placement import placements, render
+from crashproof.report.placement import NO_COMMIT_RECORD, placements, render, render_windows, windows
 from crashproof.runner.store import ResultStore, slug
-from crashproof.verifier import invariants
+from crashproof.verifier import invariants, views
 from crashproof.workloads.spec import load_named
 from crashproof.workloads.tool_chain_1_effect import build_world
 from crashproof.world.client import WorldClient
@@ -156,6 +158,134 @@ def test_a_fault_the_artefacts_cannot_place_yields_no_k3_verdict(tmp_path) -> No
     assert cells[KEEL].fraction is None and cells[LG].fraction is None
     page = render(cells)
     assert "not computable: 2 of 2 unobservable" in page and "no facts.json in the trial directory ×1" in page
-    assert "runtime side not observable: no journal and no checkpoints exported ×1" in page
+    assert f"runtime side not observable: {NO_COMMIT_RECORD} ×1" in page
     assert "not computable: an arm has unobservable faults" in page
     assert "PASS" not in page and "FAIL" not in page
+
+
+# --- the engines: their own commit records, read out of the export beside the facts ---------------
+RESTATE_JOURNAL = Path(__file__).parents[1] / "journals" / "restate_kill_after_tool_effect.json"
+
+
+def _dbos_steps(*completed: tuple[str, float]) -> dict:
+    base = BASE.timestamp()
+    return {"workflow_id": "w", "status": "SUCCESS", "steps": [
+        {"function_id": i + 1, "function_name": name, "started_at_epoch_ms": round((base + at - 0.02) * 1000),
+         "completed_at_epoch_ms": round((base + at) * 1000), "error": None}
+        for i, (name, at) in enumerate(completed)
+    ]}
+
+
+def _temporal_history(tool: str, completed_at: float) -> dict:
+    payload = base64.b64encode(json.dumps({"name": tool, "tool_args": {}}).encode()).decode()
+    return {"workflow_id": "w", "committed": [], "history": {"events": [
+        {"eventId": "5", "eventTime": _ts(0.5), "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+         "activityTaskScheduledEventAttributes": {
+             "activityId": "2", "activityType": {"name": "agent__crashproof__toolset__world__call_tool"},
+             "input": {"payloads": [{"metadata": {"encoding": "anNvbi9wbGFpbg=="}, "data": payload}]}}},
+        {"eventId": "7", "eventTime": _ts(completed_at), "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+         "activityTaskCompletedEventAttributes": {"scheduledEventId": "5", "startedEventId": "6"}},
+    ]}}
+
+
+def test_each_engine_export_yields_its_own_commit_records() -> None:
+    dbos = views.commits_from_export(_dbos_steps(("crashproof.model", 1.0), ("crashproof.tool.create_issue", 3.2)))
+    assert [(c["tool"], c["source"]) for c in dbos] == [(None, "dbos"), ("create_issue", "dbos")]
+    assert dbos[1]["ts"] == BASE.timestamp() + 3.2
+    native = views.commits_from_export(_dbos_steps(("crashproof.tool", 3.2)))
+    assert native[0]["tool"] is None, "the native loop's one tool step names no tool"
+    [activity] = views.commits_from_export(_temporal_history("create_issue", 3.3))
+    assert (activity["tool"], activity["ts"], activity["source"]) == ("create_issue", BASE.timestamp() + 3.3, "temporal")
+    runs = views.commits_from_export(json.loads(RESTATE_JOURNAL.read_text(encoding="utf8")))
+    assert [r["tool"] for r in runs] == ["Model call", "search", "Model call", "create_issue", "Model call"]
+    assert runs[3]["ts"] == invariants.iso("2026-09-16T16:42:29.814Z")
+    assert views.commits_from_export({"events": [], "store_clock": {}}) is None, "Keel's export is a journal"
+
+
+def _engine_results(tmp_path, trials: dict[str, list[tuple[invariants.TrialFacts, str | None, dict | None]]]):
+    store = ResultStore(tmp_path)
+    for cell, entries in trials.items():
+        for seed, (facts, export_name, export) in enumerate(entries, start=7):
+            store.append({"cell_id": cell, "seed": seed, "trial_id": f"t-{seed}", "valid": True,
+                          "workload": WORKLOAD.workload, "workload_variant": "EXTERNAL",
+                          "faults": [{"type": "kill"}], "ended_at": 0.0})
+            trial = tmp_path / slug(cell) / f"t-{seed}"
+            (trial / "sut").mkdir(parents=True)
+            (trial / "facts.json").write_text(json.dumps(invariants.dump(facts), default=str), encoding="utf8")
+            if export is not None:
+                (trial / "sut" / export_name).write_text(json.dumps(export), encoding="utf8")
+    return tmp_path
+
+
+def test_an_engine_is_placed_on_the_commit_records_its_export_carries(tmp_path) -> None:
+    """The published trials' facts predate `sut_commits`, so the join reads the export beside them;
+    a directory with facts only stays unobservable, and two placed arms already apart fail."""
+    dbos, temporal, restate = (f"{a}.EXTERNAL.kill@after:tool_return"
+                               for a in ("dbos.native", "temporal.pydantic_ai", "restate.pydantic_ai"))
+    fact = _facts("engine", 3.5, sut_ref=None, checkpoint_at=None)
+    results = _engine_results(tmp_path, {
+        # the step committed at 3.2, between the receipt (3.0) and the kill (3.5): out; at 4.0: in
+        dbos: [(fact, "steps.json", _dbos_steps(("crashproof.tool", 3.2))),
+               (fact, "steps.json", _dbos_steps(("crashproof.tool", 4.0)))],
+        temporal: [(fact, "history.json", _temporal_history("create_issue", 4.0))] * 2,
+        restate: [(fact, None, None)] * 2,
+    })
+    cells = placements(results)
+    assert (cells[dbos].in_window, cells[dbos].out_of_window) == (1, 1)
+    assert cells[temporal].fraction == 1.0 and cells[restate].fraction is None
+    page = render(cells)
+    assert "after:tool_return · after commit step 1 ✗ ×1" in page
+    assert f"runtime side not observable: {NO_COMMIT_RECORD} ×2" in page
+    assert "**FAIL** (50 points among the 2 placed arms)" in page
+
+    with_field = invariants.load({**invariants.dump(fact), "sut_commits": views.commits_from_export(
+        _dbos_steps(("crashproof.tool", 4.0)))})
+    [placed] = views.placement(with_field, {"create_issue": "issues.create"})
+    assert placed["in_window"] is True, "a trial written with `sut_commits` needs no export"
+
+
+def test_ambiguity_window_width_is_measured_on_baselines_per_runtime(tmp_path) -> None:
+    base = BASE.timestamp()
+
+    def baseline(**kw) -> invariants.TrialFacts:
+        return invariants.TrialFacts(
+            world_receipts=[{"endpoint": "kv.search", "logical_identity": "kv.search#1", "ts": base + 1.0},
+                            {"endpoint": "issues.create", "logical_identity": "issues.create#1", "ts": base + 3.0}],
+            **kw,
+        )
+
+    keel_journal = [
+        {"seq": 1, "type": "STEP_INTENDED", "ts": _ts(2.9), "step_index": 3, "body": {"name": "create_issue"}},
+        {"seq": 2, "type": "STEP_ATTEMPT_STARTED", "ts": _ts(2.9), "step_index": 3, "attempt_no": 1, "body": {}},
+        {"seq": 3, "type": "STEP_COMPLETED", "ts": _ts(3.009), "step_index": 3, "attempt_no": 1, "body": {}},
+        {"seq": 4, "type": "STEP_INTENDED", "ts": _ts(3.02), "step_index": 4, "body": {"name": "decide"}},
+        {"seq": 5, "type": "STEP_COMPLETED", "ts": _ts(3.04), "step_index": 4, "attempt_no": 1, "body": {}},
+    ]
+    results = _engine_results(tmp_path, {
+        "keel.default.EXTERNAL.baseline": [(baseline(journal=keel_journal), None, None)],
+        "langgraph.sync.EXTERNAL.baseline": [
+            (baseline(sut_checkpoints=[{"ts": _ts(2.0), "step": 1}, {"ts": _ts(3.012), "step": 2}]), None, None)],
+        "dbos.pydantic_ai.EXTERNAL.baseline": [(baseline(), "steps.json", _dbos_steps(
+            ("crashproof.tool.search", 1.01), ("crashproof__model.request", 2.5), ("crashproof.tool.create_issue", 3.008)))],
+        "restate.pydantic_ai.EXTERNAL.baseline": [(baseline(), None, None)],
+    })
+    found = windows(results)
+    assert set(found) == {(a, "create_issue") for a in ("keel.default", "langgraph.sync", "dbos.pydantic_ai",
+                                                        "restate.pydantic_ai")}, "PURE tools have no window"
+    widths = {arm: [round(w * 1000, 3) for w in found[(arm, "create_issue")].widths] for arm, _ in found}
+    assert widths == {"keel.default": [9.0], "langgraph.sync": [12.0], "dbos.pydantic_ai": [8.0], "restate.pydantic_ai": []}
+    page = render_windows(found)
+    assert "| `keel.default` | `create_issue` | 9.0 | [9.0, 9.0] | 1 | 0 |" in page
+    assert f"| `restate.pydantic_ai` | `create_issue` | not computable | — | 0 | {NO_COMMIT_RECORD} ×1 |" in page
+    assert views.COMMIT_SOURCES["dbos"][1] in page
+
+
+def test_a_named_record_is_the_tools_own_so_a_clock_that_disagrees_shows() -> None:
+    base = BASE.timestamp()
+    facts = invariants.TrialFacts(
+        world_receipts=[{"endpoint": "issues.create", "ts": base + 3.0}],
+        sut_commits=[{"ts": base + 2.998, "tool": "create_issue", "source": "temporal"},
+                     {"ts": base + 3.05, "tool": None, "source": "temporal"}],
+    )
+    width, source = views.window_width(facts, "create_issue", "issues.create")
+    assert source == "temporal" and round(width * 1000, 3) == -2.0, "not the model call's commit after it"

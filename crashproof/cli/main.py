@@ -8,7 +8,7 @@
     verify   the verifier re-run over facts already on disk — nothing executed
     compare  two arms, paired per (location, fault)
     agree    the same cells from the shim and from the proxy, paired per (cell, seed)
-    placement  §19.5's placement histogram and K3, from the trial directories
+    placement  §19.5's placement histogram and K3 (or `--window`: ambiguity_window_width)
     world    the World alone, for adapter development
 
 `--seed N --seeds K` means seeds N … N+K-1, one trial per seed, trial id `t-<seed>`. There is no
@@ -636,6 +636,7 @@ def compare(
 def placement(
     results: Annotated[Path, typer.Argument(help="a results directory whose trial directories are present")],
     out_path: Annotated[Path | None, typer.Option("--out")] = None,
+    window: Annotated[bool, typer.Option("--window", help="ambiguity_window_width per runtime, from the baselines")] = False,
 ) -> None:
     """§19.5's placement histogram and K3's two numbers, per cell, from the trial directories.
 
@@ -643,15 +644,21 @@ def placement(
     trial directories (`facts.json`) and a page folded from rows cannot. Where a fault cannot be
     placed from the artefacts the page says so and computes no K3 verdict over it. Exits 0: K3 is a
     kill criterion a person decides on, not an invariant.
+
+    `--window` prints `ambiguity_window_width` instead (§27, §29.2): the same join over the baseline
+    trials, World receipt → the runtime's outcome commit, per runtime — the number K4 reads.
     """
-    from crashproof.report.placement import placements, render
+    from crashproof.report.placement import placements, render, render_windows, windows
     from crashproof.runner.store import ResultStore
 
     rows = list(ResultStore(results).rows())
     if not rows:
         err.print(f"[red]no results in {results}[/]")
         raise typer.Exit(1)
-    page = render(placements(results), sources=[(results.as_posix(), rows)])
+    if window:
+        page = render_windows(windows(results), sources=[(results.as_posix(), rows)])
+    else:
+        page = render(placements(results), sources=[(results.as_posix(), rows)])
     if out_path is None:
         out.print(page, highlight=False, markup=False, soft_wrap=True)
     else:

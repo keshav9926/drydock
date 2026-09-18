@@ -12,14 +12,20 @@ trigger)`: whether the in-window fraction differs between arms by more than ten 
 It computes what the artefacts can support and says so where they cannot. Rows alone cannot place
 a fault — the join needs `facts.json` — and a fault is placeable only where the runtime's committed
 record is readable on the trigger's own terms: Keel's journal through the fault row's `sut_ref`,
-LangGraph's checkpoints through their SUT-side timestamps. Everything else is counted as
-unobservable, never as in or out of the window, and a K3 clause with an unobservable fault in it is
-printed as not computable rather than as a verdict.
+LangGraph's checkpoints through their SUT-side timestamps, an engine's commit records (DBOS step
+completions, Temporal activity outcomes, Restate run completions) through the timestamps its own
+clock gave them. Everything else is counted as unobservable, never as in or out of the window, and
+a K3 clause with an unobservable fault in it is printed as not computable rather than as a verdict.
+
+`--window` is the same join the other way round, over the **baseline** trials: per runtime, how
+long the World's receipt of an effect precedes the runtime's record of it committing —
+`ambiguity_window_width` (§27, §29.2), the number K4 reads.
 """
 
 from __future__ import annotations
 
 import json
+import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,7 +83,7 @@ def placements(results: Path) -> dict[str, CellPlacement]:
             cell.unobservable["no facts.json in the trial directory"] += len(row.get("faults") or [])
             continue
         cell.with_facts += 1
-        facts = invariants.load(json.loads(path.read_text(encoding="utf8")))
+        facts = load_facts(path.parent)
         endpoints = {t.name: t.endpoint for t in load_named(row["workload"]).tools_for(row["workload_variant"])}
         for placed in views.placement(facts, endpoints):
             cell.fired += 1
@@ -91,6 +97,26 @@ def placements(results: Path) -> dict[str, CellPlacement]:
     return out
 
 
+#: Where an engine adapter's `collect()` writes its export, which `views.commits_from_export` reads.
+ENGINE_EXPORTS = ("steps.json", "history.json", "journal.json")
+NO_COMMIT_RECORD = f"no journal, no checkpoints, and no commit export (sut/{{{','.join(ENGINE_EXPORTS)}}}) beside facts.json"
+
+
+def load_facts(trial_dir: Path) -> invariants.TrialFacts:
+    """A trial's facts, with an engine's commit records read from its export on disk when the facts
+    predate `sut_commits` — the published week-2 trials, whose DBOS and Temporal exports sit beside
+    them. A directory that holds only `facts.json` keeps `sut_commits` as None, and says so."""
+    facts = invariants.load(json.loads((trial_dir / "facts.json").read_text(encoding="utf8")))
+    if facts.journal is None and facts.sut_checkpoints is None and facts.sut_commits is None:
+        for name in ENGINE_EXPORTS:
+            export = trial_dir / "sut" / name
+            if export.exists():
+                facts.sut_commits = views.commits_from_export(json.loads(export.read_text(encoding="utf8")))
+                if facts.sut_commits is not None:
+                    break
+    return facts
+
+
 def _latest_valid(rows: Any) -> list[dict[str, Any]]:
     """`fold`'s rule: last write wins per `(cell_id, seed)`, then void trials go."""
     latest = {(r["cell_id"], r["seed"]): r for r in rows}
@@ -101,7 +127,7 @@ def _why_unobservable(placed: dict[str, Any]) -> str:
     if placed["boundary"] not in views.WINDOW_BOUNDARIES or not str(placed["landmark"]).startswith("tool:"):
         return f"no K3 window at {placed['boundary']}"
     if placed["join"] == "no journal" and placed["where"] == "unobservable":
-        return "runtime side not observable: no journal and no checkpoints exported"
+        return f"runtime side not observable: {NO_COMMIT_RECORD}"
     return f"runtime side not observable: {placed['join']}"
 
 
@@ -157,12 +183,106 @@ def render(cells: dict[str, CellPlacement], *, sources: list[tuple[str, list[dic
             + ("—" if m.fraction is None else f"{m.fraction:.0%}")
             for m in sorted(members, key=lambda m: m.cell_id)
         )
-        fractions = [m.fraction for m in members]
-        if any(f is None for f in fractions):
-            verdict = "not computable: an arm has unobservable faults"
+        # Two placed arms already more than ten points apart fail the clause whatever an unplaced
+        # arm would have shown; a PASS needs every arm.
+        known = [m.fraction for m in members if m.fraction is not None]
+        spread = max(known) - min(known) if len(known) > 1 else None
+        partial = len(known) < len(members)
+        if spread is not None and spread > K3_BETWEEN_ARMS:
+            among = f" among the {len(known)} placed arms" if partial else ""
+            verdict = f"**FAIL** ({spread * 100:.0f} points{among})"
+        elif partial:
+            verdict = "not computable: an arm has unobservable faults" + (
+                f" (the {len(known)} placed arms are within {spread * 100:.0f} points)" if spread is not None else ""
+            )
         else:
-            spread = max(fractions) - min(fractions)
-            verdict = f"{'PASS' if spread <= K3_BETWEEN_ARMS else '**FAIL**'} ({spread * 100:.0f} points)"
+            verdict = f"PASS ({spread * 100:.0f} points)"
         lines.append(f"| {key} | {arms} | {verdict} |")
     lines.append("")
+    return "\n".join(lines)
+
+
+# --- ambiguity_window_width (§27, §29.2, K4) ------------------------------------------------------
+@dataclass(slots=True)
+class Window:
+    """One runtime's `ambiguity_window_width` for one effect, over its baseline trials, in seconds."""
+
+    arm: str
+    tool: str
+    widths: list[float] = field(default_factory=list)
+    sources: Counter = field(default_factory=Counter)
+    unplaced: Counter = field(default_factory=Counter)
+
+
+def windows(results: Path) -> dict[tuple[str, str], Window]:
+    """The §19.5 join over the baseline trials: per `(adapter.config, non-PURE tool)`, the World's
+    receipt of the call → the runtime's record of its outcome committing. Baselines only, because a
+    fault moves the commit, and the width K4 asks for is the one a run has when nothing goes wrong."""
+    workloads: dict[str, Any] = {}
+    out: dict[tuple[str, str], Window] = {}
+    for row in _latest_valid(ResultStore(results).rows()):
+        if not row["cell_id"].endswith(".baseline"):
+            continue
+        arm = ".".join(row["cell_id"].split(".", 2)[:2])
+        trial = results / slug(row["cell_id"]) / row["trial_id"]
+        facts = load_facts(trial) if (trial / "facts.json").exists() else None
+        if row["workload"] not in workloads:
+            workloads[row["workload"]] = load_named(row["workload"])
+        for decl in workloads[row["workload"]].tools_for(row["workload_variant"]):
+            if decl.effect_class == "PURE":
+                continue
+            w = out.setdefault((arm, decl.name), Window(arm, decl.name))
+            if facts is None:
+                w.unplaced["no facts.json in the trial directory"] += 1
+                continue
+            width, how = views.window_width(facts, decl.name, decl.endpoint)
+            if width is None:
+                w.unplaced[NO_COMMIT_RECORD if how == views.NO_RECORDS else how] += 1
+            else:
+                w.widths.append(width)
+                w.sources[how] += 1
+    return out
+
+
+def render_windows(
+    found: dict[tuple[str, str], Window], *, sources: list[tuple[str, list[dict[str, Any]]]] = ()
+) -> str:
+    from crashproof.report.markdown import sources_block
+
+    lines = [
+        "# ambiguity_window_width — World receipt → the runtime's outcome commit (§27, §29.2, K4)",
+        "",
+        "Over the **baseline** trials, per runtime and per effect: from the World's receipt of the call "
+        "to the runtime's own record of its outcome committing (§19.5's placement join). A crash inside "
+        "that interval leaves an effect applied that the runtime has no record of — the window every "
+        "aimed cell targets. Each side is read on the clock named beside it; a width that goes negative "
+        "is two clocks disagreeing, printed rather than dropped. Where the records name their step, the "
+        "join takes the tool's own outcome record; where they do not (checkpoints, DBOS's native loop), "
+        "the first record after the receipt — which, for an effect whose step is interrupted before it "
+        "returns, does not hold the effect, and the width is then a lower bound.",
+        "",
+        *sources_block(sources),
+        "",
+        "| runtime | effect | median ms | IQR ms | n | not placed | commit record | clock |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for (arm, tool), w in sorted(found.items()):
+        missing = "; ".join(f"{why} ×{n}" for why, n in sorted(w.unplaced.items())) or "0"
+        record = "; ".join(views.COMMIT_SOURCES[s][0] for s in sorted(w.sources)) or "—"
+        clock = "; ".join(views.COMMIT_SOURCES[s][1] for s in sorted(w.sources)) or "—"
+        if w.widths:
+            ms = sorted(x * 1000 for x in w.widths)
+            q1, _, q3 = statistics.quantiles(ms, n=4, method="inclusive") if len(ms) > 1 else (ms[0],) * 3
+            median, iqr = f"{statistics.median(ms):.1f}", f"[{q1:.1f}, {q3:.1f}]"
+        else:
+            median, iqr = "not computable", "—"
+        lines.append(f"| `{arm}` | `{tool}` | {median} | {iqr} | {len(w.widths)} | {missing} | {record} | {clock} |")
+    lines += [
+        "",
+        "K4 (§30) reads the median and needs two things this table does not supply: a realistic kill "
+        "rate λ, from which natural exposure per effect is ≈ λ × width, and evidence that every arm "
+        "recovers correctly from every kill placed *outside* a window (the placement page's "
+        "out-of-window faults, joined to their trials' recovery and duplicate counts).",
+        "",
+    ]
     return "\n".join(lines)

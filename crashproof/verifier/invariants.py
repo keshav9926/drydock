@@ -108,6 +108,11 @@ class TrialFacts:
     #: ts, step, source}`, `ts` stamped in the SUT's own process. No verdict reads them; the
     #: placement view does, because they are the one committed record on the trigger's clock.
     sut_checkpoints: list[dict[str, Any]] | None = None
+    #: An engine's own record of each step's outcome committing, where it keeps neither a Keel-shaped
+    #: journal nor checkpoints (DBOS, Temporal, Restate): `{ts, step, name, tool, source}`, read out of
+    #: its export by `views.commits_from_export`. No verdict reads them; the placement view and
+    #: `ambiguity_window_width` do.
+    sut_commits: list[dict[str, Any]] | None = None
 
 
 def dump(facts: TrialFacts) -> dict[str, Any]:
