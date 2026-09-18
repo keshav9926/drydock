@@ -1,5 +1,5 @@
 # week 2, W1 in shim mode (§29.1's artifact): every Windows arm under the day-3 windows, the day-4
-# faults and provider_outage. The Restate arm runs the same cells under WSL (week2_*_restate.yaml),
+# faults and provider_outage. The Restate arm runs the same cells under WSL (`--cells 'restate.*'`),
 # because restate-sdk has no Windows wheel.
 #
 # One commit for every row: the run happens in a worktree pinned at the commit that added this file,

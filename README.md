@@ -743,11 +743,15 @@ the Keel arm; `crashproof confirm` and the two-tier report, and the week-2 confi
 cells, 7 500 trials) running at `dcdd533`; `ambiguity_window_width` and K3 for every arm; streaming (`STEP_CHUNK`, `partial_ok`, `during:stream(chunk=k)` — **all seventeen hook boundaries
 now exist**, with 54 conformance cells run and 12 N/A — `model_stream_truncate`, W7 `streaming_answer` on
 the Keel arm); the static HTML matrix pages (`report --fmt html`, `bench/reports/html/`) and the static
-timeline page (`crashproof demo --html`). **In progress:** human resolution (`keel signal --resolve`),
-the `Policy` implementation, the §18.6 drift detectors, the `Sandbox` per-epoch workspace and §20.7's
-audit queries. **Not started:** FORK, cut from phase 5 by §28.5's own cut
+timeline page (`crashproof demo --html`). Human resolution (`keel signal --resolve STEP=completed|failed|cancelled`, `Keel.resolve_step`;
+a resolve implies the resume, §7.2.1), `StaticPolicy` (`allowed_tools`, `require_approval` as a
+pre-step verdict that takes two indices, the child's contract held to the parent's capability set), the
+§18.6 drift detectors (`steps_since_plan_update`, `items_completed_without_effects`, shown by `keel
+show`, the first one gating through `StaticPolicy(stale_plan_after=)`), the `Sandbox` per-epoch
+checkout for `LOCAL_FS` tools, and §20.7's audit queries (`keel/journal/audit.py`). **Not started:** FORK, cut from phase 5 by §28.5's own cut
 line and last in week 3's cut order. **Cut:** FastAPI + SSE (second in §29.2's cut order — the static
-page alone gives outreach a link) and `keel watch` (`keel events --follow` shows the same BEFORE CRASH /
+page alone gives outreach a link), the `Sandbox` git snapshot/restore (first in that order; the
+per-epoch checkout stays) and `keel watch` (`keel events --follow` shows the same BEFORE CRASH /
 AFTER RESTART split, in the event stream where it already lives).
 
 **Named, not built:**
@@ -758,10 +762,8 @@ AFTER RESTART split, in the event stream where it already lives).
   that never reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full
   slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one
   parent-cancel already uses, and arrives with the first cell that measures it.
-- `keel signal --resolve STEP=… [--evidence S]` and `--compensate STEP` (§25.2, v1), and
-  `Keel.compensate`. A run SUSPENDED on a `RESOLVED_UNKNOWN` step — EXTERNAL's `escalate`, and now an
-  IDEMPOTENT outcome nobody knows (`key_window_expired`) — has no way out today but `keel cancel`:
-  `keel resume` replays to that step and suspends again.
+- `keel signal --compensate STEP` and `Keel.compensate` (§25.2, v1): `--resolve` is built, and a
+  compensating action is a second effect with its own class, which nothing here declares yet.
 - The crash-open half of `key_window_expired` (§9.1): an attempt still open at recovery is re-run
   under the same key without counting against the retry policy, because recovery is not retry (§8.3);
   bounding it needs its own count, and nothing measures it yet.
