@@ -126,6 +126,8 @@ def _build_tool(
 ) -> Any:
     """One workload tool. The class is the workload's, the endpoint is the workload's, and whether
     a key is presented is the *variant's* — synthesising one here would be the adapter cheating."""
+    from keel.core.protocols import Modifier
+
     sends_key = key_source == "framework" and decl.effect_class in ("IDEMPOTENT", "TRANSACTIONAL")
     endpoint = decl.endpoint
 
@@ -134,6 +136,8 @@ def _build_tool(
         resolution=decl.resolution or "escalate",
         timeout=TOOL_TIMEOUT_S,
         idempotency=Idempotency.KEY if sends_key else Idempotency.NONE,
+        modifiers=tuple(Modifier[m] for m in decl.modifiers),
+        partial_ok=decl.partial_ok,
         name=decl.name,
     )
     async def run(args: dict[str, Any], tctx: ToolCtx) -> Any:
@@ -148,8 +152,15 @@ def _build_tool(
         )
         try:
             if shim is not None:
-                return await shim.tool_call(decl.name, endpoint, args, effect_key=key)
-            return await world.acall(endpoint, args, effect_key=key)
+                result = await shim.tool_call(decl.name, endpoint, args, effect_key=key)
+            else:
+                result = await world.acall(endpoint, args, effect_key=key)
+            if tctx.emit is not None:
+                # STREAMS (W7): the answer a line at a time, journaled as it goes; the result is still
+                # the whole answer, returned below.
+                for line in result.get("lines", [result]) if isinstance(result, dict) else [result]:
+                    await tctx.emit(line)
+            return result
         except (FaultResponse, WorldError) as exc:
             # Translating the harness's fault into the runtime's own vocabulary is the adapter's
             # job and the limit of it: which status means "unknown" and which means "no" is the
@@ -378,7 +389,8 @@ class KeelAdapter:
     recovery_mechanism = "self"
     key_sources = frozenset({"none", "framework"})
     workloads = frozenset(
-        {"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre", "long_horizon_50"}
+        {"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre", "long_horizon_50",
+         "streaming_answer"}
     )
     workload_evidence = {
         "tool_chain_1_effect": "keel/agents/demo.py: ctx.model -> ctx.tool -> ctx.model",
@@ -393,6 +405,10 @@ class KeelAdapter:
         "long_horizon_50": (
             "keel/agents/demo.py long_horizon: ctx.model -> ctx.tool per round; ctx.compact(), "
             "ctx.plan.complete, ctx.sleep and Continue(state) on the input's cadence"
+        ),
+        "streaming_answer": (
+            "keel/agents/demo.py tool_chain with the input's `stream`: ctx.model(stream=True) (STREAMS, "
+            "STEP_CHUNK batches) -> fetch_log registered PURE + STREAMS + partial_ok, emitting its lines"
         ),
     }
     claims: dict[str, str] = {

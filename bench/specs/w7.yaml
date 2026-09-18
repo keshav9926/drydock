@@ -1,0 +1,49 @@
+# W7 — streaming_answer: §14.2's twelve (location, fault) pairs, plus the baseline (§14.1, §29.2).
+#
+#   kill x 4        the five tool/model locations less `after:tool_effect` — there is no write tool,
+#                   so "the effect landed, nobody was told" has no effect to be about
+#   + reask x 4     the same four, armed with `model_reask_alternate`: a re-asked m1 answers the
+#                   declared alternate (a different log path)
+#   pause_past_ttl  at `before:model_call`, the one pause §14.2 keeps
+#   model_500       at `before:model_call`
+#   stream x 2      a kill at `during:model_stream(chunk=7)`, and `model_stream_truncate` there: seven
+#                   pieces of m1 written, then the stream is cut with no final response
+#
+# Model faults aim at `model:*` occurrence 1, which is m1 (40 chunks). What must hold: the final result
+# equals the scripted full response, no partial content becomes the semantic result, and an abandoned
+# attempt stays charged (S9: read off the journal in the smoke table; the verifier has no budget form).
+#
+# Keel only (docs/adapters/*.md): LangGraph documents stream emission but no durable semantics for a
+# streamed piece (N/A); Restate cites no streaming primitive (N/A); DBOS and Temporal can express one
+# (write_stream / DBOSModel.request_stream; event_stream_handler inside the activity — "buffered") and
+# are not bound yet.
+workload: streaming_answer
+mode: shim
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+landmark: tool:fetch_log
+verifier: [S1, S2, S3, S4, S5, L1, L2, C1]
+
+variants:
+  - {id: STREAMS}
+
+triggers:
+  - kill@before:tool_call
+  - kill@after:tool_return
+  - kill@before:model_call
+  - kill@after:model_return
+  - kill@before:tool_call+model_reask_alternate@before:model_call
+  - kill@after:tool_return+model_reask_alternate@before:model_call
+  - kill@before:model_call+model_reask_alternate@before:model_call
+  - kill@after:model_return+model_reask_alternate@before:model_call
+  - pause_past_ttl@before:model_call
+  - model_500@before:model_call
+  - kill@during:model_stream(chunk=7)
+  - model_stream_truncate@during:model_stream(chunk=7)
+
+adapters:
+  - name: keel
+    key_source: none
+    configs:
+      - {id: default}

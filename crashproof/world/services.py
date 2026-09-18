@@ -323,7 +323,24 @@ class World:
         if ep.op == "search":
             q = str(args.get("q", ""))
             return {"hits": [f"{q} #{i}" for i in (1, 2, 3)], "logical_identity": self._label(ep, args)}
+        if ep.op == "fetch":  # W7's log: a pure function of the path, streamed a line at a time
+            path = str(args.get("path", ""))
+            return {"lines": [f"{path}:{i} {line}" for i, line in enumerate(LOG_LINES, 1)],
+                    "logical_identity": self._label(ep, args)}
         return {"logical_identity": self._label(ep, args)}
+
+
+#: The lines a `*.fetch` read returns (W7): fixed text, so a streamed log is the same log in every arm.
+LOG_LINES = (
+    "collected 214 items",
+    "test_retry PASSED",
+    "test_retry_backoff FAILED: timeout after 2.0s",
+    "retrying test_retry_backoff (1/2)",
+    "test_retry_backoff PASSED",
+    "1 flaky, 213 passed",
+    "coverage 91%",
+    "done in 48.2s",
+)
 
 
 def world_from_endpoints(decls: Sequence[Mapping[str, Any]], *, log_path: Path | str | None = None) -> World:

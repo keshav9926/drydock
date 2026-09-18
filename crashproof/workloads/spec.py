@@ -36,6 +36,10 @@ class ToolDecl(Frozen):
     endpoint: str
     resolution: Literal["probe", "assume_failed", "assume_succeeded", "escalate"] | None = None
     idempotency: Literal["NONE", "KEY", "NATURAL"] | None = None
+    #: W7 (§9.3): a tool whose answer arrives in pieces, and whether a PURE one broken mid-stream on a
+    #: live worker may complete with what arrived. Unset in every workload before W7.
+    modifiers: tuple[Literal["STREAMS"], ...] = ()
+    partial_ok: bool = False
 
 
 class EndpointDecl(Frozen):

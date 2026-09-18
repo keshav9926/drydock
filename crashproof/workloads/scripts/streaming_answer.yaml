@@ -1,0 +1,56 @@
+# W7 — streaming_answer: two streamed model calls around one streamed read (§14.1, §29.2).
+#
+#   m1 streamed (40 chunks) -> fetch_log (PURE, STREAMS, partial_ok) -> m2 streamed final
+#
+# No write effect anywhere, which is the point: every fault here is a fault in a *stream*, and the
+# only question is whether a partial answer ever becomes a decision. A node's `chunks` is how many
+# pieces the scripted provider cuts its answer into — the text, then the tool call as JSON, as a
+# provider streams a tool call's input — and is presentation, not a decision: the same node answers
+# the same thing however it is cut. `fetch_log` reads `logs.fetch`, whose answer is a pure function of
+# the path, and streams its lines. The input's `stream: true` asks the program to stream its model
+# calls; the program is W1's.
+#
+# What must hold (§14.1): the final result equals the scripted full response; no partial content
+# becomes the semantic result; abandoned-attempt chunks are charged. Keel journals STEP_CHUNK batches.
+#
+# Arms. Keel only (docs/adapters/*.md, with the citations): LangGraph 1.2.11 documents stream emission
+# (`stream_mode`) but no durable semantics for a streamed piece — N/A; Restate cites no streaming
+# primitive — N/A; DBOS (`DBOS.write_stream`, `DBOSModel.request_stream`) and Temporal
+# (`event_stream_handler` inside the activity: "buffered") can express one, and are not bound yet.
+workload: streaming_answer
+version: 1
+budget: {max_model_calls: 10, max_tokens: 40000}
+tool_timeout_s: 1
+
+tools:
+  - {name: fetch_log, effect_class: PURE, endpoint: logs.fetch, modifiers: [STREAMS], partial_ok: true}
+
+variants:
+  STREAMS:
+    key_source: none
+    required_effects: []
+    world_state: {}
+
+world:
+  endpoints:
+    - {id: logs.fetch, service: logs, kind: read, logical_identity: [path]}
+
+script:
+  - key: []
+    decision:
+      text: "Reading the CI log of the failing job before answering."
+      tool_calls: [{name: fetch_log, args: {path: ci/test_retry.log}}]
+      chunks: 40
+    alternate:
+      text: "Reading the CI log of the failing job before answering."
+      tool_calls: [{name: fetch_log, args: {path: ci/test_retry.log.1}}]
+      chunks: 40
+  - key: [[fetch_log, 1]]
+    decision:
+      final: "CI flaked in test_retry_backoff: a 2.0 s timeout on the first attempt, passed on retry. Raise its deadline."
+      chunks: 12
+
+expected:
+  status: COMPLETED
+  result: {matches: "CI flaked in test_retry_backoff: a 2\\.0 s timeout on the first attempt, passed on retry\\. Raise its deadline\\."}
+  input: {task: "why did CI flake?", stream: true}

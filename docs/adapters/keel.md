@@ -142,6 +142,53 @@ is `agent_code = pydantic_ai` only, §13.5 puts W3 outside that path ("continuat
 per runtime"), and a native Temporal adapter is V2. DBOS and Restate: until an adapter README cites a
 continuation primitive (§27.7). LangGraph: no continuation primitive in the fact sheet.
 
+## W7 — streaming
+
+`streaming_answer` runs as W1's program, `tool_chain`, with the input's `stream: true`: every
+`ctx.model` carries the STREAMS modifier, and `fetch_log` is registered from the workload as PURE +
+STREAMS + `partial_ok`, emitting the lines `logs.fetch` returned through `tctx.emit`. `WorkloadProvider.stream`
+answers exactly what `complete` would, cut into the node's declared `chunks` (m1 40, m2 12) — the text,
+then the tool call as JSON — each piece through the shim's `during:model_stream(chunk=k)`, then the whole
+response. Keel journals the pieces as STEP_CHUNK batches (256 tokens or 500 ms) and the answer only as
+the outcome.
+
+Smoke, `bench/specs/w7.yaml`, seed 7, into a scratch `--out`. One seed checks that each cell runs and
+lands where aimed, not a rate. Every row: valid, COMPLETED, the answer equal to the scripted final
+response, every MODEL outcome a whole scripted answer, S1–S5 L1 L2 C1 PASS; "charged" is the budget
+recomputed from the journal (a settled attempt at its usage, an unsettled one at max(reservation, last
+`usage_cum`)).
+
+| cell | STEP_CHUNK (step.attempt: n) | attempt closed | charged (abandoned) |
+|---|---|---|---|
+| baseline | 0.1:1 1.1:1 2.1:1 | — | 249 (0) |
+| `kill@before:tool_call` | 0.1:1 1.2:1 2.1:1 | 1.1 attempt_abandoned | 249 (0) |
+| `kill@after:tool_return` | 0.1:1 1.2:1 2.1:1 | 1.1 attempt_abandoned | 249 (0) |
+| `kill@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
+| `kill@after:model_return` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
+| the four above `+model_reask_alternate` | as unarmed | as unarmed | 249 / 249 / 1309 / 1309 |
+| `pause_past_ttl@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned (ORPHANED) | 1305 (1) |
+| `model_500@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 error_response, retried | 1305 (1) |
+| `kill@during:model_stream(chunk=7)` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
+| `model_stream_truncate@during:model_stream(chunk=7)` | **0.1:1** 0.2:1 1.1:1 2.1:1 | 0.1 "the stream ended before its final response", retried | 1305 (1) |
+
+Against §14.1: the final result is the scripted full response in all thirteen; no partial content is a
+result — the truncated attempt's chunk (`"Reading the CI log o"`, seven pieces) is journaled as
+STEP_CHUNK{attempt 1} and followed by STEP_FAILED{retryable}, and attempt 2's whole answer is the
+outcome; every abandoned m1 attempt stays charged at its reservation (1056 tokens: 249 + 1056 = 1305),
+not at the 34 tokens the truncated attempt's last `usage_cum` recorded. Two readings worth having: a kill at chunk 7 leaves **no** chunk
+for the dead attempt — seven pieces are ~2 tokens, below the 256-token batch, and the 500 ms timer had
+not run out — so STARTED alone is what the successor disposes of, which the recovery table says is the
+same thing; and the armed cells re-ask m1 only where m1 had no journaled outcome (killed before or
+after its model call returned), where they fetch `ci/test_retry.log.1` — the M1 positive control of
+§13.7 H10, identical for every arm by construction. Killed after m1 was journaled, Keel never asks it
+again and the alternate is never served.
+
+**N/A for W7, with the reason** (each arm's page carries the citation): LangGraph documents stream
+emission (`stream_mode`) but no durable semantics for a streamed piece; Restate cites no streaming
+primitive. DBOS (`DBOS.write_stream`, `DBOSModel.request_stream`) and Temporal (the
+`event_stream_handler` inside the model activity, §14.1's "buffered") can express a streamed model call
+and are not bound yet.
+
 ## Pins
 
 `tool.timeout = 1 s`, `lease_ttl = 2 s`, heartbeat `≈ 0.67 s`, `attempt_deadline = started_at + 1 s`,
