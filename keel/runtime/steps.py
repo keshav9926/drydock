@@ -236,6 +236,9 @@ class StepEngine:
         #: The latest COMPACT outcome at the replay cursor — what a boundary names as `compact_seq`.
         #: Starts at the boundary's own and moves as COMPACT outcomes are handed back (§10.8).
         self.compact_seq = state.segment.compact_seq if state.segment is not None else None
+        #: Where this epoch's re-execution starts: the latest boundary's first step, 0 without one. What
+        #: RECOVERY_COMPLETED counts replayed steps from — the segment, not the run (§10.8, §18.8).
+        self.replay_from = state.segment.first_step_index if state.segment is not None else 0
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
@@ -751,7 +754,7 @@ class StepEngine:
             seq = await tx.append(
                 RecoveryCompleted(
                     live_from_step=live_from_step,
-                    replayed_steps=live_from_step,
+                    replayed_steps=live_from_step - self.replay_from,
                     elapsed_ms=elapsed,
                 )
             )
@@ -760,7 +763,7 @@ class StepEngine:
             self.lease.epoch,
             completed_seq=seq,
             live_from_step=live_from_step,
-            replayed_steps=live_from_step,
+            replayed_steps=live_from_step - self.replay_from,
             outcome="LIVE",
         )
 

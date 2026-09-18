@@ -145,6 +145,8 @@ async def test_recovery_re_executes_from_the_latest_boundary_only() -> None:
     rec = [e for e in events if e.type == "RECOVERY_STARTED"][-1]
     assert rec.body.from_segment == 2
     assert ENTRIES == [(7, 4)], "called once, with the boundary's state, the counter at its first_step_index"
+    done = [e for e in events if e.type == "RECOVERY_COMPLETED"][-1]
+    assert (done.body.live_from_step, done.body.replayed_steps) == (8, 1), "the segment's steps, not the run's"
     state = fold(events)
     assert state.phase == "COMPLETED" and state.result["seen"] == [0, 1, 2, 3, 4, 5]
     assert _c2(events) == "PASS"

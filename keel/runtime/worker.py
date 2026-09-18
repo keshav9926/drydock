@@ -327,7 +327,7 @@ class Worker:
                 async with journal.append(lease) as tx:
                     await tx.append(
                         RecoveryCompleted(
-                            live_from_step=live_from, replayed_steps=live_from, elapsed_ms=0
+                            live_from_step=live_from, replayed_steps=live_from - engine.replay_from, elapsed_ms=0
                         )
                     )
                 engine.recovery_completed = True
