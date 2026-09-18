@@ -92,6 +92,9 @@ class Completed:
 class Failed:
     error: str
     retryable: bool = False
+    #: The request may have been applied: a timeout, or a receiver that failed to answer. Only an
+    #: IDEMPOTENT step acts on it — a retry under the same key resolves it; no retry leaves it unknown.
+    unknown: bool = False
 
 
 @dataclass(frozen=True, slots=True)

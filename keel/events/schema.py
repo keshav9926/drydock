@@ -295,7 +295,7 @@ class StepResolved(Body):
     step_index: int
     attempt_no: int
     resolution: Literal["RESOLVED_COMPLETED", "RESOLVED_FAILED", "RESOLVED_UNKNOWN"]
-    method: Literal["probe", "assume_failed", "assume_succeeded", "escalate", "human"]
+    method: Literal["probe", "assume_failed", "assume_succeeded", "escalate", "human", "key_window_expired"]
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 

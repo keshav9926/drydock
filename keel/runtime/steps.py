@@ -254,7 +254,8 @@ class StepEngine:
                 self.replayed_steps += 1
                 return _value_of(journaled)
             if journaled.state == RESOLVED_UNKNOWN:
-                raise Suspended("resolved_unknown", {"step_index": intent.step_index})
+                reason = "key_window_expired" if journaled.method == "key_window_expired" else "resolved_unknown"
+                raise Suspended(reason, {"step_index": intent.step_index})
             return await self._recover_open(intent, journaled)
         # The one boundary where stopping is free: everything behind is journaled, nothing ahead
         # has been attempted. An in-flight step is never interrupted — it is already bounded by
@@ -1320,7 +1321,7 @@ class StepEngine:
             outcome = (
                 Ambiguous("timeout")
                 if eff_class == EffectClass.EXTERNAL
-                else Failed("timeout", retryable=True)
+                else Failed("timeout", retryable=True, unknown=True)
             )
         except UnknownOutcome as exc:
             # "Applied, then failed to answer" is the classic case, and it is indistinguishable
@@ -1328,7 +1329,7 @@ class StepEngine:
             outcome = (
                 Ambiguous(f"error_response: {exc}")
                 if eff_class == EffectClass.EXTERNAL
-                else Failed(f"error_response: {exc}", retryable=True)
+                else Failed(f"error_response: {exc}", retryable=True, unknown=True)
             )
         except Rejected as exc:
             # The receiver spoke plainly. Retrying a refusal only wastes an attempt.
@@ -1359,6 +1360,14 @@ class StepEngine:
         # that finds it retries rather than failing the run (§8.7, §11.5 `provider_outage`).
         policy = self.model_retry if intent.kind is StepKind.MODEL else self.retry
         retrying = isinstance(outcome, Failed) and outcome.retryable and policy.may_retry(attempt_no)
+        if (
+            isinstance(outcome, Failed) and outcome.unknown and not retrying
+            and intent.effect_class == EffectClass.IDEMPOTENT
+        ):
+            # §9.1 (amended): the key makes a retry safe, and a retry is what turns "maybe applied"
+            # into a known outcome. With none left, a clean FAILED would hide an effect the receiver
+            # may hold, so the step is what it is — unknown — and the run waits for a human.
+            return await self._key_window_expired(intent, attempt_no, started_seq, outcome.error)
         wait_s = 0.0
         if isinstance(outcome, (Completed, Failed)):
             self._breaker_saw(intent, ok=isinstance(outcome, Completed))
@@ -1400,7 +1409,12 @@ class StepEngine:
                         causation_seq=started_seq,
                     )
                     if is_tool:
-                        await tx.update_effect(key, status="ABSENT", outcome_seq=seq)
+                        # A retry is coming. After an unknown outcome the receiver may already hold
+                        # an IDEMPOTENT effect, so the row says AMBIGUOUS, not ABSENT, until the next
+                        # attempt starts under the same key (§7.4, amended). Nothing reads it as
+                        # outstanding: the reaper looks at STARTED rows only.
+                        unknown = outcome.unknown and intent.effect_class == EffectClass.IDEMPOTENT
+                        await tx.update_effect(key, status="AMBIGUOUS" if unknown else "ABSENT", outcome_seq=seq)
                 else:
                     seq = await tx.append(
                         StepAmbiguous(
@@ -1531,6 +1545,29 @@ class StepEngine:
                 return await self._retry_after_backoff(intent, journaled.attempts, journaled.next_attempt_at)
             raise StepFailed(intent.step_index, journaled.error or "failed", retryable=journaled.retryable)
         raise Suspended("unrecoverable_step_state", {"step_index": intent.step_index, "state": state})
+
+    async def _key_window_expired(self, intent: StepIntent, attempt_no: int, started_seq: int, error: str) -> Any:
+        """An IDEMPOTENT attempt whose outcome is unknown, with no attempt left to resolve it under
+        the same key: AMBIGUOUS, then RESOLVED_UNKNOWN by `key_window_expired`, one transaction —
+        the EXTERNAL `escalate` path, so replay, VERIFY, C3 and the human's decision are one path."""
+        async with self.journal.append(self.lease) as tx:
+            await tx.append(
+                StepAmbiguous(step_index=intent.step_index, attempt_no=attempt_no, cause=error),
+                causation_seq=started_seq,
+            )
+            seq = await tx.append(
+                StepResolved(
+                    step_index=intent.step_index,
+                    attempt_no=attempt_no,
+                    resolution="RESOLVED_UNKNOWN",
+                    method="key_window_expired",
+                    evidence={"reason": "no attempt left to resolve an unknown outcome under the same key"},
+                )
+            )
+            await tx.update_effect(intent.effect_key or "", status="RESOLVED_UNKNOWN", outcome_seq=seq)
+            await tx.set_run(attempt_deadline=None)
+        hooks.at("after:outcome_commit", attempt_no=attempt_no, **_where(intent))
+        raise Suspended("key_window_expired", {"step_index": intent.step_index})
 
     async def _resolve(self, intent: StepIntent, attempt_no: int) -> Any:
         """The tool's declared resolution. MVP ships `escalate` (the default) and, from day 2,

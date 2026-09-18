@@ -955,20 +955,16 @@ class Sim:
                 return False
         return True
 
-    def _c3(self, *, strict_c3: bool = False) -> None:
+    def _c3(self) -> None:
         """C3: the journal's committed set == the World's applied set, modulo RESOLVED_UNKNOWN.
 
         Two more exemptions, both named by the document rather than chosen here: a landing no
         current lease holder was awaiting (§8.4, "S6/C3 may be violated … the verifier reports it"),
         and one whose step a takeover closed with STEP_CANCELLED ("effect may still fire", §7.4).
 
-        A third is *not* named by the document, and is exempted here only so the machine can go on
-        looking past it: an IDEMPOTENT attempt that landed and answered 5xx or nothing is
-        `STEP_FAILED{retryable}` with its row `ABSENT` by design (§7.4, §8.5), and when no retry lands
-        after it the run ends with the World holding an effect the journal calls absent. That is a
-        C3 failure caused by a design decision — K6's shape — and it is reported, not fixed:
-        `tests/property/regressions/test_k6_idempotent_unknown_outcome.py` pins it as a strict xfail.
-        `strict_c3=True` turns the exemption off.
+        An IDEMPOTENT attempt that landed and answered 5xx or nothing is no exemption: its row is
+        AMBIGUOUS while a retry is pending and RESOLVED_UNKNOWN when none is left (§7.4 and §9.1 as
+        amended after the property suite found it — `tests/property/regressions/test_k6_*`).
         """
         committed, rows, steps = set(), {}, {}
         for r in self.run_ids():
@@ -982,12 +978,8 @@ class Sim:
         unaccounted = sorted({
             l.label for l in self.landings
             if l.current and l.label in applied and l.label not in committed
-            and getattr(rows.get((l.run_id, l.step)), "status", None) != "RESOLVED_UNKNOWN"
+            and getattr(rows.get((l.run_id, l.step)), "status", None) not in ("RESOLVED_UNKNOWN", "AMBIGUOUS")
             and getattr(steps.get((l.run_id, l.step)), "state", None) != "CANCELLED"
-            and (strict_c3 or not (
-                getattr(rows.get((l.run_id, l.step)), "effect_class", None) == "IDEMPOTENT"
-                and getattr(rows.get((l.run_id, l.step)), "status", None) == "ABSENT"
-            ))
         })
         assert not missing and not unaccounted, {
             "C3": {"committed_not_applied": missing, "applied_not_committed": unaccounted,
