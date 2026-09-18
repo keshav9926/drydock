@@ -80,7 +80,7 @@ the rest. LangGraph's zombie column is 0 for a different reason — with no succ
 over while it is frozen, so nothing races it.
 
 Beside it, and never unioned with it:
-**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 56 white-box cells (44 run,
+**[`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)** — 66 white-box cells (54 run,
 12 N/A with the reason) firing faults *inside* Keel's own write path, its inbox drain, its approval
 park and its spawn, where no shim can reach. A boundary only one runtime exposes is not a fair column.
 
@@ -139,7 +139,7 @@ at a step boundary inside its own fenced transaction, without ever becoming a se
   `approval_binding_violations`, `wait_durability` and `cancel_latency_ms` are computed on every new
   row; the published rows predate them and no page prints them yet.
 - **Fifteen of seventeen hook boundaries**, with cells: [`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)
-  is 56 cells, 44 run and 12 N/A, S7 and S8 judged from the whole tree of journals.
+  is 66 cells, 54 run and 12 N/A, S7 and S8 judged from the whole tree of journals.
   `during:approval_wait` and `during:child_wait` fire with the lease already released.
 - **Proxy mode** (§11.2). The black-box injector at the network edge: the proxy is the only firing
   site, and the shim inside the SUT rides along observe-only to count calls at the wire.
@@ -681,7 +681,7 @@ KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
 | `tests/property/test_key_props.py` | the effect key: stable, unique, fork-distinct, credential-blind |
 | `tests/property/test_step_machine_props.py` | the recovery table, per class, against the World |
 | `tests/property/test_runtime_machine.py` | `KeelMachine`: §12.3's rules for every mechanism built — kills at every hook boundary and mid-effect, timeouts, lease expiry and zombie resume, late responses, drain, journal faults, retry backoff, signals and duplicates, approvals (decide, expire, stale and duplicate clicks), delegation with forced takeover and a stray child — with S1–S8, J1–J2 and C1 after every rule and L1–L3, C3 at teardown; `sim.to_fault_spec` turns a shrunk sequence into a spec, `tests/property/regressions/` pins each one |
-| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 56 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 44 run and 12 N/A with reasons; S8 judged from the whole tree of journals |
+| `tests/conformance/test_hook_cells.py` | the crash-window enumeration: 66 `(boundary, fault, class)` cells — the write path per effect class, the inbox drain and the approval park on a gated run, the spawn transaction and the park on children of a delegating run — 44 run and 12 N/A with reasons; S8 judged from the whole tree of journals |
 | `tests/unit/test_delegation.py` | children under contracts: the spawn as one transaction, results that wake the parent, the parent grading the result, cancel asked then forced by takeover, the reaper collecting a stray, fan-out bounded by slots |
 | `tests/unit/test_proxy.py` | the black-box injector: the shim's three instants one process out, what the World did versus what the SUT was told under a dropped, 5xx, malformed or never-sent answer, real kills aimed at the pid the SUT wrote, a freeze that forwards nothing until the thaw |
 | `tests/integration/` | the same claims against a real database, and per-trial template clones |
@@ -732,14 +732,16 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 ## Not yet built (and when)
 
 **Week 3 (§29.2) is depth, and most of it has landed:** `KeelMachine` over every mechanism with
-`sim.to_fault_spec` (r001–r004 fixed, K6's first case amended); `ctx.sleep`, the durable plan
+`sim.to_fault_spec` (r001–r005 fixed, K6's first case amended); `ctx.sleep`, the durable plan
 (`ctx.plan`), `ctx.compact()` and continuation segments (`Continue(state)`, `SEGMENT_STARTED`, the
-forced boundary, C2, `before:segment_write` — 16 of 17 hook boundaries) with W3 `long_horizon_50` on
+forced boundary, C2, `before:segment_write`) with W3 `long_horizon_50` on
 the Keel arm; `crashproof confirm` and the two-tier report, and the week-2 confirmation plan (25
-cells, 7 500 trials) running at `dcdd533`; `ambiguity_window_width` and K3 for every arm. **In
-progress:** streaming (`STEP_CHUNK`, `partial_ok`, `during:stream(chunk=k)` — the seventeenth
-boundary, `model_stream_truncate`, W7) and the static HTML report. **Not started:** a `Policy`
-implementation, `Sandbox` and the §18.6 drift detectors; FORK, cut from phase 5 by §28.5's own cut
+cells, 7 500 trials) running at `dcdd533`; `ambiguity_window_width` and K3 for every arm; streaming (`STEP_CHUNK`, `partial_ok`, `during:stream(chunk=k)` — **all seventeen hook boundaries
+now exist**, with 54 conformance cells run and 12 N/A — `model_stream_truncate`, W7 `streaming_answer` on
+the Keel arm); the static HTML matrix pages (`report --fmt html`, `bench/reports/html/`) and the static
+timeline page (`crashproof demo --html`). **In progress:** human resolution (`keel signal --resolve`),
+the `Policy` implementation, the §18.6 drift detectors, the `Sandbox` per-epoch workspace and §20.7's
+audit queries. **Not started:** FORK, cut from phase 5 by §28.5's own cut
 line and last in week 3's cut order. **Cut:** FastAPI + SSE (second in §29.2's cut order — the static
 page alone gives outreach a link) and `keel watch` (`keel events --follow` shows the same BEFORE CRASH /
 AFTER RESTART split, in the event stream where it already lives).
