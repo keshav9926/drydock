@@ -223,18 +223,57 @@ Fixes: the Keel runtime in `41f6ca0` and `652d8e6`; the harness, verifier, repor
 `22f53d9`..`cd8665e`; the week-2 gaps in `3e70a9f`, `9a6e1ae` and `182994a`; the documents in the
 commit that added this section.
 
+### Week 2: eight arms, one commit
+
+§29.1's artifact: Keel, LangGraph ×3, DBOS `native` and `pydantic_ai`, Temporal and Restate (both
+Pydantic AI), over W1 in `shim` and `proxy` mode, W5 and W5-pre — **12 480 trials, every row at
+`dcdd533`**, one void left after two re-take passes (LangGraph `exit`, proxy `kill@after:tool_return`,
+seed 32). Restate's shard ran the same specs under WSL. Pages:
+[`week2_w1_shim`](bench/reports/week2_w1_shim.md) (208 cells) ·
+[`week2_w1_proxy`](bench/reports/week2_w1_proxy.md) (144) · [`week2_w5`](bench/reports/week2_w5.md)
+(40) · [`week2_w5_pre`](bench/reports/week2_w5_pre.md) (24) ·
+[`agreement_week2`](bench/reports/agreement_week2.md).
+
+- **Keel fails no safety invariant in any cell of the four.** Its one duplicate source is the named
+  zombie residual: `EXTERNAL` `pause_past_ttl` applies twice in 20 of 30 shim trials (30 of 30 in proxy
+  mode, where the parked request lands after the successor's re-attempt).
+- **The window every other arm leaves open.** At `kill@after:tool_effect` on `EXTERNAL`, all seven
+  other configs apply the issue twice, 30 of 30; Keel's probe finds the applied effect, 0. The same
+  holds behind the approval gate: W5's `kill@after:tool_effect` deploys twice in 30 of 30 trials on
+  every arm but Keel. At `after:tool_return` LangGraph ×3, Temporal and Restate duplicate 30 of 30 and
+  DBOS 18 (`native`) and 24 (`pydantic_ai`) — a race against DBOS's step checkpoint written off the
+  event loop ([dbos](docs/adapters/dbos.md)).
+- **Faults that do not kill.** Keel ends 30/30 logically correct under `tool_500`, `tool_timeout`,
+  `model_500`, `model_timeout` and `provider_outage`. DBOS runs with step retries off (its default), so
+  a 5xx, a tool timeout or the outage ends the workflow in ERROR — 0/30 correct, recovered, printed not
+  judged. Temporal and Restate retry the `EXTERNAL` call under `tool_500` and `tool_timeout` and create
+  the issue twice, 30 of 30.
+- **Restate is judged against its own claim** ("Tool side effects are not duplicated", so
+  `exactly_once`): S1 FAIL in 5 shim cells, 7 proxy cells and W5's `kill@after:tool_effect`. Its
+  `pause_past_ttl` cells also score L1 in 4 of 60 shim trials — still RUNNING at 60 s after drawn pauses
+  of 14–22 s, which is Restate's documented default retry backoff (×2, 60 s cap) outlasting the trial.
+- **W5-pre** reproduces H7's pre-interrupt clause on every LangGraph config — `notify` twice in the
+  fault-free baseline (one `sync` trial three times) and under `approval_delay`, three times under `kill_while_waiting` — and on no
+  other arm. LangGraph's `approval_expiry` is L1 FAIL by design on all three configs (no deadline
+  primitive); every other arm completes "not done".
+
 ### Kill criteria at the end of week 2
 
 §29.1 checks K1, K3 and K5 here (§30).
 
-- **K1 (everyone passes) has not fired** on what is published: in matrix v0 every LangGraph config
-  applies the `EXTERNAL` issue twice at `after:tool_effect` and at `after:tool_return`, 30 of 30. Its
-  week-2 half reads the week-2 matrix, which has not run.
-- **K3 (unfair triggers) is undecided** — a gap, not a pass. `crashproof placement` prints *not
-  computable* for every published cell: matrix v0, tier1a and reask_alternate have no `facts.json`;
-  the W5 trials predate the `sut_ref` join it reads for Keel and the checkpoint snapshot it reads for
-  LangGraph, and a supervisor-fired fault has no K3 window at all. The shim pages are published
-  without the check K3 gates them on, and the week-2 re-run is what decides it.
+- **K1 (everyone passes) has not fired.** It needs zero S1–S5 FAILs and zero raw duplicates at T2/T3
+  in every F0 cell; in the week-2 matrix every arm but Keel duplicates the `EXTERNAL` issue at
+  `after:tool_effect` 30 of 30, and Restate fails S1.
+- **K3 (unfair triggers) has not fired for the arms it can be computed on, and is not computable for
+  four.** `crashproof placement` over the week-2 shim trials puts 100 % of fired faults inside the
+  intended window in every tool-boundary cell of Keel and LangGraph ×3, and the arms never differ. For
+  DBOS ×2, Temporal and Restate it prints *not computable*: the placement join reads Keel's journal and
+  LangGraph's checkpoints, and not yet DBOS's steps, Temporal's history or Restate's journal — the same
+  per-runtime commit timestamps `ambiguity_window_width` needs (week 3). Model-boundary faults have no
+  K3 window. The proxy/shim agreement column is its cross-check: 87 of 112 comparable twins agree, and
+  the 25 that differ are the instrument — `kill@after:tool_return` from outside lands after `taskkill`'s
+  latency (15 of them), `pause_past_ttl` parks the request at the proxy instead of freezing before the
+  send (6), and LangGraph `async`'s shim kill lands before its checkpoint flush (4, receipt counts only).
 - **K5 (adapter infeasible) has not fired** for any merged arm. DBOS ×2, Temporal and Restate express
   W1, W5 and W5-pre in cited primitives with no counter, pre-send lookup, retry or dedup of the
   adapter's own, and all three F1 formulas carry a doc citation ([dbos](docs/adapters/dbos.md),

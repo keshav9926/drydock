@@ -15,7 +15,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
-RESULTS = ("matrix_v0", "tier1a", "tier1p", "reask_alternate", "w5", "w5_pre")
+RESULTS = ("matrix_v0", "tier1a", "tier1p", "reask_alternate", "w5", "w5_pre",
+           "week2_w1_shim", "week2_w1_proxy", "week2_w5", "week2_w5_pre")
 COMPARED = {"matrix_v0": "compare_keel_vs_langgraph_sync.md", "tier1a": "compare_tier1a_keel_vs_langgraph_sync.md",
             "tier1p": "compare_tier1p_keel_vs_langgraph_sync.md", "w5": "compare_w5_keel_vs_langgraph_sync.md",
             "w5_pre": "compare_w5_pre_keel_vs_langgraph_sync.md"}
@@ -28,6 +29,8 @@ PAGES: list[list[str]] = [
     ),
     ["agree", "--shim", "bench/results/matrix_v0", "--shim", "bench/results/tier1a",
      "--proxy", "bench/results/tier1p", "--out", "bench/reports/agreement_tier1p.md"],
+    ["agree", "--shim", "bench/results/week2_w1_shim", "--proxy", "bench/results/week2_w1_proxy",
+     "--out", "bench/reports/agreement_week2.md"],
 ]
 
 
