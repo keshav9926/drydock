@@ -17,7 +17,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from crashproof.report.matrix import CellSummary, wilson
+from crashproof.report.matrix import CONFIRMATION_BASE_SEED, CellSummary, wilson
 from crashproof.stats.ci import MDD_TABLES
 
 #: Claims are printed under every column, because a verdict without the claim it was judged
@@ -50,6 +50,7 @@ def render(
             continue
         out += _band(band, variant, columns)
 
+    out += _screening_appendix(cells)
     out += _counterexamples(cells)
     out += _provenance(cells, sources)
     return "\n".join(out)
@@ -111,6 +112,26 @@ def _cell(cell: CellSummary | None) -> str:
     if cell.void:
         extra.append(f"void {cell.void}")
     return "<br>".join([safety, live, raw] + ([" · ".join(extra)] if extra else []))
+
+
+def _screening_appendix(cells: dict[str, CellSummary]) -> list[str]:
+    """§15.3: a confirmed cell is reported at the confirmation n, and its screening numbers move
+    here — kept on the page, because they are what selected the cell."""
+    rows = [(cell_id, c.screening) for cell_id, c in sorted(cells.items()) if c.screening is not None]
+    if not rows:
+        return []
+    out = [
+        "## Appendix — the screening tier of the confirmed cells (§15.3)",
+        "",
+        f"The grid reports these cells at the confirmation tier (seeds ≥ {CONFIRMATION_BASE_SEED:,}); this is "
+        "what the screening tier showed for them. A safety FAIL in either tier is a FAIL in the grid.",
+        "",
+        "| cell | screening |",
+        "|---|---|",
+    ]
+    out += [f"| `{cell_id}` | {_cell(s)} |" for cell_id, s in rows]
+    out.append("")
+    return out
 
 
 def _pin_value(value: Any) -> str:
@@ -213,7 +234,7 @@ def _provenance(
         # answer that needs a second command to produce is an answer they will not find.
         MDD_TABLES,
         "",
-        faq(confirmed=any(c.n > 30 for c in cells.values())),
+        faq(confirmed=any(c.tier == "confirmation" for c in cells.values())),
     ]
     return out
 

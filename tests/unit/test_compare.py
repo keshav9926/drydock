@@ -139,3 +139,27 @@ def test_rows_that_did_not_reject_still_count_toward_m() -> None:
     lone = only(compare(a, b), "recovery_rate", "EXTERNAL·t0")
     assert round(lone.p_value, 4) == 0.0078 and round(lone.p_holm, 4) == 0.0547
     assert "too noisy" in lone.verdict and lone.rule == "5 · Holm"
+
+
+def test_a_confirmed_cell_is_compared_at_the_confirmation_n_and_screening_moves_to_the_appendix() -> None:
+    """§15.3: one tier per cell, Holm over the family with mixed n (§15.6), screening kept."""
+    from crashproof.report.compare import render
+
+    def arm(cell: str, seeds, **metrics):
+        return [row(cell.format(t=t), s, **metrics) for t in ("t0", "t1") for s in seeds
+                if t == "t0" or s < 100_000]
+
+    screening, confirmation = range(7, 37), range(100_000, 100_300)
+    a = arm("keel.d.EXTERNAL.{t}", screening) + arm("keel.d.EXTERNAL.{t}", confirmation)
+    b = arm("lg.sync.EXTERNAL.{t}", screening, recovery_rate=0) + arm("lg.sync.EXTERNAL.{t}", confirmation, recovery_rate=0)
+    c = compare(a, b)
+    family = next(f for f in c.families if f.metric == "recovery_rate")
+    assert {r.cell: r.n for r in family.rows} == {"EXTERNAL·t0": 300, "EXTERNAL·t1": 30}
+    assert all(r.p_holm is not None for r in family.rows), "one family, mixed n"
+    [appendix] = [f for f in c.screening if f.metric == "recovery_rate"]
+    assert [(r.cell, r.n) for r in appendix.rows] == [("EXTERNAL·t0", 30)]
+    page = render(c)
+    assert "1 cell(s) ran at the confirmation tier" in page
+    assert "### recovery_rate · w · EXTERNAL · screening" in page.split("## Appendix")[1]
+    screening_only = compare([r for r in a if r["seed"] < 100_000], [r for r in b if r["seed"] < 100_000])
+    assert "## Appendix" not in render(screening_only)

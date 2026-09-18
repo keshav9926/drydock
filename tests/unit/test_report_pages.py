@@ -35,12 +35,27 @@ def test_rows_from_a_dirty_tree_are_flagged() -> None:
 
 
 def test_faq_3_claims_a_confirmation_tier_only_where_one_ran() -> None:
-    screening = render(fold(_rows(30)), workload="w", title="t")
-    assert "This page is the screening tier only" in screening
+    screening = render(fold(_rows(31)), workload="w", title="t")
+    assert "This page is the screening tier only" in screening, "n > 30 on screening seeds is not a confirmation"
     assert "Confirmation is automatic" not in screening
-    confirmed = render(fold(_rows(31)), workload="w", title="t")
+    confirmed_rows = [{**r, "seed": 100_000 + i} for i, r in enumerate(_rows(3))]
+    confirmed = render(fold(_rows(30) + confirmed_rows), workload="w", title="t")
     assert "Confirmation is automatic where it matters" in confirmed
     assert "adapter_commit" not in screening, "no row carries one; keel_commit pins the adapters"
+
+
+def test_a_confirmed_cell_prints_at_the_confirmation_n_with_screening_in_the_appendix() -> None:
+    screening = _rows(30)
+    screening[4] = {**screening[4], "verdicts": {**screening[4]["verdicts"], "S1": "FAIL"},
+                    "counterexamples": [{"invariant": "S1", "detail": "twice"}]}
+    confirmation = [{**r, "seed": 100_000 + i} for i, r in enumerate(_rows(300))]
+    [cell] = fold(screening + confirmation).values()
+    assert (cell.tier, cell.n, cell.screening.n) == ("confirmation", 300, 30)
+    assert cell.verdicts["S1"] == "FAIL", "a FAIL at screening is never averaged away by more trials"
+    assert [c["seed"] for c in cell.counterexamples] == [11]
+    page = render(fold(screening + confirmation), workload="w", title="t")
+    grid, appendix = page.split("## Appendix — the screening tier of the confirmed cells (§15.3)")
+    assert "L1 300/300" in grid and "L1 30/30" in appendix.split("## Counterexamples")[0]
 
 
 def test_the_commit_a_row_records_is_a_short_sha_marked_dirty_when_the_tree_is() -> None:

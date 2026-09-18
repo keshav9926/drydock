@@ -12,6 +12,10 @@ printed so anyone can reproduce it.
 A cell whose trials are invalid — a fault row recorded for a fault that did not happen — is voided
 rather than scored, and the void rate is published beside the cell so nobody has to guess how much
 was thrown away.
+
+**Two tiers, told apart by seed** (§15.3). A cell with confirmation rows is reported at the
+confirmation n and carries its screening summary for the page's appendix; its safety verdict is FAIL
+if either tier failed, because a FAIL is never averaged away by more trials (§15.4).
 """
 
 from __future__ import annotations
@@ -27,6 +31,15 @@ from crashproof.verifier.invariants import (
     CONSISTENCY_INVARIANTS,
     MVP_INVARIANTS,
 )
+
+#: §15.3's tier rule. Rows carry no `tier` field (§15.11 rule 1 lists one), so the seed decides:
+#: screening runs seeds `base … base+29` from a matrix file's small base (7), and the confirmation
+#: tier draws its seeds from here upward (`crashproof confirm`), so no seed can be in both.
+CONFIRMATION_BASE_SEED = 100_000
+
+
+def is_confirmation(row: dict[str, Any]) -> bool:
+    return int(row["seed"]) >= CONFIRMATION_BASE_SEED
 
 
 @dataclass(slots=True)
@@ -59,6 +72,9 @@ class CellSummary:
     storage_overhead: float | None = None
     spec_hashes: set[str] = field(default_factory=set)
     config_pin: dict[str, Any] = field(default_factory=dict)
+    tier: str = "screening"
+    #: The same cell's screening tier, where it also ran at the confirmation tier: the appendix.
+    screening: CellSummary | None = None
 
 
 def fold(rows: list[dict[str, Any]]) -> dict[str, CellSummary]:
@@ -76,7 +92,23 @@ def fold(rows: list[dict[str, Any]]) -> dict[str, CellSummary]:
     cells: dict[str, list[dict[str, Any]]] = {}
     for row in latest.values():
         cells.setdefault(row["cell_id"], []).append(row)
-    return {cell_id: _summarise(cell_id, group) for cell_id, group in cells.items()}
+    return {cell_id: _tiered(cell_id, group) for cell_id, group in cells.items()}
+
+
+def _tiered(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:
+    confirmation = [r for r in rows if is_confirmation(r)]
+    if not confirmation:
+        return _summarise(cell_id, rows)
+    s = _summarise(cell_id, confirmation)
+    s.tier = "confirmation"
+    screening = [r for r in rows if not is_confirmation(r)]
+    if screening:
+        s.screening = _summarise(cell_id, screening)
+        for name, verdict in s.screening.verdicts.items():
+            if verdict == "FAIL":
+                s.verdicts[name] = "FAIL"
+        s.counterexamples += s.screening.counterexamples
+    return s
 
 
 def _summarise(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:

@@ -32,6 +32,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
+from crashproof.report.matrix import CONFIRMATION_BASE_SEED, is_confirmation
 from crashproof.stats.ci import (
     DISCORDANT_FLOOR,
     MDD_TABLES,
@@ -128,6 +129,9 @@ class Comparison:
     unpaired_b: int = 0
     safety: dict[str, tuple[int, int]] = field(default_factory=dict)
     families: list[Family] = field(default_factory=list)
+    #: The screening tier's families as a screening-only page prints them, cut to the cells the
+    #: families above report at the confirmation tier: the appendix (§15.3).
+    screening: list[Family] = field(default_factory=list)
 
     @property
     def rows(self) -> list[Row]:
@@ -175,8 +179,24 @@ def compare(
             sum(p.b["metrics"][name] or 0 for p in pairs),
         )
 
-    rng = random.Random(seed)
     harness = {p.a.get("recovery_mechanism") for p in pairs} | {p.b.get("recovery_mechanism") for p in pairs}
+    # §15.3: a cell with confirmation pairs is compared at the confirmation n and nowhere else; its
+    # screening pairs go to the appendix, computed as a screening-only page computes them (whole
+    # families, the same bootstrap seed) so the appendix repeats that page rather than restating it.
+    confirmed = {(p.key[0], p.cell) for p in pairs if is_confirmation(p.a)}
+    out.families = _families(
+        [p for p in pairs if ((p.key[0], p.cell) in confirmed) == is_confirmation(p.a)], harness, seed
+    )
+    if confirmed:
+        for family in _families([p for p in pairs if not is_confirmation(p.a)], harness, seed):
+            family.rows = [r for r in family.rows if (family.workload, r.cell) in confirmed]
+            out.screening.append(family)
+    return out
+
+
+def _families(pairs: list[Pairing], harness: set[Any], seed: int) -> list[Family]:
+    rng = random.Random(seed)
+    out: list[Family] = []
     # A family is one (metric, workload, variant) table; its rows are the triggers. Grouping is by
     # the pair key's own fields so a comparison can never silently span two workloads.
     groups: dict[tuple[str, str], list[Pairing]] = {}
@@ -189,7 +209,7 @@ def compare(
             for cell in sorted({p.cell for p in members}):
                 family.rows.append(_mcnemar(metric, [p for p in members if p.cell == cell], cell))
             _holm(family)
-            out.families.append(family)
+            out.append(family)
 
     for metric in CONTINUOUS_METRICS:
         for (workload, variant), members in sorted(groups.items()):
@@ -207,7 +227,7 @@ def compare(
                     row.rule = "confound"
                 family.rows.append(row)
             _holm(family)
-            out.families.append(family)
+            out.append(family)
     return out
 
 
@@ -323,6 +343,16 @@ def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = (
         f"{c.paired} paired trials on (workload, variant, trigger, spec_hash, seed)."
         + (f" Unpaired: {c.unpaired_a} in A, {c.unpaired_b} in B." if c.unpaired_a or c.unpaired_b else ""),
         "",
+    ]
+    if c.screening:
+        cells = len({(f.workload, r.cell) for f in c.screening for r in f.rows})
+        out += [
+            f"{cells} cell(s) ran at the confirmation tier (seeds ≥ {CONFIRMATION_BASE_SEED:,}) and are compared "
+            "at that n only; their screening numbers are in the appendix. Holm runs over each family with "
+            "mixed n — each p is valid at its own n, printed beside it (§15.3, §15.6).",
+            "",
+        ]
+    out += [
         *sources_block(sources),
         "",
         "## Safety — counted, never estimated",
@@ -333,29 +363,11 @@ def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = (
     out += [f"| `{k}` | {a} | {b} |" for k, (a, b) in c.safety.items()]
 
     for family in c.families:
-        if not family.rows:
-            continue
-        binary = family.metric in BINARY_METRICS
-        out += [
-            "",
-            f"## {family.label}",
-            "",
-            ("| cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |" if binary
-             else "| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |"),
-            "|---|---|---|---|---|---|---|---|---|",
-        ]
-        for r in family.rows:
-            left, right, middle = (
-                (f"{int(r.a_median or 0)}/{r.n}", f"{int(r.b_median or 0)}/{r.n}",
-                 f"{_fmt(r.difference, 2)} | {r.a_only}/{r.b_only}")
-                if binary
-                else (_fmt(r.a_median), _fmt(r.b_median),
-                      f"{_fmt(r.difference)} | " + (f"[{r.ci[0]:.1f}, {r.ci[1]:.1f}]" if r.ci else "—"))
-            )
-            out.append(
-                f"| `{r.cell}` (n={r.n}) | {left} | {right} | {middle} | "
-                f"{_p(r.p_value)} | {_p(r.p_holm)} | {_fmt(r.mdd, 2)} | {r.verdict} |"
-            )
+        out += _family_lines(family, f"## {family.label}")
+    if c.screening:
+        out += ["", "## Appendix — the screening tier of the confirmed cells (§15.3)"]
+        for family in c.screening:
+            out += _family_lines(family, f"### {family.label} · screening")
 
     out += [
         "",
@@ -379,6 +391,33 @@ def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = (
         MDD_TABLES,
     ]
     return "\n".join(out)
+
+
+def _family_lines(family: Family, heading: str) -> list[str]:
+    if not family.rows:
+        return []
+    binary = family.metric in BINARY_METRICS
+    out = [
+        "",
+        heading,
+        "",
+        ("| cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |" if binary
+         else "| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |"),
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in family.rows:
+        left, right, middle = (
+            (f"{int(r.a_median or 0)}/{r.n}", f"{int(r.b_median or 0)}/{r.n}",
+             f"{_fmt(r.difference, 2)} | {r.a_only}/{r.b_only}")
+            if binary
+            else (_fmt(r.a_median), _fmt(r.b_median),
+                  f"{_fmt(r.difference)} | " + (f"[{r.ci[0]:.1f}, {r.ci[1]:.1f}]" if r.ci else "—"))
+        )
+        out.append(
+            f"| `{r.cell}` (n={r.n}) | {left} | {right} | {middle} | "
+            f"{_p(r.p_value)} | {_p(r.p_holm)} | {_fmt(r.mdd, 2)} | {r.verdict} |"
+        )
+    return out
 
 
 def _fmt(value: float | None, digits: int = 1) -> str:
