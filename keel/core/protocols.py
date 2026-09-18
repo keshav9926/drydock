@@ -71,6 +71,11 @@ class StepIntent:
     effect_class: EffectClass | None = None
     modifiers: tuple[Modifier, ...] = ()
     program_version: str = ""
+    #: §20.2: the Policy's answer at step entry, journaled on the INTENT so replay reads it and never
+    #: the live Policy. Not identity. `policy_error` is what a `deny` refuses with (PolicyDenied or
+    #: PolicyTimeout) — the STEP_FAILED{attempt_no=0} text, never journaled on the INTENT itself.
+    policy_verdict: str = "allow"
+    policy_error: str | None = None
 
     def identity(self) -> tuple:
         """Per-kind intent identity (§1). MODEL compares (kind, name) only, so a prompt edit does
@@ -165,6 +170,9 @@ class Tool(Protocol):
 
 
 class Policy(Protocol):
+    """§20.2, §23.4. Consulted at a live TOOL step's entry, before its index is consumed; `run` is
+    the run's `RunState` as the journal has it at that moment. Implementations: `runtime/policy.py`."""
+
     async def pre_step(
         self, intent: StepIntent, run: Any
     ) -> Literal["allow", "deny", "require_approval"]: ...

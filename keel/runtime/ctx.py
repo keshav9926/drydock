@@ -20,8 +20,9 @@ from keel.core.hashing import request_hash as _request_hash
 from keel.core.protocols import Modifier, StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
+from keel.runtime.policy import JournalView
 from keel.runtime.segments import FORCED_SEGMENT_STEPS
-from keel.runtime.steps import StepEngine
+from keel.runtime.steps import StepEngine, _waits
 from keel.state import context as _context
 from keel.state import plan as _plan
 
@@ -88,9 +89,16 @@ class Ctx:
         args: Any,
         program_version: str,
         tools: Any = None,
+        policy: Any = None,
+        allowed_tools: frozenset[str] | None = None,
     ) -> None:
         self._engine = engine
         self._tools = tools
+        #: §20.2: the worker's Policy and this run's capability set (`policy.capabilities`), consulted
+        #: at a live TOOL step's entry; `_view` is the journal-as-of-now the Policy is shown.
+        self.policy = policy
+        self.allowed_tools = allowed_tools
+        self._view: JournalView | None = None
         self._next_index = 0
         self._in_flight = False
         self.run_id = run_id
@@ -321,27 +329,94 @@ class Ctx:
         return [ChildResult.model_validate(r) for r in await self._run(intent)]
 
     async def tool(self, name: str, /, **args: Any) -> Any:
-        """TOOL step; identity = (TOOL, name, canonical-args hash)."""
+        """TOOL step; identity = (TOOL, name, canonical-args hash).
+
+        The Policy's verdict is taken at entry, before the index is consumed (§4.3). `deny` is
+        refused by the engine with the INTENT; `require_approval` makes this one call two steps —
+        an APPROVAL at i binding the TOOL's key at i+1, then the TOOL — unless the program already
+        gated this very call with `ctx.approve(gates=)` at i-1."""
         index = self._open()
         try:
             tool = self._tools.get(name) if self._tools else None
             if tool is None:
                 raise UnknownTool(name)
-            intent = StepIntent(
-                step_index=index,
-                kind=StepKind.TOOL,
-                name=name,
-                args=args,
-                args_hash=_args_hash(args),
-                effect_key=_effect_key(self.run_root_id, index, name, args),
-                effect_class=tool.effect_class,
-                modifiers=tuple(tool.modifiers),
-                program_version=self.program_version,
-            )
+            verdict, error = await self._verdict(index, name, args, tool)
         except BaseException:
             self._in_flight = False
             raise
+        if verdict == "require_approval" and not self._bound_at(index - 1, index, name, args):
+            await self._run(self._gate(index, name, args, tool))
+            index = self._open()
+        intent = self._tool_intent(index, name, args, tool, verdict, error)
         return await self._run(intent)
+
+    def _tool_intent(
+        self, index: int, name: str, args: dict[str, Any], tool: Any, verdict: str = "allow", error: str | None = None
+    ) -> StepIntent:
+        return StepIntent(
+            step_index=index,
+            kind=StepKind.TOOL,
+            name=name,
+            args=args,
+            args_hash=_args_hash(args),
+            effect_key=_effect_key(self.run_root_id, index, name, args),
+            effect_class=tool.effect_class,
+            modifiers=tuple(tool.modifiers),
+            program_version=self.program_version,
+            policy_verdict=verdict,
+            policy_error=error,
+        )
+
+    def _bound_at(self, approval_index: int, tool_index: int, name: str, args: dict[str, Any]) -> bool:
+        """A journaled approval at `approval_index` binds exactly this call at `tool_index`."""
+        a = self._engine.state.approval_at(approval_index)
+        return a is not None and a.binds_effect_key == _effect_key(self.run_root_id, tool_index, name, args)
+
+    async def _verdict(self, index: int, name: str, args: dict[str, Any], tool: Any) -> tuple[str, str | None]:
+        """allow | deny | require_approval, and a deny's reason (§20.2).
+
+        The journal decides a journaled index and the Policy is never asked: a journaled APPROVAL at
+        i binding this call's key at i+1 is the gate this call inserted (§9.4's peek branch), and
+        anything else journaled there is memoized — or is NondeterminismDetected — as it would be
+        without a Policy. Only a live index consults it: the run's capability set first, then the
+        Policy against the journal as of now, bounded by the tool's timeout (a silent policy is a
+        deny, PolicyTimeout). VERIFY never consults a Policy; it stops at the live index anyway."""
+        journaled = self._engine.state.step(index)
+        if journaled is not None:
+            gate = journaled.kind == "APPROVAL" and self._bound_at(index, index + 1, name, args)
+            return ("require_approval" if gate else "allow"), None
+        if not self._engine.allow_live:
+            return "allow", None
+        if self.allowed_tools is not None and name not in self.allowed_tools:
+            return "deny", f"PolicyDenied: {name!r} is not in this run's allowed_tools"
+        if self.policy is None:
+            return "allow", None
+        if self._view is None:
+            self._view = JournalView(self._engine.journal, self.run_id)
+        run = await self._view.read()
+        try:
+            async with _waits(self._engine.clock).timeout(tool.timeout):
+                verdict = await self.policy.pre_step(self._tool_intent(index, name, args, tool), run)
+        except TimeoutError:
+            return "deny", f"PolicyTimeout: no verdict for {name!r} within {tool.timeout}s"
+        if verdict == "deny":
+            return "deny", f"PolicyDenied: {name!r}"
+        return verdict, None
+
+    def _gate(self, index: int, name: str, args: dict[str, Any], tool: Any) -> StepIntent:
+        """The APPROVAL a `require_approval` verdict inserts at i (§9.4, §16.5): named for the tool,
+        its payload what the bound key covers (§20.3), binding the TOOL's key at i+1."""
+        key = _effect_key(self.run_root_id, index + 1, name, args)
+        payload = {"tool": name, "args": dict(args), "effect_class": str(tool.effect_class), "effect_key": key}
+        return StepIntent(
+            step_index=index,
+            kind=StepKind.APPROVAL,
+            name=name,
+            args={"payload": payload, "binds_effect_key": key},
+            args_hash=_args_hash(payload),
+            program_version=self.program_version,
+            policy_verdict="require_approval",
+        )
 
     async def sleep(self, seconds: float) -> None:
         """SLEEP step: a durable timer, zero compute while it runs (§18.4).

@@ -47,7 +47,7 @@ from keel import Continue, Keel
 from keel.client import program
 from keel.core import aio
 from keel.core.clock import FakeClock
-from keel.core.errors import Rejected, StoreUnavailable, UnknownOutcome
+from keel.core.errors import Rejected, StepFailed, StoreUnavailable, UnknownOutcome
 from keel.core.ids import uuid7
 from keel.core.protocols import EffectClass, Idempotency, ProbeResult
 from keel.effects.registry import tool
@@ -60,6 +60,7 @@ from keel.replay.verify import verify as run_verify
 from keel.runtime import hooks
 from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import Delegation
+from keel.runtime.policy import StaticPolicy
 from keel.runtime.reaper import Reaper
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.worker import Worker
@@ -141,6 +142,15 @@ async def sim_agent(ctx: Any, args: dict[str, Any], state: SimState | None = Non
             await ctx.sleep(op["s"])
         elif op["op"] == "tool":
             call = {"n": i, "run": str(ctx.run_id)}
+            if op.get("gated") == "policy":
+                # The Policy inserts the gate (§9.4): APPROVAL at i, this call at i+1, and a refusal
+                # arrives as the bound call's StepFailed rather than as a decision value.
+                try:
+                    await ctx.tool(op["tool"], **call)
+                except StepFailed as exc:
+                    return {"stopped": exc.error, "out": out}
+                out.append(i)
+                continue
             if op.get("gated"):
                 decision = await ctx.approve({"op": i}, expires_in=op.get("expires_in"), gates=(op["tool"], call))
                 if decision["decision"] != "granted":
@@ -383,6 +393,7 @@ class Sim:
         retry: str = "none",
         model_retry: str = "none",
         segment_steps: int = 400,
+        policy: str = "none",
     ) -> None:
         self.decls = {t.name: t for t in tools}
         self.script = script
@@ -405,6 +416,14 @@ class Sim:
             programs=[sim_agent, sim_child],
             clock=self.clock,
         )
+        #: §20.2's Policy, drawn: `gate` makes the gated tools' approvals the Policy's rather than the
+        #: program's (the script's ops say `gated: "policy"`); `deny` takes the last tool away.
+        self.policy_name = policy
+        self.policy = {
+            "none": None,
+            "gate": StaticPolicy(require_approval={t.name for t in tools if t.gated}),
+            "deny": StaticPolicy(allowed_tools={t.name for t in tools[:-1]}),
+        }[policy]
         self.workers: dict[str, SimWorker] = {}
         self.incarnation = 0
         self.held: list[Held] = []
@@ -626,6 +645,7 @@ class Sim:
             cancel_grace=GRACE,
             breaker=CircuitBreaker(n_open=2, cooldown_s=10.0),
             segment_steps=self.segment_steps,
+            policy=self.policy,
         )
         self.workers[slot] = w
         w.crash_at = self.armed.pop(slot, None)
@@ -937,7 +957,10 @@ class Sim:
         if st.phase == "COMPLETED":
             for e in evs:
                 decl = self.decls.get(e.body.name) if e.type == "STEP_INTENDED" and e.body.kind == "TOOL" else None
-                if decl is not None and decl.cls != "PURE":
+                # A call the run was refused (a Policy gate rejected, a PolicyDenied) and routed
+                # around is not an effect it requires.
+                refused = st.steps[e.body.step_index].state in ("FAILED", "RESOLVED_FAILED") if decl else False
+                if decl is not None and decl.cls != "PURE" and not refused:
                     required.append(self.world.label_for(decl.endpoint, e.body.args) or f"{decl.endpoint}#never")
         applied = {k: n for k, n in self.world.applied_counts().items() if k in labels}
         by_endpoint = {d.endpoint: d for d in self.decls.values()}

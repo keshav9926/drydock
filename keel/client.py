@@ -111,6 +111,7 @@ class Keel:
         tools: Iterable[ToolSpec] = (),
         clock: Clock | None = None,
         programs: Iterable[Program] = (),
+        policy: Any = None,
     ) -> None:
         if dsn and journal:
             raise KeelError("pass exactly one of dsn / journal")
@@ -125,6 +126,9 @@ class Keel:
             self.journal = MemoryJournal(clock=self.clock)
         self.provider = provider
         self.tools = ToolRegistry(tools)
+        #: §20.2 / §24.1: the `Policy` every worker built from this client consults (StaticPolicy,
+        #: `keel/runtime/policy.py`, is the default implementation). None: allow-all.
+        self.policy = policy
         self.programs: dict[str, Program] = {p.name: p for p in programs} or dict(PROGRAMS)
 
     # --- registration --------------------------------------------------------
@@ -218,6 +222,7 @@ class Keel:
             provider=self.provider,
             tools=self.tools,
             clock=self.clock,
+            policy=self.policy,
             **kwargs,
         )
 

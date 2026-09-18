@@ -37,6 +37,9 @@ class RunCreated(Body):
     parent_run_id: UUID | None = None
     delegation_id: UUID | None = None
     fork_of: dict[str, Any] | None = None
+    #: The run's own capability set, `{"allowed_tools": [...]}` — a child's, from its contract (§20.2:
+    #: it lives in RUN_CREATED so a re-fold can reconstruct it). None: the worker's Policy alone.
+    policy: dict[str, Any] | None = None
 
 
 class RecoveryStarted(Body):

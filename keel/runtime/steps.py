@@ -199,6 +199,7 @@ class StepEngine:
         resolve_program: Callable[[str], Any] | None = None,
         cancel_grace_s: float = DEFAULT_CANCEL_GRACE_S,
         breaker: Any = None,
+        allowed_tools: frozenset[str] | None = None,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -223,6 +224,8 @@ class StepEngine:
         #: The worker's per-provider circuit breaker (§8): below the journal, shared by every lease
         #: this process holds. None means no breaker, which is what a bare engine gets.
         self.breaker = breaker
+        #: The run's capability set (`runtime/policy.py`): what a delegation may pass on (§17.2).
+        self.allowed_tools = allowed_tools
         self._waiting_intent: StepIntent | None = None
         #: VERIFY (§10.9). One flag rather than a second loop: a separate replayer would drift from
         #: this one, and the drift would be invisible — VERIFY would keep passing while the thing
@@ -943,7 +946,10 @@ class StepEngine:
         try:
             validate(
                 contracts,
-                parent_tools=self.tools,
+                # A child's `allowed_tools` must be a subset of the parent's *capability set*, not of
+                # the registry (§7.6.3: "Policy refuses the contract").
+                parent_tools=self.tools if self.allowed_tools is None or self.tools is None
+                else [t for t in self.tools if t.name in self.allowed_tools],
                 parent_remaining_tokens=self._remaining_tokens(),
                 parent_depth=self.depth,
             )
@@ -1035,6 +1041,7 @@ class StepEngine:
                 model_config=dict(self.model_config),
                 parent_run_id=self.lease.run_id,
                 delegation_id=did,
+                policy={"allowed_tools": sorted(contract.allowed_tools)},
             ),
             DelegationRow(
                 delegation_id=did,
@@ -1314,6 +1321,10 @@ class StepEngine:
 
     async def _live(self, intent: StepIntent) -> Any:
         await self._check_binding(intent)
+        if intent.policy_verdict == "deny":
+            # §20.2: refused before any attempt — INTENT{policy_verdict=deny}, the row DENIED and
+            # STEP_FAILED{attempt_no=0, PolicyDenied | PolicyTimeout}, one transaction.
+            await self._deny(intent, intent.policy_error or "PolicyDenied")
         if intent.kind is StepKind.APPROVAL:
             return await self._park_for_approval(intent)
         if intent.kind is StepKind.DELEGATE:
@@ -1964,6 +1975,7 @@ def _intended(intent: StepIntent) -> StepIntended:
         effect_key=intent.effect_key,
         effect_class=str(intent.effect_class) if intent.effect_class else None,
         modifiers=tuple(str(m) for m in intent.modifiers),
+        policy_verdict=intent.policy_verdict,
         program_version=intent.program_version,
     )
 

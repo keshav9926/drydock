@@ -34,6 +34,7 @@ from keel.runtime.ctx import Ctx
 from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
 from keel.runtime import segments
+from keel.runtime.policy import capabilities
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended, _waits
 from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S
@@ -78,8 +79,11 @@ class Worker:
         cancel_grace: float = DEFAULT_CANCEL_GRACE_S,
         breaker: CircuitBreaker | None = None,
         segment_steps: int = segments.FORCED_SEGMENT_STEPS,
+        policy: Any = None,
     ) -> None:
         self.journal = journal
+        #: §20.2: consulted at every live TOOL step's entry, in every run this worker holds.
+        self.policy = policy
         #: N (§18.3): where a forced continuation boundary falls. Configuration, never program input.
         self.segment_steps = segment_steps
         self.resolve = resolve
@@ -177,6 +181,7 @@ class Worker:
             return
 
         program = self.resolve(state.program or row.program)
+        caps = capabilities(self.policy, prior[0].body if prior else None)
         detail = state.suspended_detail if isinstance(state.suspended_detail, dict) else {}
         suspended_at = int(detail.get("step_index", state.next_step_index))
         engine = StepEngine(
@@ -197,6 +202,7 @@ class Worker:
             resolve_program=self.resolve,
             cancel_grace_s=self.cancel_grace,
             breaker=self.breaker,
+            allowed_tools=caps,
         )
         ctx = Ctx(
             engine,
@@ -205,6 +211,8 @@ class Worker:
             args=state.args,
             program_version=lease.program_version,
             tools=self.tools,
+            policy=self.policy,
+            allowed_tools=caps,
         )
         ctx.segment_limit = self.segment_steps
         model = getattr(program, "state_model", None)

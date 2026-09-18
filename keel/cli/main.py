@@ -55,7 +55,8 @@ def _load_app(app_ref: str | None, dsn: str | None) -> Keel:
         module = importlib.import_module(module_name)
         keel = getattr(module, attr or "app")
         if dsn:
-            keel = Keel(dsn, provider=keel.provider, tools=list(keel.tools), programs=list(keel.programs.values()))
+            keel = Keel(dsn, provider=keel.provider, tools=list(keel.tools), programs=list(keel.programs.values()),
+                        policy=keel.policy)
         return keel
     dsn = dsn or os.environ.get("KEEL_DSN")
     if not dsn:

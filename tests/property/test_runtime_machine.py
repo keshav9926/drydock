@@ -28,6 +28,11 @@ Rules, mapped to §12.3 (the fault type each mirrors is in `sim.to_fault_spec`):
     journal_fault           the next n commits at a boundary raise `StoreUnavailable`
     stray_child             a child whose parent is already terminal, for the reaper's liveness rule
 
+§20.2's Policy is drawn with the tools: `gate` moves the gated tools' approvals from the program to
+the Policy (APPROVAL at i, the call at i+1, `require_approval` journaled on both), and `deny` takes
+the last tool out of the capability set — a PolicyDenied refusal, and a delegation that may not pass
+it on. Replay must read the journal, never the Policy, under every other rule.
+
 Delegation's rules are the script's: `delegate` spawns 1–2 children whose own scripts complete, fail
 or violate the contract under `escalate | retry | fail_parent`; a cancel to the parent with children
 open, then time past `cancel_grace`, is the forced takeover.
@@ -97,9 +102,10 @@ OP = st.one_of(
 )
 
 
-def resolve(tools: list[ToolDecl], script: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Tool indices to names. A gated tool is only ever called through its approval, and a child
-    only calls ungated tools, so S7 can hold every application at a gated endpoint to a grant."""
+def resolve(tools: list[ToolDecl], script: list[dict[str, Any]], policy: str = "none") -> list[dict[str, Any]]:
+    """Tool indices to names. A gated tool is only ever called through its approval — the program's,
+    or under `policy="gate"` the Policy's — and a child only calls ungated tools, so S7 can hold
+    every application at a gated endpoint to a grant."""
     ungated = [t.name for t in tools if not t.gated]
 
     def child(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -111,9 +117,9 @@ def resolve(tools: list[ToolDecl], script: list[dict[str, Any]]) -> list[dict[st
         op = dict(op)
         if op["op"] == "tool":
             t = tools[op["tool"] % len(tools)]
-            op.update(tool=t.name, gated=t.gated)
-            if not t.gated:
-                op.pop("expires_in")
+            op.update(tool=t.name, gated=("policy" if policy == "gate" else True) if t.gated else False)
+            if not t.gated or policy == "gate":
+                op.pop("expires_in")  # a Policy gate carries no deadline
         elif op["op"] == "delegate":
             op["child"] = child(op["child"])
         out.append(op)
@@ -138,12 +144,12 @@ class KeelMachine(RuleBasedStateMachine):
 
     @initialize(tools=st.lists(TOOL, min_size=1, max_size=3), script=st.lists(OP, min_size=1, max_size=6),
                 retry=st.sampled_from(("none", "retry")), model_retry=st.sampled_from(("none", "retry")),
-                segment_steps=st.sampled_from((400, 2)))
+                segment_steps=st.sampled_from((400, 2)), policy=st.sampled_from(("none", "gate", "deny")))
     def start(self, tools: list[ToolDecl], script: list[dict[str, Any]], retry: str, model_retry: str,
-              segment_steps: int) -> None:
+              segment_steps: int, policy: str) -> None:
         tools = [replace(t, name=f"t{i}") for i, t in enumerate(tools)]
-        self.sim = Sim(tools, resolve(tools, script), retry=retry, model_retry=model_retry,
-                       segment_steps=segment_steps)
+        self.sim = Sim(tools, resolve(tools, script, policy), retry=retry, model_retry=model_retry,
+                       segment_steps=segment_steps, policy=policy)
 
     # --- the workload progressing ---------------------------------------------------------------
     @precondition(lambda self: any(h.worker.state == "live" for h in self.sim.completable()))
@@ -337,6 +343,33 @@ def test_the_sim_resolves_an_escalated_effect_by_hand(lands: bool) -> None:
         state = fold(sim.events(sim.root))
         assert state.steps[0].state == ("RESOLVED_COMPLETED" if lands else "RESOLVED_FAILED")
         assert state.phase == ("COMPLETED" if lands else "FAILED"), state.phase
+        sim.check()
+        sim.quiesce()
+        sim.check_teardown()
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_the_sim_gates_a_call_through_the_policy(decision: str) -> None:
+    """`policy="gate"` pinned: the Policy, not the program, inserts the APPROVAL at i and binds the
+    call at i+1 — and S7 judges it exactly as it judges a program's gate."""
+    sim = Sim([ToolDecl("t0", cls="EXTERNAL", resolution="probe", dedup=False, gated=True)],
+              [{"op": "tool", "tool": "t0", "gated": "policy"}, {"op": "model"}], policy="gate")
+    try:
+        assert sim.restart_worker("W0")
+        state = fold(sim.events(sim.root))
+        assert state.phase == "WAITING_APPROVAL"
+        assert [(s.kind, s.name) for s in state.steps.values()] == [("APPROVAL", "t0")]
+        sim.deliver(sim.root, decision, "open")
+        assert sim.restart_worker("W1")
+        sim.advance(2)
+        state = fold(sim.events(sim.root))
+        assert state.phase == "COMPLETED", state.phase
+        assert [(s.kind, s.state) for s in state.steps.values()][:2] == [
+            ("APPROVAL", "COMPLETED"), ("TOOL", "COMPLETED" if decision == "approve" else "FAILED"),
+        ]
+        assert sim.world.applied_counts() == ({"t0.call#1": 1} if decision == "approve" else {})
         sim.check()
         sim.quiesce()
         sim.check_teardown()
