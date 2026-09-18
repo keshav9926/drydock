@@ -23,6 +23,8 @@ COMPARED = {"matrix_v0": "compare_keel_vs_langgraph_sync.md", "tier1a": "compare
 
 PAGES: list[list[str]] = [
     *(["report", f"bench/results/{name}", "--out", f"bench/reports/{name}.md"] for name in RESULTS),
+    *(["report", f"bench/results/{name}", "--fmt", "html", "--out", f"bench/reports/html/{name}.html"]
+      for name in RESULTS),
     *(
         ["compare", f"bench/results/{name}", "--a", "keel.*", "--b", "langgraph.sync.*", "--out", f"bench/reports/{page}"]
         for name, page in COMPARED.items()

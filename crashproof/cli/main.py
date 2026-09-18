@@ -325,27 +325,29 @@ def report(
     out_path: Annotated[Path | None, typer.Option("--out")] = None,
     mdd: Annotated[bool, typer.Option("--mdd", help="also echo the MDD tables to stdout")] = False,
 ) -> None:
-    """Fold the rows into cells and render the matrix.
+    """Fold the rows into cells and render the matrix: Markdown, or `--fmt html` for the same page as
+    one self-contained HTML file (§26.4).
 
     `--mdd` echoes §15.7's tables to stdout. It does not gate them: they are in every rendered page
     whatever the flag says (§15.11 rule 6), because "you only ran it thirty times" is an objection
     a reader has while looking at the page.
     """
-    from crashproof.report.markdown import render
+    from crashproof.report import html, markdown
     from crashproof.report.matrix import fold
     from crashproof.runner.store import ResultStore
     from crashproof.stats.ci import MDD_TABLES
 
+    renderers = {"md": markdown.render, "html": html.render}
+    if fmt not in renderers:
+        err.print(f"[red]--fmt is one of {sorted(renderers)}[/]")
+        raise typer.Exit(2)
     rows = list(ResultStore(results).rows())
     if not rows:
         err.print(f"[red]no results in {results}[/]")
         raise typer.Exit(1)
-    if fmt != "md":
-        err.print("[red]only --fmt md is built; html is v1 (§27.9)[/]")
-        raise typer.Exit(2)
-    page = render(fold(rows), workload=rows[0]["workload"], title=results.name,
-                  sources=[(results.as_posix(), rows)])
-    target = out_path or results / "matrix.md"
+    page = renderers[fmt](fold(rows), workload=rows[0]["workload"], title=results.name,
+                          sources=[(results.as_posix(), rows)])
+    target = out_path or results / f"matrix.{fmt}"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf8")
     err.print(f"wrote {target}  ({len(rows)} trials)")
