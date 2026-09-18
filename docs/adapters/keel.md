@@ -102,6 +102,46 @@ nothing deployed — the correct end state, declared on the cell's spec as `depl
 zero times, so S3 does not mistake a refusal for a phantom completion and a deploy under an expired
 wait fails `logical_correctness` for any arm.
 
+## W3 — long horizons
+
+`long_horizon_50` runs as `keel/agents/demo.py::long_horizon`: fifty rounds of `ctx.model` →
+`ctx.tool("kv_put", key="counter", value=i)`, with the workload's cadence read from the run's input —
+`ctx.compact()` and `ctx.plan.complete(...)` every 10 rounds, `ctx.sleep(2)` after the put of 25, and
+`return Continue(state)` every 20. `state` is the program's own `Horizon` model: the round and the
+message list the scripted model decides from. The plan and the compaction summary are Keel's and never
+in it — each boundary's own transaction re-writes the plan as an `init` snapshot and names the latest
+summary by `compact_seq`, which is what C2 rebuilds from. A compaction request carries Keel's
+`COMPACT_SYSTEM` prompt, and `WorkloadProvider` answers it with a summary that is a function of what it
+is asked to summarise; it never selects a script node.
+
+A recovery re-executes from the latest `SEGMENT_STARTED`: the program is called with the boundary's
+state, the step counter at its `first_step_index` (never reset), and `RECOVERY_STARTED` names the
+segment. The sleep is `RUN_WAITING{sleep, wake_at}` with the lease and `runnable_at` both NULL; the
+reaper's timer sweep wakes it, and the step completes when the store's clock says `wake_at` has passed.
+The harness plays a human at every WAITING, so it also "approves" the sleeping run once: Keel drains
+that row as `SIGNAL_IGNORED{unknown_approval}` and parks again with the same `wake_at` — the spurious
+wake a durable timer has to survive, visible in every W3 journal.
+
+Smoke, `bench/specs/w3.yaml`, seed 7, at `4f13bce`; the faults are aimed at the 23rd put, inside
+segment 1 (rounds 20–39, first step 45). One seed is a check that each cell runs and lands where it
+was aimed, not a rate.
+
+| cell | applied / receipts | boundaries (segment, first step) | recovery from segment · replayed steps | plan | sleep, woke − started | result | S1 S3 S5 L1 C1 C2 |
+|---|---|---|---|---|---|---|---|
+| baseline | 50 / 50 | (1, 45), (2, 90) | wakes from 1 · 13 | 5/5 completed | 2.30 s | `counter=49` | all PASS |
+| `kill@after:tool_effect` | 50 / 51 | (1, 45), (2, 90) | ORPHANED from 1 · 6; wakes from 1 · 13 | 5/5 | 2.43 s | `counter=49` | all PASS |
+| `pause_past_ttl@before:tool_call` | 50 / 51 | (1, 45), (2, 90) | ORPHANED from 1 · 6; wakes from 1 · 13 | 5/5 | 2.21 s | `counter=49` | all PASS |
+
+The second receipt in each fault cell is `kv.put#23`, applied once: the re-put after the kill, and the
+zombie's thawed request after the successor's, both deduplicated by the receiver on the full value
+(F0, no key). The recovery replayed the 6 steps of segment 1 before put 23, not the 51 before it in the
+run — the claim §10.8 exists to make.
+
+**N/A for W3, with the reason.** Temporal continue-as-new (§29.2's second arm): the Temporal adapter
+is `agent_code = pydantic_ai` only, §13.5 puts W3 outside that path ("continuation semantics differ
+per runtime"), and a native Temporal adapter is V2. DBOS and Restate: until an adapter README cites a
+continuation primitive (§27.7). LangGraph: no continuation primitive in the fact sheet.
+
 ## Pins
 
 `tool.timeout = 1 s`, `lease_ttl = 2 s`, heartbeat `≈ 0.67 s`, `attempt_deadline = started_at + 1 s`,

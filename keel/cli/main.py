@@ -424,6 +424,11 @@ def state(
             "projection_hash": st.projection_hash(),
             "result": st.result,
             "error": st.error,
+            # §16.1's memory snapshot, derived rather than stored: the plan and context projections
+            # at this seq, and the latest continuation boundary's state blob.
+            "plan": st.plan,
+            "context": st.context,
+            "segment": st.segment,
             "steps": list(st.steps.values()),
         }))
 
