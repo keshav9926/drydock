@@ -115,6 +115,24 @@ class ModelBindingChanged(Body):
     previous: dict[str, Any] = Field(default_factory=dict)
 
 
+class SegmentStarted(Body):
+    """A continuation boundary (§4.9, §10.8): re-execution starts here, with `state_blob` as the
+    program's input and the step counter at `first_step_index` — never reset. One event in one fenced
+    transaction (with the plan snapshot after it), so a torn boundary is impossible; a second with the
+    same `segment_no` is refused by `events_segment_once`.
+
+    `compact_seq` is the `seq` of the latest COMPACT outcome before the boundary, None if the run has
+    never compacted — a section-local extension of the declared fields (§10.8) that keeps the context
+    projection rebuildable from the boundary alone."""
+
+    type: Literal["SEGMENT_STARTED"] = "SEGMENT_STARTED"
+    segment_no: int
+    first_step_index: int
+    program_version: str
+    state_blob: Any = None
+    compact_seq: int | None = None
+
+
 # --- the inbox (§4.10, §5.6) --------------------------------------------------
 class SignalReceived(Body):
     """Written at the drain, in the same fenced transaction that sets `signals.consumed_seq`.
@@ -328,6 +346,7 @@ EventBody = Annotated[
     | RunPaused
     | RunPauseLifted
     | ModelBindingChanged
+    | SegmentStarted
     | ApprovalRequested
     | ApprovalDecided
     | StepCancelled

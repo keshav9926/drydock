@@ -45,6 +45,10 @@ DELEGATION_INVARIANTS = ("S8",)
 #: C1 arrives with replay as a first-class mode (v1, day 5). Listed apart from the MVP set because
 #: a cell that never had it is not missing a column — it is a cell from before the column existed.
 CONSISTENCY_INVARIANTS = ("C1",)
+#: C2 arrives with continuation segments (v1, week 3). Kept apart from C1 and out of the matrix's
+#: columns for the same reason: a run that never crossed a boundary prints N/A, and no published
+#: page had one.
+SEGMENT_INVARIANTS = ("C2",)
 
 
 @dataclass(slots=True)
@@ -156,6 +160,7 @@ def verify(facts: TrialFacts) -> Verdicts:
     _s7_approval_binding(facts, v)
     _s8_children_before_parent(facts, v)
     _c1_replay_determinism(facts, v)
+    _c2_segment_equivalence(facts, v)
     return v
 
 
@@ -286,6 +291,97 @@ def _c1_replay_determinism(f: TrialFacts, v: Verdicts) -> None:
     stopped = f.replay.get("stopped")
     v.add("C1", "PASS", f"replayed {f.replay.get('replayed_steps')} steps"
           + (f"; stopped at {stopped}" if stopped else ""))
+
+
+def _c2_segment_equivalence(f: TrialFacts, v: Verdicts) -> None:
+    """`fold(state at SEGMENT_STARTED + tail) == fold(all events)` (§12.4, §10.8), at every boundary.
+
+    A boundary promises that re-execution needs nothing before it: the program's input is the blob,
+    and the Keel-owned projections — the plan and the context — are rebuildable from the boundary
+    alone. So each is folded twice and the two must agree. From seq 1 the boundary's carriers are
+    *not* trusted: its plan snapshot is skipped (every op before it is folded instead) and the context
+    resets to the summary the fold itself last saw. From the boundary they are the seed: the snapshot
+    is the plan, and `compact_seq` names the summary. A stale snapshot, a `compact_seq` naming the
+    wrong compaction, or a step counter that reset each make the two differ.
+
+    The fold is §16.2's, read from the exported journal: the invariants are runtime-neutral and do
+    not import the runtime. N/A without a journal, and N/A for a run that never crossed a boundary.
+    """
+    if f.journal is None:
+        v.add("C2", "N/A", "the runtime exposes no journal")
+        return
+    boundaries = [e for e in f.journal if e["type"] == "SEGMENT_STARTED"]
+    if not boundaries:
+        v.add("C2", "N/A", "no continuation boundary in this run")
+        return
+    whole = _keel_owned(f.journal, from_boundary=False)
+    for seg in boundaries:
+        body = seg["body"]
+        before = [e["step_index"] for e in f.journal if e["seq"] < seg["seq"] and e["type"] == "STEP_INTENDED"]
+        after = [e["step_index"] for e in f.journal if e["seq"] > seg["seq"] and e["type"] == "STEP_INTENDED"]
+        if body["first_step_index"] != max(before, default=-1) + 1 or any(i < body["first_step_index"] for i in after):
+            v.add("C2", "FAIL", f"segment {body['segment_no']}: the step counter did not continue across it",
+                  {"segment_no": body["segment_no"], "first_step_index": body["first_step_index"],
+                   "last_before": max(before, default=-1)})
+            return
+        rebuilt = _keel_owned([e for e in f.journal if e["seq"] >= seg["seq"]], from_boundary=True, journal=f.journal)
+        if rebuilt != whole:
+            which = [k for k in ("plan", "context") if rebuilt[k] != whole[k]]
+            v.add("C2", "FAIL", f"segment {body['segment_no']}: {', '.join(which)} from the boundary != from seq 1",
+                  {"segment_no": body["segment_no"], "from_boundary": rebuilt, "from_seq_1": whole})
+            return
+    v.add("C2", "PASS", f"{len(boundaries)} boundar{'y' if len(boundaries) == 1 else 'ies'}, each rebuildable "
+          "from itself; step indices continue")
+
+
+def _keel_owned(
+    events: list[dict[str, Any]], *, from_boundary: bool, journal: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """The plan and the context projection over `events` (§16.2). With `from_boundary` the first event
+    is a SEGMENT_STARTED whose carriers seed the fold; without, they are ignored and re-derived."""
+    plan: list[dict[str, Any]] = []
+    context: list[dict[str, Any]] = []
+    summary: dict[str, Any] | None = None
+    steps: dict[int, tuple[str, str]] = {}
+    by_seq = {e["seq"]: e for e in journal or []}
+    for e in events:
+        t, b = e["type"], e["body"]
+        if t == "RUN_CREATED":
+            args = b.get("args")
+            messages = args.get("messages") if isinstance(args, dict) else None
+            context = [dict(m) for m in messages] if isinstance(messages, list) else []
+        elif t == "STEP_INTENDED":
+            steps[b["step_index"]] = (b["kind"], b["name"])
+        elif t == "PLAN_UPDATED":
+            if b.get("step_index") is None and not from_boundary:
+                continue  # a boundary's snapshot: from seq 1 the ops before it are folded instead
+            if b["op"] == "init":
+                plan = [dict(i) for i in b["diff"]["items"]]
+            elif b["op"] == "add":
+                plan = [*plan, dict(b["diff"]["item"])]
+            elif b["op"] == "complete":
+                plan = [{**i, "status": "completed"} if i["id"] == b["diff"]["id"] else i for i in plan]
+        elif t == "SEGMENT_STARTED":
+            if from_boundary:
+                named = by_seq.get(b.get("compact_seq")) if b.get("compact_seq") is not None else None
+                summary = _summary(named["body"].get("result")) if named else None
+            context = [dict(summary)] if summary else []
+        elif t == "STEP_COMPLETED" or (t == "STEP_RESOLVED" and b.get("resolution") == "RESOLVED_COMPLETED"):
+            kind, name = steps.get(b["step_index"], ("", ""))
+            result = b.get("result") if t == "STEP_COMPLETED" else (b.get("evidence") or {}).get("result")
+            if kind == "COMPACT":
+                summary = _summary(result)
+                context = [dict(summary)]
+            elif kind == "MODEL":
+                message = result.get("message") if isinstance(result, dict) else None
+                context = [*context, dict(message or {"role": "assistant", "content": (result or {}).get("text", "")})]
+            elif kind == "TOOL":
+                context = [*context, {"role": "tool_result", "content": {"tool": name, "result": result}}]
+    return {"plan": plan, "context": context}
+
+
+def _summary(result: Any) -> dict[str, Any]:
+    return {"role": "summary", "content": result.get("text", "") if isinstance(result, dict) else str(result)}
 
 
 def _s7_approval_binding(f: TrialFacts, v: Verdicts) -> None:

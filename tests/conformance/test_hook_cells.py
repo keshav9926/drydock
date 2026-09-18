@@ -97,6 +97,9 @@ WINDOW: dict[str, tuple[str, str]] = {
     # so the reaper reclaims the park as a wait, never as an abandoned attempt.
     "before:child_spawn": ("no row", "untouched"),
     "during:child_wait": ("running", "untouched"),
+    # Continuation segments (§4.9). Before the boundary's one transaction nothing of it exists — no
+    # SEGMENT_STARTED, no plan snapshot — while the segment it closes has already put to the World.
+    "before:segment_write": ("no segment", "sent"),
 }
 
 #: The boundaries only a gated run reaches. Their cells run `gated_tool_chain`, park, are granted
@@ -109,6 +112,11 @@ APPROVAL_STEP = 0
 #: S8 is judged from the whole tree of journals, which only these cells hold.
 DELEGATION_BOUNDARIES = ("before:child_spawn", "during:child_wait")
 DELEGATE_STEP = 0
+#: The boundary only a continuing run reaches. Its cells run `long_horizon` (W3's Keel form) at four
+#: rounds with a `Continue(state)` after two, a compaction and a plan item per two — so the boundary
+#: under test carries a plan snapshot and a `compact_seq`, and C2 has something to rebuild.
+SEGMENT_BOUNDARIES = ("before:segment_write",)
+SEGMENT_ARGS = {"iterations": 4, "continue_every": 2, "compact_every": 2, "plan_every": 2, "sleep_at": None}
 
 #: A fault that is not a crash leaves a different window, and the difference is the point rather
 #: than an exception to the rule. An ordinary `raise` before the effect runs is a tool failure: the
@@ -167,6 +175,9 @@ FAULTS: dict[str, tuple[str, ...]] = {
     # for the same reason the approval wait does.
     "before:child_spawn": ("crash", "journal_error"),
     "during:child_wait": ("crash",),
+    # §14.5 names `os._exit(137)` and `blob_write_fail`; in-process both are a `StoreUnavailable`
+    # raised before the boundary's transaction, which is exactly where a failed blob write lands.
+    "before:segment_write": ("crash", "journal_error"),
 }
 
 #: Invariants every cell is judged on, whatever its boundary. The same functions the benchmark
@@ -174,7 +185,7 @@ FAULTS: dict[str, tuple[str, ...]] = {
 #: judge is the mitigation (§28.6).
 #: S7 and S8 are in the grid for every cell and N/A wherever the workload gates or delegates
 #: nothing — the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
-JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "L1", "C1")
+JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "L1", "C1", "C2")
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +213,7 @@ CELLS = [
     for klass in (
         ("GATED",) if boundary in GATED_BOUNDARIES
         else ("DELEGATED",) if boundary in DELEGATION_BOUNDARIES
+        else ("SEGMENTED",) if boundary in SEGMENT_BOUNDARIES
         else tuple(UNDER_TEST)
     )
 ]
@@ -640,6 +652,112 @@ async def run_delegation_cell(cell: Cell) -> Result:
         await server.stop()
 
 
+async def run_segment_cell(cell: Cell) -> Result:
+    """`before:segment_write` (§4.9, §14.5): the instant before SEGMENT_STARTED and its plan snapshot
+    commit, on the boundary `long_horizon` asks for with `Continue(state)` after two rounds.
+
+    The claims: nothing of the boundary exists at the fault (a torn boundary is impossible); the
+    successor replays the closed segment from memo, the program returns the same `Continue(state)`,
+    and the boundary is written once; step indices continue across it; every put applied once; and
+    C2 — the plan and the context rebuilt from the boundary alone equal the fold from seq 1.
+    """
+    from crashproof.world.services import Endpoint, World
+    from keel.providers.scripted import Decision
+
+    result = Result(cell=cell)
+    rounds = int(SEGMENT_ARGS["iterations"])
+    world = World([Endpoint(id="kv.put", service="kv", kind="write", dedup=True, natural=True,
+                            logical_identity=("key", "value"))])
+    server = WorldServer(world, port=0)
+    await server.start()
+    previous_url = demo.WORLD_URL
+    demo.WORLD_URL = server.base_url
+    try:
+        clock = FakeClock()
+        k = Keel(
+            journal=MemoryJournal(clock=clock),
+            provider=ScriptedProvider(
+                [Decision(tool="kv_put", args={"key": "counter", "value": i}) for i in range(rounds)]
+                + [Decision(text="counted")]
+            ),
+            tools=[demo.kv_put],
+            programs=[demo.long_horizon],
+            clock=clock,
+        )
+        handle = await k.start(demo.long_horizon, dict(SEGMENT_ARGS))
+        landed: list[str] = []
+        _arm(cell, -1, landed)  # the boundary carries no step index: its first write is the one
+        lease = await k.journal.claim("w1", timedelta(seconds=TTL))
+        assert lease is not None
+        await _work(k, "w1", lease)
+        hooks.reset()
+        result.fired = bool(landed)
+        result.landed_at = landed[0] if landed else ""
+
+        state = fold(await k.events(handle.run_id))
+        journal = "no segment" if state.segment is None else f"segment {state.segment.segment_no}"
+        result.window = f"{journal}/{'sent' if world.receipts else 'untouched'}"
+        result.window_ok = not result.fired or result.window == "/".join(WINDOW[cell.boundary])
+
+        clock.advance(TTL + 2)
+        await k.journal.reap()
+        successor = await k.journal.acquire(handle.run_id, "w2", timedelta(seconds=TTL))
+        if successor is not None:
+            result.recovered = True
+            await _work(k, "w2", successor)
+
+        events = await k.events(handle.run_id)
+        final = fold(events)
+        result.status = final.phase
+        result.disposal = f"segments={sum(1 for e in events if e.type == 'SEGMENT_STARTED')}"
+        result.applied = sum(world.applied_counts().values())
+        result.receipts = len(world.receipts)
+        required = tuple(f"kv.put#{i + 1}" for i in range(rounds))
+
+        replay = await run_verify(k.journal, handle.run_id, demo.long_horizon, tools=k.tools)
+        verdicts = invariants.verify(
+            invariants.TrialFacts(
+                world_receipts=[
+                    {"endpoint": r.endpoint, "effect_key": r.effect_key,
+                     "logical_identity": r.logical_identity, "ts": r.ts}
+                    for r in world.receipts
+                ],
+                world_applied=world.applied_counts(),
+                sut_committed={
+                    e.external_ref
+                    for e in (await k.journal.effects(handle.run_id))
+                    if e.status in ("COMMITTED", "RESOLVED_COMMITTED") and e.external_ref
+                },
+                journal=[
+                    {"seq": e.seq, "type": e.type, "ts": e.ts.isoformat(),
+                     "step_index": e.step_index, "attempt_no": e.attempt_no,
+                     "body": e.body.model_dump(mode="json")}
+                    for e in events
+                ],
+                status=_status(final.phase),
+                required_effects=required,
+                claims=KeelAdapter.claims,
+                effect_class="IDEMPOTENT",
+                faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
+                restarts=1 if result.recovered else 0,
+                replay=replay.as_dict(),
+            )
+        )
+        result.verdicts = {n: v for n, v in verdicts.as_dict().items() if n in JUDGED}
+        result.details = {n: f.detail for n, f in verdicts.findings.items() if n in JUDGED}
+        # The cell's own claims beyond the verifier's: one boundary, written once, and every round
+        # applied once — a second SEGMENT_STARTED{1} would be refused, a re-put deduplicated.
+        segments = [e.body.segment_no for e in events if e.type == "SEGMENT_STARTED"]
+        if segments != [1] or world.applied_counts() != dict.fromkeys(required, 1):
+            result.verdicts["C2"] = "FAIL"
+            result.details["C2"] = f"segments {segments}, applied {world.applied_counts()}"
+        return result
+    finally:
+        demo.WORLD_URL = previous_url
+        hooks.reset()
+        await server.stop()
+
+
 def _identity(effect_class: str, variant: str) -> str:
     """The logical identity of the effect this cell aims at. The two bands run against different
     endpoints — `issues.create` honours nothing, `issues.upsert` deduplicates — so the identity is
@@ -689,6 +807,7 @@ async def test_cell(cell: Cell) -> None:
     runner = (
         run_gated_cell if cell.boundary in GATED_BOUNDARIES
         else run_delegation_cell if cell.boundary in DELEGATION_BOUNDARIES
+        else run_segment_cell if cell.boundary in SEGMENT_BOUNDARIES
         else run_cell
     )
     result = await runner(cell)
@@ -771,14 +890,15 @@ def render() -> str:
         f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed. "
         f"Regenerate with `uv run pytest tests/conformance -q`.",
         "",
-        "Fifteen of the seventeen boundaries exist: the ten of the write path (§28.6), the three the",
-        "inbox and approvals brought with them (§4.10), and the two delegation brought (§4.11). The",
-        "two remaining — `before:segment_write` and `during:stream(chunk=k)`, week 3 — are absent",
-        "rather than stubbed, so a spec naming one is refused instead of firing nothing. §29.2's",
-        "*all seventeen hook boundaries* is the honest completion date.",
+        "Sixteen of the seventeen boundaries exist: the ten of the write path (§28.6), the three the",
+        "inbox and approvals brought with them (§4.10), the two delegation brought (§4.11), and the",
+        "continuation boundary (§4.9). The remaining one — `during:stream(chunk=k)`, with streaming —",
+        "is absent rather than stubbed, so a spec naming it is refused instead of firing nothing.",
+        "§29.2's *all seventeen hook boundaries* is the honest completion date.",
         "",
         "S8 is judged here and nowhere else yet: these cells hold every journal in the tree, and the",
         "matrix's collector reads one per trial, so the matrix prints N/A with that reason (§15.11).",
+        "C2 is N/A wherever the workload never crosses a continuation boundary.",
         "",
     ]
     return "\n".join(lines)

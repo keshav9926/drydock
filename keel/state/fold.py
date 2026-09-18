@@ -182,6 +182,18 @@ class Charged:
 
 
 @dataclass(slots=True)
+class SegmentState:
+    """The latest continuation boundary (§10.8): where re-execution starts and what it starts from."""
+
+    segment_no: int
+    first_step_index: int
+    seq: int
+    program_version: str
+    state_blob: Any = None
+    compact_seq: int | None = None
+
+
+@dataclass(slots=True)
 class RunState:
     run_id: UUID | None = None
     program: str = ""
@@ -217,6 +229,13 @@ class RunState:
     context: list[dict[str, Any]] = field(default_factory=list)
     #: The seq of the latest COMPACT step's outcome, None until the run has compacted (§10.8).
     compact_seq: int | None = None
+    #: The latest COMPACT outcome as the message it leaves behind: what a boundary resets context to.
+    summary: dict[str, Any] | None = None
+    #: The latest continuation boundary, and the Keel-owned projections as it left them — the plan
+    #: snapshot written with it and the context it reset to. A recovery seeds `ctx` from these.
+    segment: SegmentState | None = None
+    segment_plan: list[dict[str, Any]] = field(default_factory=list)
+    segment_context: list[dict[str, Any]] = field(default_factory=list)
 
     def children_of(self, step_index: int) -> list[ChildState]:
         """The delegations one DELEGATE step spawned, in ordinal order."""
@@ -370,6 +389,21 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.signals_drained += 1
     elif t == "PLAN_UPDATED":
         st.plan = _plan.apply(st.plan, b.op, b.diff)
+        if b.step_index is None:  # the snapshot a boundary's own transaction writes (§10.8)
+            st.segment_plan = [dict(i) for i in st.plan]
+    elif t == "SEGMENT_STARTED":
+        # Phase unchanged; step indices continue. The context resets to the latest summary, which
+        # is what makes it rebuildable from the boundary alone (§10.8) — C2 checks the two agree.
+        st.segment = SegmentState(
+            segment_no=b.segment_no,
+            first_step_index=b.first_step_index,
+            seq=ev.seq,
+            program_version=b.program_version,
+            state_blob=b.state_blob,
+            compact_seq=b.compact_seq,
+        )
+        st.context = [dict(st.summary)] if st.summary else []
+        st.segment_context = [dict(m) for m in st.context]
     elif t == "APPROVAL_REQUESTED":
         st.approvals[b.approval_id] = Approval(
             approval_id=b.approval_id,
@@ -453,6 +487,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.context = _context.apply(st.context, s.kind, s.name, b.result)
         if s.kind == "COMPACT":
             st.compact_seq = ev.seq
+            st.summary = _context.summary(b.result)
     elif t == "STEP_FAILED":
         s = st.steps[b.step_index]
         s.state = FAILED

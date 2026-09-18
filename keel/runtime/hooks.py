@@ -35,11 +35,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-#: The fifteen boundaries whose mechanisms exist today: the ten of the write path (§28.6), the
-#: three the inbox and approvals brought, and the two delegation brought. The remaining two —
-#: `before:segment_write` and `during:stream(chunk=k)` — arrive with segments and streaming in
-#: week 3 and are absent rather than stubbed, so a spec naming one is refused instead of firing
-#: nothing.
+#: The sixteen boundaries whose mechanisms exist today: the ten of the write path (§28.6), the
+#: three the inbox and approvals brought, the two delegation brought, and the continuation boundary.
+#: The remaining one — `during:stream(chunk=k)` — arrives with streaming and is absent rather than
+#: stubbed, so a spec naming it is refused instead of firing nothing.
 BOUNDARIES = (
     "before:intent_commit",
     "after:intent_commit",
@@ -63,6 +62,10 @@ BOUNDARIES = (
     # `during:child_wait` is the park on children, durable and released in that same transaction.
     "before:child_spawn",
     "during:child_wait",
+    # Continuation segments (§4.9, §18.3): the instant before the one transaction that commits
+    # SEGMENT_STARTED and its plan snapshot. A crash there re-executes the previous segment, whose
+    # memoized outcomes reproduce the same boundary; a torn boundary is impossible.
+    "before:segment_write",
 )
 
 

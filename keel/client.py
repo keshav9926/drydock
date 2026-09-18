@@ -43,12 +43,21 @@ class Program:
     declared_version: str
     version: str
     entrypoint: str
+    #: The Pydantic v2 model of `Continue(state)` (§18.3). None: the program never continues, so a
+    #: run of it replays from step 0 however long it gets.
+    state_model: type[BaseModel] | None = None
 
-    async def __call__(self, ctx: Any, args: Any) -> Any:
-        return await self.fn(ctx, args)
+    async def __call__(self, ctx: Any, args: Any, state: Any = None) -> Any:
+        """`prog(ctx, args)` in the first segment; `prog(ctx, args, state)` from a boundary."""
+        return await (self.fn(ctx, args) if state is None else self.fn(ctx, args, state))
 
 
-def program(*, name: str, version: str = "1.0") -> Callable[[Callable[..., Any]], Program]:
+def program(
+    *, name: str, version: str = "1.0", state: type[BaseModel] | None = None
+) -> Callable[[Callable[..., Any]], Program]:
+    """Register a program. `state=` declares the model a `Continue(state)` carries across a
+    continuation boundary; its JSON schema is recorded in `programs.state_schema` (§5.8)."""
+
     def wrap(fn: Callable[..., Any]) -> Program:
         p = Program(
             fn=fn,
@@ -56,6 +65,7 @@ def program(*, name: str, version: str = "1.0") -> Callable[[Callable[..., Any]]
             declared_version=version,
             version=program_version(version, fn),
             entrypoint=f"{fn.__module__}:{fn.__qualname__}",
+            state_model=state,
         )
         PROGRAMS[name] = p
         return p
@@ -132,6 +142,7 @@ class Keel:
                 entrypoint=p.entrypoint,
                 keel_version=KEEL_VERSION,
                 tools=self.tools.manifest(),
+                state_schema=p.state_model.model_json_schema() if p.state_model else None,
             )
 
     def resolve(self, program_ref: Program | str) -> Program:

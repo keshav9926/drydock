@@ -28,10 +28,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from keel.core.errors import Cancelled, NondeterminismDetected, PromptDrift, StepFailed
+from keel.core.errors import Cancelled, NondeterminismDetected, PromptDrift, StateSchemaMismatch, StepFailed
 from keel.core.hashing import canonical_json
 from keel.journal.protocol import ReplayRow
 from keel.replay.determinism import logical_projection, logical_projection_hash
+from keel.runtime import segments
 from keel.runtime.ctx import Ctx
 from keel.runtime.steps import StepEngine, StopReplay, Suspended
 from keel.state.fold import RunState, fold
@@ -118,6 +119,7 @@ async def verify(
     tools: Any = None,
     expected_projection_hash: str | None = None,
     requested_by: str | None = None,
+    state_model: Any = None,
 ) -> VerifyResult:
     """One VERIFY pass. `program` is the *current* code; `journal` is the recorded past.
 
@@ -148,8 +150,18 @@ async def verify(
         tools=tools,
     )
 
+    # From the latest continuation boundary, as RECOVER does (§10.8, §18.8): its state validated as
+    # the program's declared model — a schema break is this pass's answer, not an exception.
+    model = state_model if state_model is not None else getattr(program, "state_model", None)
+    seg_state = None
     try:
-        await program(ctx, ctx.args)
+        if state.segment is not None:
+            seg_state = segments.restore(model, state.segment.state_blob)
+            ctx.enter_segment(state.segment, state.segment_plan, state.segment_context)
+        await segments.run(program, ctx, ctx.args, seg_state, model)
+    except StateSchemaMismatch as exc:
+        out.ok = False
+        out.error = f"StateSchemaMismatch: {exc}"
     except StopReplay as stop:
         out.live_from_step = stop.step_index
         out.stopped = None if stop.reason == "live_from_step" else stop.reason
@@ -221,6 +233,8 @@ def _result_code(out: VerifyResult) -> str:
     later reader consults and "passed, but the prompt moved" is a different fact from "passed"."""
     if out.diff is not None:
         return "NONDETERMINISM"
+    if not out.ok and (out.error or "").startswith("StateSchemaMismatch"):
+        return "STATE_SCHEMA_MISMATCH"
     if not out.ok:
         return "ERROR"
     return "PROMPT_DRIFT" if out.drift else "PASS"

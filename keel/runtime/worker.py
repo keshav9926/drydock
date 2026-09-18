@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from collections.abc import Callable
 from typing import Any
 
-from keel.core.errors import Cancelled, Fenced, NondeterminismDetected, StepFailed
+from keel.core.errors import Cancelled, Fenced, NondeterminismDetected, StateSchemaMismatch, StepFailed
 from keel.core.ids import RunId
 from keel.events import (
     RecoveryCompleted,
@@ -33,6 +33,7 @@ from keel.runtime import hooks
 from keel.runtime.ctx import Ctx
 from keel.runtime.breaker import CircuitBreaker
 from keel.runtime.delegation import MAX_DELEGATION_DEPTH, child_result_signal, usage_of
+from keel.runtime import segments
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.steps import Abandon, Drain, Parked, Paused, StepEngine, Suspended, _waits
 from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S
@@ -76,8 +77,11 @@ class Worker:
         model_timeout_s: float = 60.0,
         cancel_grace: float = DEFAULT_CANCEL_GRACE_S,
         breaker: CircuitBreaker | None = None,
+        segment_steps: int = segments.FORCED_SEGMENT_STEPS,
     ) -> None:
         self.journal = journal
+        #: N (§18.3): where a forced continuation boundary falls. Configuration, never program input.
+        self.segment_steps = segment_steps
         self.resolve = resolve
         self.provider = provider
         self.tools = tools
@@ -140,6 +144,12 @@ class Worker:
             # anything else woke a run that stays paused or suspended.
             pending = await journal.pending_signals(lease.run_id)
             cause = "RESUME" if any(s.type == "resume" for s in pending) else "WAKE"
+        # §7.8 step 2 before step 3: the journal head and the latest boundary are read first, because
+        # the first append names the segment re-execution will start from.
+        prior = await journal.read(lease.run_id)
+        from_segment = next(
+            (e.body.segment_no for e in reversed(prior) if e.type == "SEGMENT_STARTED"), 0
+        )
         try:
             async with journal.append(lease) as tx:
                 started_seq = await tx.append(
@@ -147,7 +157,7 @@ class Worker:
                         lease_epoch=lease.epoch,
                         cause=cause,
                         from_seq=lease.next_seq - 1,
-                        from_segment=0,
+                        from_segment=from_segment,
                     )
                 )
         except (Fenced, StoreUnavailable) as exc:
@@ -158,7 +168,7 @@ class Worker:
             return
         await journal.set_recovery(lease.run_id, lease.epoch, started_seq=started_seq, cause=cause)
 
-        events = await journal.read(lease.run_id)
+        events = prior + await journal.read(lease.run_id, from_seq=prior[-1].seq if prior else 0)
         state = fold(events)
         if state.terminal:
             await self._release(lease, phase=state.phase)
@@ -195,6 +205,22 @@ class Worker:
             program_version=lease.program_version,
             tools=self.tools,
         )
+        ctx.segment_limit = self.segment_steps
+        model = getattr(program, "state_model", None)
+        seg_state = None
+        if state.segment is not None and state.phase != "SUSPENDED":
+            # Re-execution starts at the latest boundary (§10.8): its state, validated as the
+            # program's declared model *now*, before any step — so a deploy that broke the schema
+            # fails loudly on every boundary run it touches, and the operator redeploys (§18.3).
+            try:
+                seg_state = segments.restore(model, state.segment.state_blob)
+            except StateSchemaMismatch as exc:
+                detail = {"segment_no": state.segment.segment_no, "error": str(exc)}
+                await self._finish(
+                    engine, lease, RunSuspended(reason="state_schema_mismatch", detail=detail), "SUSPENDED"
+                )
+                return
+            ctx.enter_segment(state.segment, state.segment_plan, state.segment_context)
         if state.phase == "SUSPENDED":
             # Woken without a `resume`: drain, act on `cancel`, and park again — never re-execute,
             # which would only suspend again and leave the waking row unconsumed (§7.2.1).
@@ -203,14 +229,14 @@ class Worker:
         elif cause == "RESUME" and row is not None and row.phase == "SUSPENDED":
             # Lifted: consume the inbox before replaying, or a run that suspends again on the same
             # step would be claimed for ever by the `resume` that lifted it.
-            async def program(ctx: Any, args: Any, _real: Any = program, _at: int = suspended_at) -> Any:
+            async def program(ctx: Any, args: Any, *state: Any, _real: Any = program, _at: int = suspended_at) -> Any:
                 await engine.drain_before_resuming(_at)
-                return await _real(ctx, args)
+                return await _real(ctx, args, *state)
 
         heart = asyncio.create_task(self._heartbeat(lease))
         t0 = time.monotonic()
         try:
-            await self._run_program(program, ctx, engine, lease, state)
+            await self._run_program(program, ctx, engine, lease, state, seg_state, model)
         finally:
             heart.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -219,10 +245,14 @@ class Worker:
             lease.run_id, lease.epoch, replay_ms=int((time.monotonic() - t0) * 1000)
         )
 
-    async def _run_program(self, program: Any, ctx: Ctx, engine: StepEngine, lease: Lease, state: Any) -> None:
+    async def _run_program(
+        self, program: Any, ctx: Ctx, engine: StepEngine, lease: Lease, state: Any,
+        seg_state: Any = None, model: Any = None,
+    ) -> None:
         journal = self.journal
         try:
-            result = await program(ctx, ctx.args)
+            # From the latest boundary's state (or the top), through every `Continue` (§18.3).
+            result = await segments.run(program, ctx, ctx.args, seg_state, model)
         except Suspended as exc:
             await self._finish(engine, lease, RunSuspended(reason=exc.reason, detail=exc.detail), "SUSPENDED")
             return

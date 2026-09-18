@@ -5,11 +5,13 @@ from keel.core.protocols import EffectClass, Idempotency, Modifier, StepKind
 from keel.core.versions import KEEL_VERSION
 from keel.effects.registry import ToolCtx, ToolRegistry, tool
 from keel.journal.memory import MemoryJournal
+from keel.runtime.segments import Continue
 
 __version__ = KEEL_VERSION
 
 __all__ = [
     "Budget",
+    "Continue",
     "EffectClass",
     "Idempotency",
     "Keel",

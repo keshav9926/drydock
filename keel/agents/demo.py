@@ -25,11 +25,14 @@ from http.client import HTTPConnection
 from typing import Any
 from urllib.parse import urlsplit
 
+from pydantic import BaseModel
+
 from keel.client import Keel, program
 from keel.core.protocols import EffectClass, Idempotency, ProbeResult
 from keel.effects.registry import ToolCtx, tool
 from keel.providers.scripted import Decision, ScriptedProvider
 from keel.runtime.delegation import Delegation
+from keel.runtime.segments import Continue
 
 WORLD_URL = os.environ.get("KEEL_WORLD_URL", "http://127.0.0.1:8600")
 VARIANT = os.environ.get("KEEL_DEMO_VARIANT", "EXTERNAL")
@@ -212,6 +215,65 @@ async def orchestrator(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@tool(effect=EffectClass.IDEMPOTENT, timeout=1.0, idempotency=Idempotency.NATURAL, name="kv_put")
+async def kv_put(args: dict[str, Any], tctx: ToolCtx) -> dict[str, Any]:
+    """A PUT of the full value: idempotent by content at a receiver that dedups on it (W3's `kv.put`,
+    `dedup: true, natural: true`), so a re-put after a crash applies once and presents no key."""
+    return await _call("kv.put", args)
+
+
+class Horizon(BaseModel):
+    """W3's program state: where the loop is, and the conversation the model decides from. The plan
+    and the compaction summary are not here — they are Keel's, re-projected at every boundary."""
+
+    i: int = 0
+    messages: list[dict[str, Any]] = []
+
+
+@program(name="long_horizon", version="1.0", state=Horizon)
+async def long_horizon(ctx: Any, args: dict[str, Any], state: Horizon | None = None) -> dict[str, Any]:
+    """W3 `long_horizon_50`, the Keel form (§14.1): `iterations` rounds of model → `kv_put(counter, i)`;
+    a compaction every `compact_every` rounds and a plan item completed every `plan_every`; a durable
+    sleep of `sleep_s` after the put of `sleep_at`; and `Continue(state)` every `continue_every` rounds.
+
+    The cadence is the run's input, identical for every arm, so the program is one program. The model
+    decides from the program's own message list, carried in `state` across boundaries — a compacted
+    context would reset the answered-tools key the scripted model is a pure function of, and the
+    summary is Keel's to keep, not the program's (§10.8).
+    """
+    n = int(args.get("iterations", 50))
+    per = int(args.get("plan_every", 10))
+    compact_every = int(args.get("compact_every") or 0)
+    continue_every = int(args.get("continue_every") or 0)
+    sleep_at = args.get("sleep_at")
+    state = state or Horizon(messages=[{"role": "user", "content": str(args.get("task", "count"))}])
+    if state.i == 0:
+        await ctx.plan.init([f"iterations {k}-{min(k + per, n) - 1}" for k in range(0, n, per)])
+    while state.i < n:
+        ctx.segment_point(state)  # a safe point: `state` restarts the loop here (§18.3)
+        resp = await ctx.model(state.messages, name="decide")
+        if not resp.tool_calls:
+            break
+        call = resp.tool_calls[0]
+        result = await ctx.tool(call.name, **call.args)
+        state.messages.append({"role": "tool_result", "content": {"tool": call.name, "result": result}})
+        done, state.i = state.i, state.i + 1
+        if compact_every and state.i % compact_every == 0:
+            await ctx.compact()
+        if state.i % per == 0:
+            await ctx.plan.complete(ctx.plan.items[state.i // per - 1]["id"])
+        if sleep_at is not None and done == int(sleep_at):
+            await ctx.sleep(float(args.get("sleep_s", 2.0)))
+        if continue_every and state.i % continue_every == 0 and state.i < n:
+            return Continue(state)
+    final = await ctx.model(state.messages, name="decide")
+    return {
+        "answer": final.text,
+        "iterations": state.i,
+        "plan_completed": sum(1 for item in ctx.plan.items if item["status"] == "completed"),
+    }
+
+
 SCRIPT = [
     Decision(text="searching", tool="search", args={"q": "flaky test in ci"}),
     Decision(
@@ -234,8 +296,8 @@ def build(dsn: str | None = None, *, variant: str = VARIANT) -> Keel:
     return Keel(
         dsn or os.environ.get("KEEL_DSN", "postgresql://keel:keel@localhost:5432/keel"),
         provider=ScriptedProvider(SCRIPT),
-        tools=[search, create_issue_tool(variant)],
-        programs=[tool_chain, gated_tool_chain, orchestrator, research_child],
+        tools=[search, create_issue_tool(variant), kv_put],
+        programs=[tool_chain, gated_tool_chain, orchestrator, research_child, long_horizon],
     )
 
 

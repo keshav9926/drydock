@@ -374,9 +374,9 @@ class PostgresJournal:
         async with pool.connection() as conn:
             await conn.execute(
                 "INSERT INTO programs (program, program_version, declared_version, code_hash,"
-                " entrypoint, keel_version, tools) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                " entrypoint, keel_version, tools, state_schema) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
                 " ON CONFLICT (program, program_version) DO UPDATE SET tools = EXCLUDED.tools,"
-                " entrypoint = EXCLUDED.entrypoint",
+                " entrypoint = EXCLUDED.entrypoint, state_schema = EXCLUDED.state_schema",
                 (
                     f["program"],
                     f["program_version"],
@@ -385,6 +385,7 @@ class PostgresJournal:
                     f["entrypoint"],
                     f["keel_version"],
                     Jsonb(dict(f.get("tools") or {})),
+                    Jsonb(f["state_schema"]) if f.get("state_schema") is not None else None,
                 ),
             )
 

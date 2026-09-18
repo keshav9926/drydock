@@ -303,6 +303,7 @@ class JournalBackend(Protocol):
         entrypoint: str,
         keel_version: str,
         tools: Mapping[str, Any],
+        state_schema: Mapping[str, Any] | None = None,
     ) -> None: ...
 
     async def create_run(self, row: RunRow, created: Any, *, runnable_at: datetime | None) -> None:

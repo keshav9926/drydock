@@ -50,6 +50,8 @@ HOOK_BOUNDARIES = (
     # Delegation (§4.11): the spawn transaction, and the park on children.
     "before:child_spawn",
     "during:child_wait",
+    # Continuation segments (§4.9): the instant before SEGMENT_STARTED commits.
+    "before:segment_write",
 )
 #: The three boundaries the proxy observes at the network edge — §11.2's correspondence table,
 #: one process further out than the shim. Model traffic never crosses it in the scripted

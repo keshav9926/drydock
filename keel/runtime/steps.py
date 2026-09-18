@@ -45,6 +45,7 @@ from keel.events import (
     RunPaused,
     RunPauseLifted,
     RunWaiting,
+    SegmentStarted,
     SignalIgnored,
     SignalReceived,
     StepAmbiguous,
@@ -82,6 +83,7 @@ from keel.state.fold import (
     WAITING_KINDS,
     ChildState,
     RunState,
+    SegmentState,
     fold,
 )
 
@@ -231,6 +233,9 @@ class StepEngine:
         #: never taken sets it with no signal behind it, and a drain that only opened for signals left
         #: it set — every park after that raced it again, for ever.
         self._wake_pending = False
+        #: The latest COMPACT outcome at the replay cursor — what a boundary names as `compact_seq`.
+        #: Starts at the boundary's own and moves as COMPACT outcomes are handed back (§10.8).
+        self.compact_seq = state.segment.compact_seq if state.segment is not None else None
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
@@ -254,6 +259,8 @@ class StepEngine:
                 )
             if journaled.settled:
                 self.replayed_steps += 1
+                if journaled.kind == "COMPACT":
+                    self.compact_seq = journaled.outcome_seq
                 return _value_of(journaled)
             if journaled.state == RESOLVED_UNKNOWN:
                 reason = "key_window_expired" if journaled.method == "key_window_expired" else "resolved_unknown"
@@ -514,6 +521,46 @@ class StepEngine:
         hooks.at("after:intent_commit", **_where(intent))
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         raise Parked("sleep", wake_at=self.state.wake_at)
+
+    # --- continuation segments (§4.9, §10.8, §18.3) -----------------------------
+    async def cut_segment(
+        self, first_step_index: int, state_blob: Any, plan: list[dict[str, Any]], *, returned: bool = False
+    ) -> bool:
+        """SEGMENT_STARTED and the plan snapshot, one fenced transaction. False — nothing written —
+        when the step at `first_step_index` is already journaled: a safe point the original run did
+        not cut at (another N). A returned `Continue` over a journaled step is not that: the original
+        issued a step where this program ends its segment, which is nondeterminism.
+
+        Only on the live path, like every write: in VERIFY the boundary is where replay stops. A crash
+        before the commit (`before:segment_write`) re-executes the previous segment, whose memoized
+        outcomes reproduce the same `Continue(state)`; after it, re-execution starts here."""
+        journaled = self.state.step(first_step_index)
+        if journaled is not None:
+            if returned:
+                raise NondeterminismDetected(first_step_index, journaled.identity(), ("SEGMENT_STARTED",))
+            return False
+        await self._reach_live(first_step_index)
+        seg = self.state.segment
+        segment_no = seg.segment_no + 1 if seg is not None else 1
+        hooks.at("before:segment_write", segment_no=segment_no, first_step_index=first_step_index)
+        async with self.journal.append(self.lease) as tx:
+            seq = await tx.append(
+                SegmentStarted(
+                    segment_no=segment_no,
+                    first_step_index=first_step_index,
+                    program_version=self.lease.program_version,
+                    state_blob=state_blob,
+                    compact_seq=self.compact_seq,
+                )
+            )
+            # The plan stays a projection of PLAN_UPDATED, but never needs events before the
+            # boundary: the runtime re-writes it here as an `init` snapshot (§10.8).
+            await tx.append(PlanUpdated(op="init", diff={"items": plan}), causation_seq=seq)
+        self.state.segment = SegmentState(
+            segment_no=segment_no, first_step_index=first_step_index, seq=seq,
+            program_version=self.lease.program_version, state_blob=state_blob, compact_seq=self.compact_seq,
+        )
+        return True
 
     async def _update_plan(self, intent: StepIntent) -> str:
         """A PLAN step: INTENT, STARTED, PLAN_UPDATED and STEP_COMPLETED{plan_hash}, one transaction
@@ -1530,6 +1577,8 @@ class StepEngine:
         hooks.at("after:outcome_commit", attempt_no=attempt_no, **_where(intent))
         if isinstance(outcome, Completed):
             self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
+            if intent.kind is StepKind.COMPACT:
+                self.compact_seq = seq
             return outcome.result
         if isinstance(outcome, Failed):
             if retrying:

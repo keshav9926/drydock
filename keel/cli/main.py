@@ -311,7 +311,9 @@ def _detail(e: Any) -> str:
     if t == "RUN_CREATED":
         return f"{b.program} {b.program_version}"
     if t == "RECOVERY_STARTED":
-        return f"cause={b.cause} from_seq={b.from_seq}"
+        return f"cause={b.cause} from_seq={b.from_seq}" + (f" from_segment={b.from_segment}" if b.from_segment else "")
+    if t == "SEGMENT_STARTED":
+        return f"segment={b.segment_no} first_step={b.first_step_index}"
     if t == "RECOVERY_COMPLETED":
         return f"live_from_step={b.live_from_step} replayed_steps={b.replayed_steps}"
     if t == "STEP_INTENDED":
@@ -601,7 +603,7 @@ def replay(
         result = await run_verify(
             keel.journal,
             run_id,
-            keel.resolve(row.program).fn,
+            keel.resolve(row.program),  # the Program, so VERIFY can restore a boundary's state
             tools=keel.tools,
             requested_by="cli",
         )

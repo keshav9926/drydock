@@ -253,6 +253,8 @@ class MemoryJournal:
                 raise IllegalTransition(f"second APPROVAL_REQUESTED for step {si}")  # events_approval_once
             if t in _TERMINAL and old.type in _TERMINAL:
                 raise IllegalTransition("second terminal event")
+            if t == "SEGMENT_STARTED" and old.type == t and old.body.segment_no == ev.body.segment_no:
+                raise IllegalTransition(f"second SEGMENT_STARTED {ev.body.segment_no}")  # events_segment_once
 
     # --- lifecycle -----------------------------------------------------------
     async def migrate(self) -> None:

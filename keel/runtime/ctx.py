@@ -20,6 +20,7 @@ from keel.core.hashing import request_hash as _request_hash
 from keel.core.protocols import StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
+from keel.runtime.segments import FORCED_SEGMENT_STEPS
 from keel.runtime.steps import StepEngine
 from keel.state import context as _context
 from keel.state import plan as _plan
@@ -101,6 +102,13 @@ class Ctx:
         self.plan = PlanApi(self)
         #: The context projection at the replay cursor (§16.2), advanced as each outcome is handed back.
         self._context: list[dict[str, Any]] = _context.initial(args)
+        #: The latest summary at the cursor: what a boundary resets the context to (§10.8).
+        self._summary: dict[str, Any] | None = None
+        #: Continuation segments (§18.3): where this segment began, N, and a boundary a safe point
+        #: asked for, which is cut before the next step's INTENT if that step goes live.
+        self._segment_first = 0
+        self.segment_limit = FORCED_SEGMENT_STEPS
+        self._pending_segment: dict[str, Any] | None = None
 
     @property
     def step_index(self) -> int:
@@ -120,13 +128,53 @@ class Ctx:
 
     async def _run(self, intent: StepIntent) -> Any:
         try:
+            if self._pending_segment is not None:
+                blob, self._pending_segment = self._pending_segment, None
+                # Before this step's INTENT, and only if it goes live: a journaled step here means
+                # the original run did not cut here (another N), and the journal is what happened.
+                if await self._engine.cut_segment(intent.step_index, blob, self._plan):
+                    self._enter(intent.step_index)
             result = await self._engine.execute(intent)
         finally:
             self._in_flight = False
         # Only an outcome the program is handed moves the cursor context: memoized or live, the same
         # value, so a replay reads the context the original read (§16.2).
         self._context = _context.apply(self._context, str(intent.kind), intent.name, result)
+        if intent.kind is StepKind.COMPACT:
+            self._summary = _context.summary(result)
         return result
+
+    # --- continuation segments (§18.3): non-step accessors --------------------
+    @property
+    def segment_steps(self) -> int:
+        """Steps issued in this segment. Consumes no step index; never compared with the journal."""
+        return self._next_index - self._segment_first
+
+    def segment_point(self, state: Any) -> None:
+        """A safe point: `state` is sufficient to restart the program from here. Once the segment has
+        issued `segment_limit` steps, Keel cuts at the first safe point — before the next step's
+        INTENT, if that step goes live. Consumes no step index and is never matched against the
+        journal, so N is worker configuration that cannot trip nondeterminism detection (§10.8)."""
+        if self.segment_steps >= self.segment_limit:
+            self._pending_segment = state.model_dump(mode="json")
+
+    def enter_segment(self, seg: Any, plan: list[dict[str, Any]], context: list[dict[str, Any]]) -> None:
+        """Re-execution from a boundary (§10.8): the counter at its `first_step_index`, never reset,
+        and the Keel-owned projections as the boundary left them."""
+        self._next_index = seg.first_step_index
+        self._segment_first = seg.first_step_index
+        self._plan = [dict(i) for i in plan]
+        self._context = [dict(m) for m in context]
+        self._summary = dict(context[0]) if seg.compact_seq is not None and context else None
+
+    async def _continue(self, blob: dict[str, Any]) -> None:
+        """The program returned `Continue(state)`: journal the boundary at the next index."""
+        await self._engine.cut_segment(self._next_index, blob, self._plan, returned=True)
+        self._enter(self._next_index)
+
+    def _enter(self, first_step_index: int) -> None:
+        self._segment_first = first_step_index
+        self._context = [dict(self._summary)] if self._summary else []
 
     @property
     def context(self) -> ContextView:
