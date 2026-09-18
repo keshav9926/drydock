@@ -168,3 +168,55 @@ def test_a_provider_outage_fails_its_consecutive_calls_across_a_restart(tmp_path
     restarted.at("model:start", "before:model_call")  # the provider is back
     assert [r.type for r in restarted.trial.faults()] == ["provider_outage"], "one row, three failures"
     assert killed == []
+
+
+# --- a streamed model call (§11.2, §11.5 `model_stream_truncate`) --------------------------------
+def _stream_spec(fault_type: str, chunk: int = 3, mode: str = "shim") -> dict:
+    return {
+        "name": "stream", "workload": "tool_chain_1_effect", "mode": mode, "max_recoveries": 3,
+        "faults": [{"id": "s1", "type": fault_type,
+                    "trigger": {"boundary": f"during:model_stream(chunk={chunk})", "landmark": "model:*"}}],
+    }
+
+
+def test_model_stream_truncate_is_a_shim_fault_at_a_numbered_chunk_and_never_a_proxy_one() -> None:
+    from crashproof.faults.spec import CrashproofSpecError
+
+    assert from_doc(_stream_spec("model_stream_truncate")).faults[0].trigger.boundary == "during:model_stream(chunk=3)"
+    with pytest.raises(CrashproofSpecError, match="model traffic does not cross the proxy"):
+        from_doc(_stream_spec("model_stream_truncate", mode="proxy"))
+    with pytest.raises(CrashproofSpecError, match="model traffic does not cross the proxy"):
+        from_doc(_stream_spec("kill", mode="proxy"))
+    with pytest.raises(CrashproofSpecError):  # truncation is a stream's fault, not a call's
+        from_doc({**_stream_spec("model_stream_truncate"), "faults": [
+            {"id": "s1", "type": "model_stream_truncate",
+             "trigger": {"boundary": "before:model_call", "landmark": "model:*"}}]})
+
+
+async def _drain(tmp_path, doc: dict, pieces: int = 5) -> tuple[list, list]:
+    from crashproof.faults.injectors.shim import ToolShim
+    from crashproof.world.client import WorldClient
+
+    shim = ToolShim(TrialDir(tmp_path / "t-7"), expand(from_doc(doc), 7), trial_id="t-7",
+                    world=WorldClient("http://127.0.0.1:9"))
+    got = [item async for item in shim.model_stream(
+        "start", lambda: "RESPONSE", lambda r: [f"p{i}" for i in range(1, pieces + 1)], prompt={"m": 1})]
+    return got, [o.boundary for o in shim.trial.observations()]
+
+
+async def test_a_truncated_stream_delivers_k_pieces_and_no_response(tmp_path, killed) -> None:
+    got, seen = await _drain(tmp_path, _stream_spec("model_stream_truncate"))
+    assert got == ["p1", "p2", "p3"], "k pieces written, then the stream is cut — no final response"
+    assert seen == ["before:model_call", *(f"during:model_stream(chunk={k})" for k in (1, 2, 3))]
+    assert killed == []
+
+
+async def test_an_unfaulted_stream_ends_with_the_whole_response(tmp_path, killed) -> None:
+    got, seen = await _drain(tmp_path, _stream_spec("kill", chunk=9))
+    assert got == ["p1", "p2", "p3", "p4", "p5", "RESPONSE"]
+    assert seen[0] == "before:model_call" and seen[-1] == "after:model_return" and len(seen) == 7
+
+
+async def test_a_kill_mid_stream_lands_after_the_kth_piece_was_taken(tmp_path, killed) -> None:
+    got, _ = await _drain(tmp_path, _stream_spec("kill", chunk=2))
+    assert killed == ["kill"] and got[:2] == ["p1", "p2"], "the runtime had taken piece 2 when it died"

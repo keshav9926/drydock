@@ -49,6 +49,12 @@ class FaultResponse(Exception):
         self.status = status
 
 
+class StreamCut(Exception):
+    """`model_stream_truncate` (§11.5): the stream ends here, after the pieces already delivered, and
+    no final response follows. Raised at `during:model_stream(chunk=k)` and caught by the shim's
+    stream, which simply stops — the runtime sees a stream that ended short, as it would on a wire."""
+
+
 class Injector:
     """The shared observe→match→record→execute sequence. A subclass adds boundaries, not order."""
 
@@ -174,6 +180,8 @@ class Injector:
             raise FaultResponse("provider_outage", int(entry.params.get("status", 503)))
         elif entry.type == "tool_timeout":
             pass  # armed at the World by the shim, which knows which endpoint (§11.5)
+        elif entry.type == "model_stream_truncate":
+            raise StreamCut(f"stream cut at {entry.boundary}")
         elif entry.type == "model_reask_alternate":
             # Arms a trial-owned flag and returns. The provider is what changes its answer, and it
             # stays a pure function of (request content, flag) — no ask counter anywhere, which is

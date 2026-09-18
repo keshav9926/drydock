@@ -198,7 +198,7 @@ class WorkloadProvider:
         self.calls = 0
         self.tokens = 0
 
-    async def complete(self, req: Any) -> Any:
+    def _node(self, req: Any) -> tuple[Any, str]:
         from keel.runtime.ctx import COMPACT_SYSTEM
 
         key = node_key(req)
@@ -207,7 +207,10 @@ class WorkloadProvider:
         # a node — the context it carries holds the same tool answers the next turn's request does.
         compact = getattr(req, "system", None) == COMPACT_SYSTEM
         node = None if compact else self.workload.node_for(key)
-        node_id = "compact" if compact else "-".join(f"{n}{i}" for n, i in key) or "start"
+        return node, "compact" if compact else "-".join(f"{n}{i}" for n, i in key) or "start"
+
+    async def complete(self, req: Any) -> Any:
+        node, node_id = self._node(req)
         from crashproof.faults.injectors.base import FaultResponse
         from keel.core.errors import Rejected, UnknownOutcome
 
@@ -263,11 +266,56 @@ class WorkloadProvider:
             provider_meta=meta,
         )
 
-    async def stream(self, req: Any):  # pragma: no cover - STREAMS is week 3
-        yield await self.complete(req)
+    async def stream(self, req: Any):
+        """STREAMS (§9.3, W7): the answer `complete` gives, in the node's declared number of pieces
+        (`chunks`, default one), each through the shim's `during:model_stream(chunk=k)`, and then the
+        whole response. A `model_stream_truncate` ends it early, with no response."""
+        from crashproof.faults.injectors.base import FaultResponse
+        from keel.core.errors import Rejected, UnknownOutcome
+        from keel.providers.protocol import ModelChunk
+
+        node, node_id = self._node(req)
+
+        def respond() -> Any:
+            return self._respond(req, node, node_id)
+
+        def split(resp: Any) -> list[Any]:
+            return _pieces(resp, int(((node.decision if node else {}) or {}).get("chunks", 1)))
+
+        async def unshimmed() -> Any:
+            resp = respond()
+            for piece in split(resp):
+                yield piece
+            yield resp
+
+        items = (
+            self.shim.model_stream(node_id, respond, split, prompt=req.model_dump(mode="json"))
+            if self.shim is not None else unshimmed()
+        )
+        try:
+            async for item in items:
+                yield item if isinstance(item, ModelChunk) else ModelChunk(usage_cum=item.usage, response=item)
+        except FaultResponse as exc:
+            raise (Rejected if 400 <= exc.status < 500 else UnknownOutcome)(str(exc)) from exc
 
     async def count_tokens(self, req: Any) -> int:
         return len(json.dumps(req.model_dump(mode="json"), sort_keys=True)) // 4
+
+
+def _pieces(resp: Any, n: int) -> list[Any]:
+    """A response as `n` pieces: its text, then its tool calls as JSON — how a provider streams a tool
+    call's input — cut evenly, with `usage_cum` climbing to the final usage."""
+    from keel.providers.protocol import ModelChunk, Usage
+
+    body = resp.text + "".join(json.dumps({"name": c.name, "args": c.args}, sort_keys=True) for c in resp.tool_calls)
+    n = max(1, min(n, len(body) or 1))
+    return [
+        ModelChunk(
+            text=body[i * len(body) // n:(i + 1) * len(body) // n],
+            usage_cum=Usage(input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens * (i + 1) // n),
+        )
+        for i in range(n)
+    ]
 
 
 def node_key(req: Any) -> tuple[tuple[str, int], ...]:

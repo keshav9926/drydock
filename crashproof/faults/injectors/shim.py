@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
-from crashproof.faults.injectors.base import Injector
+from crashproof.faults.injectors.base import Injector, StreamCut
 from crashproof.faults.schedule import Entry
 from crashproof.faults.triggers import landmark_of
 from crashproof.world.client import WorldClient
@@ -124,3 +124,29 @@ class ToolShim(Injector):
         response = complete()
         self.at(landmark, "after:model_return")
         return response
+
+    async def model_stream(
+        self, node: str, complete: Callable[[], Any], split: Callable[[Any], list[Any]], *, prompt: Any = None
+    ) -> AsyncIterator[Any]:
+        """A streamed model call (§11.2, W7): `before:model_call`, then each piece `split(response)`
+        gives, with `during:model_stream(chunk=k)` once the k-th has been delivered, then
+        `after:model_return` and the whole response, last.
+
+        "Delivered" is literal: the boundary fires when the runtime asks for piece k+1, so it has
+        taken piece k and done with it whatever it does — journal it, or not yet. `model_stream_truncate`
+        ends the stream right there: k pieces written, then nothing, and no response (§11.5)."""
+        landmark = landmark_of("model", node)
+        tokens = self.count_tokens(prompt)
+        response = await asyncio.to_thread(self._open, landmark, complete, tokens)
+        for k, piece in enumerate(split(response), 1):
+            yield piece
+            try:
+                await asyncio.to_thread(self.at, landmark, f"during:model_stream(chunk={k})")
+            except StreamCut:
+                return
+        await asyncio.to_thread(self.at, landmark, "after:model_return")
+        yield response
+
+    def _open(self, landmark: str, complete: Callable[[], Any], tokens: int | None = None) -> Any:
+        self.at(landmark, "before:model_call", tokens=tokens)
+        return complete()

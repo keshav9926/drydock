@@ -201,6 +201,7 @@ decided.
 | S7 | N/A | S7 is judged from `APPROVAL_REQUESTED/DECIDED`. Restate's journal has the approval run, the timer and the awakeable's completions, but nothing binds the decision to the gated run; the per-effect count (`deploy.service#1`) is on the page |
 | C1 | N/A | Restate documents no replay of a recorded journal against the code. The SDK's test harness has `always_replay` ("this forces restate-server to always replay on a suspension point. This is useful to hunt non-deterministic bugs that might prevent your code to replay correctly", `restate.harness.create_test_harness`, 1.0.5), but that replays live invocations, executing their runs — not a verifier of a finished one. `replay_check` is not implemented |
 | W6 | not declared | a Restate child-invocation citation is not in the fact sheet (§14.1) |
+| W7, `model_stream_truncate` | N/A | no streamed model call is cited: `RestateAgent` makes each model request a `ctx.run` whose whole response is journaled ("every LLM response is saved in the Restate Server and replayed during recovery"), and nothing in the adapter's citations covers a stream inside one. Unverified rather than refuted — restate-sdk has no Windows wheel, so its `restate.ext.pydantic` source is checked only in the WSL clone — so N/A until an adapter README cites a streaming primitive |
 
 ## Places a documented primitive forced a choice
 

@@ -157,6 +157,7 @@ it adds no durable operation to the run.
 | **C1** | N/A — `replay_check` is not implemented: DBOS documents no replay that re-checks a recorded run without re-executing it (`fork_workflow` re-runs steps from a point; it is not a verifier). |
 | **W4** | not declared — TRANSACTIONAL (`@DBOS.transaction`) is expressible, but W4 is cut (§29.1). |
 | **W6** | not declared — a DBOS child-workflow citation is not in the fact sheet (§14.1). |
+| **W7**, `model_stream_truncate` | not declared, though expressible — a binding not built, not an N/A. `native`: DBOS 2.31.1 documents a durable stream a step can write, `DBOS.write_stream(key, value)` ("Write a value to a stream") read by `DBOS.read_stream` ("yielding each value in order until the stream is closed or the workflow terminates"); from a step each value is inserted "at the first unused offset" (`_sys_db.write_stream_from_step`), so a step re-executed after a crash appends its pieces again. `pydantic_ai`: `DBOSModel` makes `request_stream` a DBOS step and calls the agent's `event_stream_handler` inside it; `agent.run_stream()` "cannot be used inside a DBOS workflow" (pydantic-ai-slim 2.43.0). The model step would call the shim's `model_stream` to reach `during:model_stream(chunk=k)`. |
 
 ## Places a documented primitive forced a choice
 

@@ -28,6 +28,10 @@ SHIM_BOUNDARIES = (
     "after:tool_return",
     "before:model_call",
     "after:model_return",
+    # A streamed model call (§11.2, W7): once the k-th piece has been delivered to the runtime. A
+    # spec names the piece, `during:model_stream(chunk=7)`; an arm whose model call does not stream
+    # never reaches it.
+    "during:model_stream(chunk=k)",
 )
 #: The ten hook boundaries whose mechanisms exist today (§28.6). Inside the runtime's own write
 #: path, so only an arm that exposes them can run these cells — which is why their results live in
@@ -81,7 +85,7 @@ RESTART_CAUSING = frozenset(
 NON_FATAL = frozenset(
     {
         "tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500", "provider_outage",
-        "model_reask_alternate", "approval_delay", "approval_expiry",
+        "model_reask_alternate", "approval_delay", "approval_expiry", "model_stream_truncate",
     }
 )
 
@@ -143,6 +147,9 @@ SHIM_FAULT_TYPES = frozenset(
         "sigterm_grace_ok",
         "sigterm_grace_too_short",
         "model_reask_alternate",
+        # §11.5: k pieces of a streamed model call delivered, then the stream ends with no final
+        # response. Shim only: model traffic does not cross the proxy in the scripted configuration.
+        "model_stream_truncate",
         # Supervisor-executed, but legal in a `shim` spec: the cell is still a black-box cell, and
         # the harness standing in for the human is part of the trial, not part of the runtime.
         "approval_delay",
@@ -161,6 +168,7 @@ FAULT_BOUNDARIES = {
     "model_500": {"before:model_call"},
     "provider_outage": {"before:model_call"},
     "model_reask_alternate": {"before:model_call"},
+    "model_stream_truncate": {"during:model_stream(chunk=k)"},
     "approval_delay": {"supervisor"},
     "approval_expiry": {"supervisor"},
     "kill_while_waiting": {"supervisor"},

@@ -160,6 +160,7 @@ decision is the workflow code's, and it reads the first.
 | S5 | N/A | same: no Keel step lifecycle is exported |
 | S7 | N/A | S7 is judged from `APPROVAL_REQUESTED/DECIDED` journal events. Temporal's history has the signals, the timer and the gated activity, but no approval id binding one to the other; the per-effect result is still on the page (`deploy.service#1` applied count) |
 | C1 | **judged** | `temporalio.worker.Replayer` replays the trial's fetched history against the workflow code with the same plugins; a replay failure (nondeterminism) is FAIL. No activity runs during replay |
+| W7, `model_stream_truncate` | not declared, though expressible (buffered) | pydantic-ai-slim 2.43.0: `agent.run_stream()` "cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead", and the handler "runs inside activities" — so a streamed model call is expressible, consumed inside the model-request activity, and the history records only the completed response: §14.1's "Temporal buffers stream inside the activity (reported as 'buffered')". The binding is not built; the activity would call the shim's `model_stream` to reach `during:model_stream(chunk=k)` |
 
 ## Smoke — one seed per cell, against §13.7's predictions
 

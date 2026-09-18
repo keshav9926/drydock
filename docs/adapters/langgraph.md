@@ -134,6 +134,18 @@ a user would act on), not a bug report. `crashproof demo` cannot reproduce it �
 `tool_chain_1_effect` only — so its repro is the W5-pre form in
 [the template](../upstream-report-template.md#the-report).
 
+## W7 — streaming: N/A, with the citation
+
+LangGraph 1.2.11 can *emit* a streamed model call: `Pregel.stream` documents `stream_mode="messages"`
+("Emit LLM messages token-by-token together with metadata for any LLM invocations inside nodes or
+tasks") and `"custom"` ("Emit custom data from inside nodes or tasks using `StreamWriter`"). What it
+does not document is any durable meaning for a streamed piece: `durability` persists "changes" per
+step ("`sync`: Changes are persisted synchronously before the next step starts"), `"checkpoints"`
+mode emits "when a checkpoint is created", and nothing says what a token already streamed is after a
+crash — whether it is re-streamed, kept, or charged. The bar for W7's second arm was documented durable
+semantics for the stream, so W7 and `model_stream_truncate` are N/A here until a version documents
+them; the adapter's model call stays one non-streamed call in the agent node.
+
 ## Adapter rules obeyed
 
 No counter, no pre-send lookup, no retry the framework does not do itself, no dedup in the adapter,
