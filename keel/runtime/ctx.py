@@ -168,7 +168,10 @@ class Ctx:
         self._summary = dict(context[0]) if seg.compact_seq is not None and context else None
 
     async def _continue(self, blob: dict[str, Any]) -> None:
-        """The program returned `Continue(state)`: journal the boundary at the next index."""
+        """The program returned `Continue(state)`: journal the boundary at the next index. It is the
+        boundary a pending forced cut was waiting for, so that request goes — cut after this one it
+        would be a second boundary at the same step from an older state (r005)."""
+        self._pending_segment = None
         await self._engine.cut_segment(self._next_index, blob, self._plan, returned=True)
         self._enter(self._next_index)
 
