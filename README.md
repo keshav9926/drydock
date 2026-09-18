@@ -731,15 +731,18 @@ point that opens a connection selects a compatible loop in `keel/core/aio.py`.
 
 ## Not yet built (and when)
 
-**Week 3 (§29.2) is depth.** The confirmation tier at n = 300 on fresh seeds — every page says it is
-the screening tier only — and the rest of §29.2's statistics hardening; the HTML report (`report --fmt
-html` refuses with the reason and exit 2); continuation segments with C2 and `before:segment_write`;
-streaming with `during:stream(chunk=k)` — and `KeelMachine`'s rules for both; a `Policy` implementation and
-`Sandbox`; `ambiguity_window_width`; and FORK, cut from phase 5 by §28.5's own cut line and last in
-week 3's cut order. The two hook boundaries are absent rather than stubbed, so a spec naming one is
-refused rather than firing nothing; §29.2's *all seventeen* is the honest completion date. `keel watch`
-is **cut**, not pending: `keel events --follow` shows the same BEFORE CRASH / AFTER RESTART split, in
-the event stream where it already lives.
+**Week 3 (§29.2) is depth, and most of it has landed:** `KeelMachine` over every mechanism with
+`sim.to_fault_spec` (r001–r004 fixed, K6's first case amended); `ctx.sleep`, the durable plan
+(`ctx.plan`), `ctx.compact()` and continuation segments (`Continue(state)`, `SEGMENT_STARTED`, the
+forced boundary, C2, `before:segment_write` — 16 of 17 hook boundaries) with W3 `long_horizon_50` on
+the Keel arm; `crashproof confirm` and the two-tier report, and the week-2 confirmation plan (25
+cells, 7 500 trials) running at `dcdd533`; `ambiguity_window_width` and K3 for every arm. **In
+progress:** streaming (`STEP_CHUNK`, `partial_ok`, `during:stream(chunk=k)` — the seventeenth
+boundary, `model_stream_truncate`, W7) and the static HTML report. **Not started:** a `Policy`
+implementation, `Sandbox` and the §18.6 drift detectors; FORK, cut from phase 5 by §28.5's own cut
+line and last in week 3's cut order. **Cut:** FastAPI + SSE (second in §29.2's cut order — the static
+page alone gives outreach a link) and `keel watch` (`keel events --follow` shows the same BEFORE CRASH /
+AFTER RESTART split, in the event stream where it already lives).
 
 **Named, not built:**
 
@@ -750,8 +753,12 @@ the event stream where it already lives.
   slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one
   parent-cancel already uses, and arrives with the first cell that measures it.
 - `keel signal --resolve STEP=… [--evidence S]` and `--compensate STEP` (§25.2, v1), and
-  `Keel.compensate`. A run SUSPENDED on a `RESOLVED_UNKNOWN` step has no way out today but
-  `keel cancel`: `keel resume` replays to that step and suspends again.
+  `Keel.compensate`. A run SUSPENDED on a `RESOLVED_UNKNOWN` step — EXTERNAL's `escalate`, and now an
+  IDEMPOTENT outcome nobody knows (`key_window_expired`) — has no way out today but `keel cancel`:
+  `keel resume` replays to that step and suspends again.
+- The crash-open half of `key_window_expired` (§9.1): an attempt still open at recovery is re-run
+  under the same key without counting against the retry policy, because recovery is not retry (§8.3);
+  bounding it needs its own count, and nothing measures it yet.
 - `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:
   close`, one response per request, and §11.5's own caveat is that the late bytes reach the SUT only
   when the transport outlives the app-level timeout — a cell for a sync-tool variant that does not
@@ -759,9 +766,6 @@ the event stream where it already lives.
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
 - W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
   effect-table bridge and a DBOS arm to be a comparison.
-- §29.1's week-2 matrix — the full re-run at one commit with every engine arm added (DBOS, Temporal and
-  Restate are all merged, [above](#status--phase-8-of-8-outside-the-holder)) — has not run. The Restate
-  arm's cells have to be run under Linux and merged with the Windows shards by `fold`.
 
 §27 is the binding staging table. One published page is ahead of it: W5-pre, a tier-2 cell built in
 week 2 for the reason given above.
