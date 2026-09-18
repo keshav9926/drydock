@@ -203,6 +203,14 @@ def show(
                 str(r.live_from_step), str(r.replayed_steps), r.outcome or "-",
             )
         out.print(table)
+        if view.plan:
+            # The durable plan (§16.2): the PLAN_UPDATED fold, which compaction never touches.
+            plan = Table(box=None, title="plan")
+            for col in ("id", "status", "title"):
+                plan.add_column(col)
+            for item in view.plan:
+                plan.add_row(str(item["id"]), item["status"], item["title"])
+            out.print(plan)
         # The parent's view of its children is the `delegations` row and nothing else (§17.3):
         # contract, status, what was reserved and what was settled. Never the child's journal.
         delegations = await keel.journal.delegations(run_id)
@@ -325,6 +333,8 @@ def _detail(e: Any) -> str:
         return b.error
     if t == "RUN_SUSPENDED":
         return f"{b.reason}"
+    if t == "PLAN_UPDATED":
+        return f"{b.op} " + _short(b.diff, 40)
     return ""
 
 

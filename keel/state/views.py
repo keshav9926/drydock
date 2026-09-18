@@ -51,6 +51,7 @@ class RunView:
     suspended_reason: str | None = None
     epochs: list[int] = field(default_factory=list)
     live_from_step: dict[int, int] = field(default_factory=dict)
+    plan: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -110,6 +111,7 @@ def run_view(row: RunRow, state: RunState, now: datetime, effects: list[EffectRo
         suspended_reason=state.suspended_reason,
         epochs=list(state.epochs),
         live_from_step=dict(state.live_from_step),
+        plan=[dict(i) for i in state.plan],
     )
 
 

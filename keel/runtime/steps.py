@@ -39,6 +39,7 @@ from keel.events import (
     ChildFailed,
     ChildSpawned,
     ModelBindingChanged,
+    PlanUpdated,
     RecoveryCompleted,
     RunCreated,
     RunPaused,
@@ -69,6 +70,7 @@ from keel.runtime.delegation import (
 )
 from keel.runtime.retry import NO_RETRY, RetryPolicy
 from keel.runtime.takeover import DEFAULT_CANCEL_GRACE_S, force_cancel
+from keel.state import plan as _plan
 from keel.state.fold import (
     AMBIGUOUS,
     CANCELLED,
@@ -512,6 +514,35 @@ class StepEngine:
         hooks.at("after:intent_commit", **_where(intent))
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         raise Parked("sleep", wake_at=self.state.wake_at)
+
+    async def _update_plan(self, intent: StepIntent) -> str:
+        """A PLAN step: INTENT, STARTED, PLAN_UPDATED and STEP_COMPLETED{plan_hash}, one transaction
+        (§6.2). Nothing leaves the process, so there is no window to open between them: the plan
+        changes exactly when the step completes, and a crash leaves either both or neither."""
+        op, diff = intent.args["op"], intent.args["diff"]
+        after = _plan.apply(self.state.plan, op, diff)
+        hooks.at("before:intent_commit", **_where(intent))
+        async with self.journal.append(self.lease) as tx:
+            now = await tx.now()
+            intent_seq = await tx.append(_intended(intent))
+            started = await tx.append(
+                StepAttemptStarted(
+                    step_index=intent.step_index, attempt_no=1, lease_epoch=self.lease.epoch, started_at=now
+                ),
+                causation_seq=intent_seq,
+            )
+            updated = await tx.append(
+                PlanUpdated(op=op, diff=diff, step_index=intent.step_index), causation_seq=started
+            )
+            await tx.append(
+                StepCompleted(step_index=intent.step_index, attempt_no=1, result=_plan.plan_hash(after)),
+                causation_seq=updated,
+            )
+        hooks.at("after:intent_commit", **_where(intent))
+        hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+        # The engine's fold, advanced in place: the next PLAN step applies to this one's result.
+        self.state.plan = after
+        return _plan.plan_hash(after)
 
     async def _commit_park(
         self,
@@ -1229,6 +1260,8 @@ class StepEngine:
             return await self._spawn_children(intent)
         if intent.kind is StepKind.SLEEP:
             return await self._park_for_sleep(intent)
+        if intent.kind is StepKind.PLAN:
+            return await self._update_plan(intent)
         if intent.kind is StepKind.TOOL:
             await self._gate(intent)
         tool = self._tool_of(intent)

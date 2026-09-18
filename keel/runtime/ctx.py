@@ -20,6 +20,43 @@ from keel.core.protocols import StepIntent, StepKind
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
 from keel.runtime.steps import StepEngine
+from keel.state import plan as _plan
+
+
+class PlanApi:
+    """`ctx.plan` (§16.1, §24.2): the durable plan, read at the replay cursor, changed only by PLAN steps.
+
+    Reads are bounded by the cursor (§16.2): during re-execution at step *i* the program sees the plan
+    as the ops *before* step *i* left it, never the journal's latest — otherwise a replay of step 5
+    would read what step 50 did and take a different branch. The cursor plan is advanced by each PLAN
+    step as its outcome is handed back, memoized or live, through the same `apply` the fold uses.
+    """
+
+    def __init__(self, ctx: "Ctx") -> None:
+        self._ctx = ctx
+
+    @property
+    def items(self) -> list[dict[str, Any]]:
+        return [dict(i) for i in self._ctx._plan]
+
+    @property
+    def done(self) -> bool:
+        return bool(self._ctx._plan) and all(i["status"] == _plan.COMPLETED for i in self._ctx._plan)
+
+    async def init(self, titles: Sequence[str]) -> None:
+        """Replace the plan: one PLAN step. Item ids are `<step>.<k>`."""
+        await self._ctx._plan_step("init", lambda i: _plan.init_diff(i, list(titles)))
+
+    async def add(self, title: str) -> str:
+        """Append one item: one PLAN step. Returns its id, `<step>`."""
+        diff = await self._ctx._plan_step("add", lambda i: _plan.add_diff(i, title))
+        return str(diff["item"]["id"])
+
+    async def complete(self, item_id: str) -> None:
+        """Mark an item completed: one PLAN step. An id the plan does not hold is a program bug,
+        raised before any step is issued."""
+        _plan.apply(self._ctx._plan, "complete", {"id": item_id})
+        await self._ctx._plan_step("complete", lambda i: {"id": item_id})
 
 
 class Ctx:
@@ -41,6 +78,9 @@ class Ctx:
         self.run_root_id = run_root_id
         self.args = args
         self.program_version = program_version
+        #: The plan at the replay cursor (§16.2). Seeded by the worker at a segment boundary.
+        self._plan: list[dict[str, Any]] = []
+        self.plan = PlanApi(self)
 
     @property
     def step_index(self) -> int:
@@ -213,6 +253,29 @@ class Ctx:
             program_version=self.program_version,
         )
         await self._run(intent)
+
+    async def _plan_step(self, op: str, diff_at: Any) -> dict[str, Any]:
+        """PLAN step; identity = (PLAN, plan.<op>, hash of op+diff) (§10.4). The diff is computed at
+        entry from the index being issued, so an item id is fixed before anything is journaled."""
+        index = self._open()
+        try:
+            diff = diff_at(index)
+            after = _plan.apply(self._plan, op, diff)
+            args = {"op": op, "diff": diff}
+            intent = StepIntent(
+                step_index=index,
+                kind=StepKind.PLAN,
+                name=f"plan.{op}",
+                args=args,
+                args_hash=_args_hash(args),
+                program_version=self.program_version,
+            )
+        except BaseException:
+            self._in_flight = False
+            raise
+        await self._run(intent)
+        self._plan = after
+        return diff
 
     async def now(self) -> datetime:
         """NOW step; recorded once, replayed forever."""

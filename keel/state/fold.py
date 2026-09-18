@@ -13,6 +13,7 @@ from uuid import UUID
 
 from keel.core.hashing import projection_hash as _hash
 from keel.events import Event
+from keel.state import plan as _plan
 
 # step states (§7.3); the `effects` mirror uses its own vocabulary (INTENDED/STARTED/COMMITTED/…)
 INTENDED = "INTENDED"
@@ -209,6 +210,8 @@ class RunState:
     charged: Charged = field(default_factory=Charged)
     approvals: dict[Any, Approval] = field(default_factory=dict)
     children: dict[Any, ChildState] = field(default_factory=dict)
+    #: The durable plan (§16.2): a fold of PLAN_UPDATED from seq 1, never touched by compaction.
+    plan: list[dict[str, Any]] = field(default_factory=list)
 
     def children_of(self, step_index: int) -> list[ChildState]:
         """The delegations one DELEGATE step spawned, in ordinal order."""
@@ -359,6 +362,8 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         # a separate event in the same transaction, and that one carries the state change. Folding
         # the arrival too would make the inbox a second, competing source of truth.
         st.signals_drained += 1
+    elif t == "PLAN_UPDATED":
+        st.plan = _plan.apply(st.plan, b.op, b.diff)
     elif t == "APPROVAL_REQUESTED":
         st.approvals[b.approval_id] = Approval(
             approval_id=b.approval_id,

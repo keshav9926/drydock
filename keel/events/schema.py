@@ -232,6 +232,23 @@ class ChildFailed(Body):
     detail: Any = None
 
 
+# --- the durable plan (§16.2, §18.2) ------------------------------------------
+class PlanUpdated(Body):
+    """Fold-only: the plan projection's input. Appended in the PLAN step's own transaction, between
+    its STARTED and its STEP_COMPLETED{plan_hash} — the step's memo is the STEP_COMPLETED, so the
+    recovery table needs no case for PLAN (§6.2). `step_index` is None for the one PLAN_UPDATED the
+    runtime writes itself: the `init` snapshot right after a SEGMENT_STARTED (§10.8).
+
+    `init` replaces the plan with `diff.items`; `add` appends `diff.item`; `complete` marks
+    `diff.id` completed. `reorder` and `note` are the constitution's other two ops and are not
+    built: nothing in week 3 issues them."""
+
+    type: Literal["PLAN_UPDATED"] = "PLAN_UPDATED"
+    op: Literal["init", "add", "complete"]
+    diff: dict[str, Any] = Field(default_factory=dict)
+    step_index: int | None = None
+
+
 # --- step core ---------------------------------------------------------------
 class StepIntended(Body):
     type: Literal["STEP_INTENDED"] = "STEP_INTENDED"
@@ -320,6 +337,7 @@ EventBody = Annotated[
     | SignalReceived
     | SignalIgnored
     | CancelAcknowledged
+    | PlanUpdated
     | StepIntended
     | StepAttemptStarted
     | StepCompleted
