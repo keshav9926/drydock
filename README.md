@@ -233,6 +233,7 @@ seed 32). Restate's shard ran the same specs under WSL. Pages:
 [`week2_w1_proxy`](bench/reports/week2_w1_proxy.md) (144) · [`week2_w5`](bench/reports/week2_w5.md)
 (40) · [`week2_w5_pre`](bench/reports/week2_w5_pre.md) (24) ·
 [`agreement_week2`](bench/reports/agreement_week2.md).
+The write-up that reads the four together, every §13.7 hypothesis marked: [`docs/writeup.md`](docs/writeup.md).
 `crashproof verify --recheck` over the trial directories re-verifies all 12 520 rows (re-takes
 included) with no drift, exit 0 — §29.3's publication gate; the directories stay on the machine
 that ran them, as every published run's do.
