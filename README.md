@@ -292,6 +292,15 @@ that ran them, as every published run's do.
   ("Tool side effects are not duplicated"), so its rows are judged against `exactly_once`. The LangGraph
   W5 binding is `interrupt()` + `Command(resume=)`, cited from the version under test.
 
+- **K6 (Keel fails itself) is week 3's, but its first case came early**, from the property suite rather
+  than a hook cell: an IDEMPOTENT attempt whose outcome is unknown (timeout, 5xx, dropped answer) with no
+  retry left ended the run FAILED with the effects row `ABSENT` — while the World held the effect. §7.4
+  and §8.5 prescribed exactly that, so it was a decision, not a slip. The document is amended to extend
+  §9.1's own rule ("a clean failure would hide an applied one"): the row reads `AMBIGUOUS` while a retry
+  is pending, and with none left the step is `RESOLVED_UNKNOWN{key_window_expired}` and the run
+  SUSPENDED for a human. The week-2 matrix never reaches the path — every fault there fires once and the
+  next attempt resolves it — so no published row changes.
+
 ### Phase 7: the artifact other people see
 
 `crashproof demo` above, read off the artefacts rather than scripted, with CI diffing its printed
