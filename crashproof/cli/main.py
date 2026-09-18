@@ -9,6 +9,7 @@
     compare  two arms, paired per (location, fault)
     agree    the same cells from the shim and from the proxy, paired per (cell, seed)
     placement  §19.5's placement histogram and K3 (or `--window`: ambiguity_window_width)
+    confirm  §15.3's confirmation tier, as a plan of `bench` commands — nothing is run
     world    the World alone, for adapter development
 
 `--seed N --seeds K` means seeds N … N+K-1, one trial per seed, trial id `t-<seed>`. There is no
@@ -665,6 +666,50 @@ def placement(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(page, encoding="utf8")
         err.print(f"wrote {out_path}")
+
+
+@app.command()
+def confirm(
+    results: Annotated[list[Path], typer.Argument(help="screening results.jsonl file(s)")],
+    out_path: Annotated[Path, typer.Option("--out", help="the plan, YAML")],
+    n: Annotated[int, typer.Option("--n", help="seeds per confirmed cell")] = 300,
+    base_seed: Annotated[int | None, typer.Option("--base-seed", help="first confirmation seed (>= 100000)")] = None,
+    claims: Annotated[list[str], typer.Option("--claims", help="A_GLOB:B_GLOB, the arm pairs a page claims about; repeatable")] = None,
+) -> None:
+    """§15.3's confirmation tier as a plan: which cells go to n on fresh seeds, why, and the exact
+    `bench` commands, grouped per spec file. Nothing is run.
+
+    A cell is confirmed when a binary estimate is not unanimous at screening, or when a `compare` of
+    a `--claims` pair makes a claim at it (any metric); then Keel's cell at the same (variant,
+    location, fault), the other arm of the claim, and each fault cell's baseline go with it. Safety
+    verdicts select nothing. The seeds start at `--base-seed`, which must be at least 100 000: that
+    is the rule `report` and `compare` tell the two tiers apart by.
+    """
+    from crashproof.report.confirm import CONFIRMATION_BASE_SEED, dump, plan
+
+    base = CONFIRMATION_BASE_SEED if base_seed is None else base_seed
+    if base < CONFIRMATION_BASE_SEED:
+        err.print(f"[red]--base-seed {base} is below {CONFIRMATION_BASE_SEED}: its rows would read as screening[/]")
+        raise typer.Exit(2)
+    pairs = []
+    for claim in claims or []:
+        a, sep, b = claim.partition(":")
+        if not (sep and a and b):
+            err.print(f"[red]--claims takes A_GLOB:B_GLOB, got {claim!r}[/]")
+            raise typer.Exit(2)
+        pairs.append((a, b))
+    sources = []
+    for path in results:
+        if path.name != "results.jsonl" or not path.exists():
+            err.print(f"[red]{path} is not a results.jsonl[/]")
+            raise typer.Exit(2)
+        rows = [json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip()]
+        sources.append((path.as_posix(), rows))
+    doc = plan(sources, pairs, n=n, base_seed=base)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(dump(doc), encoding="utf8")
+    total = doc["total"]
+    err.print(f"wrote {out_path}: {total['cells']} cells, {total['trials']} trials, ~{total['estimate_hours']} h serial")
 
 
 @app.command()
