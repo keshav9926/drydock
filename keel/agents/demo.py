@@ -118,7 +118,8 @@ async def tool_chain(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     task = args.get("task", "file an issue")
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
     for _ in range(8):
-        resp = await ctx.model(messages, name="decide")
+        # W7 streams every model call (STREAMS, §9.3); the input says so, the program is the same.
+        resp = await ctx.model(messages, name="decide", stream=bool(args.get("stream")))
         if not resp.tool_calls:
             return {"answer": resp.text}
         # Calls the model wants made *before* it asks a human (W5-pre). Ordinary steps: each is

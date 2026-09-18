@@ -133,6 +133,27 @@ def test_a_fault_aimed_at_the_wrong_boundary_is_refused() -> None:
                                 "trigger": {"boundary": "before:tool_call", "landmark": "tool:x"}}]})
 
 
+def test_the_stream_boundary_is_addressed_by_its_chunk(tmp_path) -> None:
+    """`during:stream(chunk=k)` is one hook boundary with a parameter (§11.2, §24.5): a spec names a
+    batch, never the template, and the hook injector fires the boundary under that name."""
+    stream = {"boundary": "during:stream(chunk=3)", "landmark": "model:decide"}
+    assert from_doc({**T2, "mode": "hook", "faults": [{"id": "s", "type": "kill", "trigger": stream}]})
+    for bad in ("during:stream(chunk=k)", "during:stream(chunk=0)", "during:stream"):
+        with pytest.raises(CrashproofSpecError):
+            from_doc({**T2, "mode": "hook", "faults": [{"id": "s", "type": "kill",
+                                                        "trigger": {**stream, "boundary": bad}}]})
+    with pytest.raises(CrashproofSpecError):  # a hook boundary is not a shim boundary
+        from_doc({**T2, "faults": [{"id": "s", "type": "kill", "trigger": stream}]})
+
+    from crashproof.faults.injectors.hook import HookInjector
+
+    seen: list[tuple[str, str]] = []
+    injector = HookInjector.__new__(HookInjector)
+    injector.at = lambda landmark, boundary: seen.append((landmark, boundary))  # type: ignore[method-assign]
+    injector._at("during:stream", {"kind": "model", "name": "decide", "chunk": 3})
+    assert seen == [("model:decide", "during:stream(chunk=3)")]
+
+
 def test_the_workload_declares_its_landmarks() -> None:
     assert WORKLOAD.expected_occurrences("tool:create_issue") == 1
     assert WORKLOAD.expected_occurrences("tool:search") == 1

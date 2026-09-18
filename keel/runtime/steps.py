@@ -1863,7 +1863,7 @@ class _Chunks:
     Each batch is its own fenced transaction, appended while the attempt is still open, so a crash
     leaves STARTED(n) + STEP_CHUNK(n, 1..k) and no outcome — which the recovery table treats exactly
     as STARTED(n) alone, the class deciding. A fenced or failed append ends the attempt the way a
-    crash would. `during:stream` fires once a batch is durable, carrying its `chunk_no`."""
+    crash would. `during:stream` fires once a batch is durable, carrying `chunk=k` (§24.5)."""
 
     def __init__(self, engine: StepEngine, intent: StepIntent, attempt_no: int, started_seq: int) -> None:
         self.engine, self.intent, self.attempt_no, self.started_seq = engine, intent, attempt_no, started_seq

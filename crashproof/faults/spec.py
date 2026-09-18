@@ -12,6 +12,7 @@ the reproduction key and the pairing key for `compare`.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -52,6 +53,9 @@ HOOK_BOUNDARIES = (
     "during:child_wait",
     # Continuation segments (§4.9): the instant before SEGMENT_STARTED commits.
     "before:segment_write",
+    # STREAMS (§10.7): once the k-th STEP_CHUNK batch of an attempt is durable — seventeen of
+    # seventeen. A spec names the batch: `during:stream(chunk=3)`.
+    "during:stream(chunk=k)",
 )
 #: The three boundaries the proxy observes at the network edge — §11.2's correspondence table,
 #: one process further out than the shim. Model traffic never crosses it in the scripted
@@ -60,6 +64,14 @@ HOOK_BOUNDARIES = (
 PROXY_BOUNDARIES = ("before:tool_call", "after:tool_effect", "after:tool_return")
 #: `supervisor` is the one boundary that is not in the SUT: the harness executes it from outside.
 BOUNDARIES = (*SHIM_BOUNDARIES, *HOOK_BOUNDARIES, "supervisor")
+
+_CHUNK = re.compile(r"\(chunk=[1-9][0-9]*\)$")
+
+
+def boundary_name(boundary: str) -> str:
+    """A stream boundary is one boundary with a parameter (§11.2): `during:stream(chunk=3)` is an
+    occurrence of `during:stream(chunk=k)`, and the vocabularies hold the parameterised name."""
+    return _CHUNK.sub("(chunk=k)", boundary)
 
 #: Fault types that end the process, so the supervisor must have restarts left for them.
 RESTART_CAUSING = frozenset(
@@ -197,8 +209,10 @@ class Trigger(Frozen):
     delay_ms: int = 0
 
     def model_post_init(self, _: Any) -> None:
-        if self.boundary not in BOUNDARIES:
-            raise CrashproofSpecError(f"unknown boundary {self.boundary!r}; one of {BOUNDARIES}")
+        if boundary_name(self.boundary) not in BOUNDARIES or self.boundary.endswith("(chunk=k)"):
+            raise CrashproofSpecError(
+                f"unknown boundary {self.boundary!r}; one of {BOUNDARIES}, with a chunk number for k"
+            )
         if self.occurrence < 1:
             raise CrashproofSpecError("occurrence is 1-based")
 
@@ -263,12 +277,12 @@ class FaultSpec(Frozen):
                     f"fault {f.id!r}: type {f.type!r} is not built in {self.mode!r} mode; {why}"
                 )
             allowed = FAULT_BOUNDARIES.get(f.type)
-            if allowed and f.trigger.boundary not in allowed:
+            if allowed and boundary_name(f.trigger.boundary) not in allowed:
                 raise CrashproofSpecError(
                     f"fault {f.id!r}: {f.type} is only meaningful at {sorted(allowed)}, "
                     f"not {f.trigger.boundary}"
                 )
-            if f.trigger.boundary not in allowed_boundaries and f.trigger.boundary != "supervisor":
+            if boundary_name(f.trigger.boundary) not in allowed_boundaries and f.trigger.boundary != "supervisor":
                 why = (
                     "model traffic does not cross the proxy in the scripted configuration (§11.2)"
                     if self.mode == "proxy" and "model" in f.trigger.boundary

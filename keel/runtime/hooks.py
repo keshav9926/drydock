@@ -35,10 +35,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-#: The sixteen boundaries whose mechanisms exist today: the ten of the write path (§28.6), the
-#: three the inbox and approvals brought, the two delegation brought, and the continuation boundary.
-#: The remaining one — `during:stream(chunk=k)` — arrives with streaming and is absent rather than
-#: stubbed, so a spec naming it is refused instead of firing nothing.
+#: All seventeen (§11.2, §24.5): the ten of the write path (§28.6), the three the inbox and approvals
+#: brought, the two delegation brought, the continuation boundary, and the stream.
 BOUNDARIES = (
     "before:intent_commit",
     "after:intent_commit",
@@ -66,6 +64,11 @@ BOUNDARIES = (
     # SEGMENT_STARTED and its plan snapshot. A crash there re-executes the previous segment, whose
     # memoized outcomes reproduce the same boundary; a torn boundary is impossible.
     "before:segment_write",
+    # STREAMS (§9.3, §10.7): the instant a STEP_CHUNK batch is durable and the attempt still has no
+    # outcome — STARTED(n) + chunks 1..k, the recovery table's streamed row. The detail carries
+    # `chunk=k` (§24.5: `hooks.at("during:stream", fn, chunk=7)`), which a spec addresses as
+    # `during:stream(chunk=k)`.
+    "during:stream",
 )
 
 

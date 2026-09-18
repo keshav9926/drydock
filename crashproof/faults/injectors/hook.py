@@ -63,6 +63,8 @@ class HookInjector(Injector):
         kind, name = detail.get("kind"), detail.get("name")
         # The lease boundaries belong to the worker, not to a step, so they have no kind or name.
         landmark = landmark_of(kind, name) if kind and name else "lease:*"
+        if boundary == "during:stream":  # the batch is the boundary's parameter (§24.5)
+            boundary = f"during:stream(chunk={detail['chunk']})"
         self.at(landmark, boundary)
 
     def _execute(self, entry: Entry) -> None:

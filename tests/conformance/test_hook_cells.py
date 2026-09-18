@@ -100,6 +100,10 @@ WINDOW: dict[str, tuple[str, str]] = {
     # Continuation segments (§4.9). Before the boundary's one transaction nothing of it exists — no
     # SEGMENT_STARTED, no plan snapshot — while the segment it closes has already put to the World.
     "before:segment_write": ("no segment", "sent"),
+    # STREAMS (§10.7): STARTED(n) + STEP_CHUNK(n, 1), no outcome — the recovery table's streamed
+    # row. A model step has sent nothing to the World; a streaming *tool* emits its answer after the
+    # call, so for the three tool classes the request has landed (`sent`, set in the runner).
+    "during:stream(chunk=1)": ("running", "untouched"),
 }
 
 #: The boundaries only a gated run reaches. Their cells run `gated_tool_chain`, park, are granted
@@ -117,6 +121,13 @@ DELEGATE_STEP = 0
 #: under test carries a plan snapshot and a `compact_seq`, and C2 has something to rebuild.
 SEGMENT_BOUNDARIES = ("before:segment_write",)
 SEGMENT_ARGS = {"iterations": 4, "continue_every": 2, "compact_every": 2, "plan_every": 2, "sleep_at": None}
+#: The stream boundary (§10.7, §14.5), per class: a streamed MODEL step (`tool_chain` with the input's
+#: `stream`, W7's form) and a STREAMS tool of each class — `search` PURE with `partial_ok` (W7's
+#: `fetch_log` shape), `create_issue` IDEMPOTENT and EXTERNAL — each emitting its answer after the
+#: call. The fault lands once the first STEP_CHUNK batch is durable. S9 is judged here: chunks are
+#: the one thing that can raise a charge above its reservation.
+STREAM_BOUNDARIES = ("during:stream(chunk=1)",)
+STREAM_STEP = {"MODEL": 0, "PURE": 1, "IDEMPOTENT": 3, "EXTERNAL": 3}
 
 #: A fault that is not a crash leaves a different window, and the difference is the point rather
 #: than an exception to the rule. An ordinary `raise` before the effect runs is a tool failure: the
@@ -178,6 +189,9 @@ FAULTS: dict[str, tuple[str, ...]] = {
     # §14.5 names `os._exit(137)` and `blob_write_fail`; in-process both are a `StoreUnavailable`
     # raised before the boundary's transaction, which is exactly where a failed blob write lands.
     "before:segment_write": ("crash", "journal_error"),
+    # §14.5: `os._exit(137)` and `raise`. A raise mid-stream is the live break — the stream stopped
+    # and the worker did not — so it is disposed as an unknown outcome, never as the tool's error.
+    "during:stream(chunk=1)": ("crash", "raise"),
 }
 
 #: Invariants every cell is judged on, whatever its boundary. The same functions the benchmark
@@ -185,7 +199,9 @@ FAULTS: dict[str, tuple[str, ...]] = {
 #: judge is the mitigation (§28.6).
 #: S7 and S8 are in the grid for every cell and N/A wherever the workload gates or delegates
 #: nothing — the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
-JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "L1", "C1", "C2")
+#: S9 is N/A outside the stream cells: the verifier has no budget form yet, so it is judged in its
+#: sim form (§12.4) where a chunk can move a charge, and nowhere it would be a free pass.
+JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "S9", "L1", "C1", "C2")
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +230,7 @@ CELLS = [
         ("GATED",) if boundary in GATED_BOUNDARIES
         else ("DELEGATED",) if boundary in DELEGATION_BOUNDARIES
         else ("SEGMENTED",) if boundary in SEGMENT_BOUNDARIES
+        else tuple(STREAM_STEP) if boundary in STREAM_BOUNDARIES
         else tuple(UNDER_TEST)
     )
 ]
@@ -254,21 +271,28 @@ def _keel(clock: FakeClock, variant: str) -> Keel:
     )
 
 
-def _arm(cell: Cell, step: int, landed: list[str]) -> None:
+def _arm(cell: Cell, step: int, landed: list[str], snap: Any = None) -> None:
     """One hook, one firing. A boundary that fires twice would make the window ambiguous, and a
-    fault that keeps firing after the crash would be measuring the successor as well."""
+    fault that keeps firing after the crash would be measuring the successor as well. `snap` reads
+    the window at the instant of the fault, for a fault the worker survives and goes on from."""
     spent: list[bool] = []
+    # `during:stream(chunk=1)` is the hook `during:stream` with `chunk=1` in its detail (§24.5).
+    name, _, chunk = cell.boundary.partition("(chunk=")
 
     def hook(boundary: str, detail: dict[str, Any]) -> None:
-        if spent or boundary != cell.boundary:
+        if spent or boundary != name:
             return
         # Lease boundaries carry no step; step boundaries must land on the one under test, because
         # the PURE read fires the same boundary two steps earlier and killing there measures a
         # different window (the trap the day-2 demo already paid for).
         if "step_index" in detail and detail["step_index"] != step:
             return
+        if chunk and detail.get("chunk") != int(chunk.rstrip(")")):
+            return
         spent.append(True)
         landed.append(f"step={detail.get('step_index', '-')} attempt={detail.get('attempt_no', '-')}")
+        if snap is not None:
+            snap()
         if cell.fault == "crash":
             raise hooks.Crash(f"power cut at {boundary}")
         if cell.fault == "journal_error":
@@ -758,6 +782,166 @@ async def run_segment_cell(cell: Cell) -> Result:
         await server.stop()
 
 
+class _Billing(ScriptedProvider):
+    """The provider's side of S9 (§12.4, sim form): every answer it produced is billed — streamed
+    and cut, crashed, or completed — at its full usage, which is what the provider would charge."""
+
+    def __init__(self, script: Any) -> None:
+        super().__init__(script)
+        self.billed = 0
+
+    async def complete(self, req: Any) -> Any:
+        resp = await super().complete(req)
+        self.billed += resp.usage.input_tokens + resp.usage.output_tokens
+        return resp
+
+
+def _streamed(spec: Any, **extra: Any) -> Any:
+    """The same registration with STREAMS: the call, then its answer emitted a field at a time."""
+    import json
+
+    from keel.core.protocols import Modifier
+    from keel.effects.registry import tool
+
+    @tool(effect=spec.effect_class, resolution=spec.resolution, timeout=spec.timeout,
+          idempotency=spec.idempotency, modifiers=(Modifier.STREAMS,), name=spec.name, **extra)
+    async def run(args: Any, tctx: Any) -> Any:
+        result = await spec.run(args, tctx)
+        for piece in json.dumps(result, sort_keys=True).split(","):
+            await tctx.emit(piece)
+        return result
+
+    if spec.probe is not None:
+        run.probe_hook(spec.probe)
+    return run
+
+
+async def run_stream_cell(cell: Cell) -> Result:
+    """`during:stream(chunk=k)` (§10.7, §14.5): the instant a STREAMS attempt's first STEP_CHUNK batch
+    is durable and its outcome is not.
+
+    The claims: at the fault the journal holds STARTED + chunks and no outcome; a crash is disposed by
+    the class exactly as STARTED alone would be (MODEL and PURE a new attempt, IDEMPOTENT the same key,
+    EXTERNAL AMBIGUOUS and its probe); a raise — the stream broken on a live worker — is an unknown
+    outcome, retried or resolved, except PURE's `partial_ok`, which completes with what arrived; no
+    chunk of an attempt that did not complete is ever the result; and S9, the charge never below
+    what the provider billed, abandoned attempts included.
+    """
+    from keel.runtime.retry import RetryPolicy
+
+    klass = cell.effect_class
+    step = STREAM_STEP[klass]
+    variant = "EXTERNAL" if klass == "MODEL" else ("IDEMPOTENT" if klass == "IDEMPOTENT" else "EXTERNAL")
+    result = Result(cell=cell)
+    identity = None if klass == "MODEL" else _identity(klass, variant)
+    world = build_world()
+    server = WorldServer(world, port=0)
+    await server.start()
+    previous_url = demo.WORLD_URL
+    demo.WORLD_URL = server.base_url
+    try:
+        clock = FakeClock()
+        search, create = demo.search, demo.create_issue_tool(variant)
+        if klass == "PURE":
+            search = _streamed(search, partial_ok=True)
+        elif klass != "MODEL":
+            create = _streamed(create)
+        provider = _Billing(demo.SCRIPT)
+        k = Keel(journal=MemoryJournal(clock=clock), provider=provider, tools=[search, create],
+                 programs=[demo.tool_chain], clock=clock)
+        # One retry for model and tool alike: a stream broken on a live worker is an unknown outcome,
+        # and whether it recovers is what the cell shows — under NO_RETRY it would only fail the run.
+        policy = RetryPolicy(max_attempts=2, base_s=0.0)
+        handle = await k.start(demo.tool_chain, {"task": "file an issue", "stream": klass == "MODEL"})
+
+        async def work(worker_id: str, lease: Any) -> None:
+            with contextlib.suppress(BaseException):
+                await k.worker(worker_id=worker_id, lease_ttl=TTL, retry=policy, model_retry=policy).execute(lease)
+
+        landed: list[str] = []
+        chunked: list[bool] = []
+
+        def snap() -> None:
+            # Read at the instant of the fault, synchronously: a raise leaves the worker alive, and what
+            # it does next — the outcome, a retry — is the disposal, not the window.
+            log = list(k.journal._events[handle.run_id])
+            result.window = _window(fold(log), step, world, identity)
+            chunked.append(any(e.type == "STEP_CHUNK" and e.step_index == step for e in log))
+
+        _arm(cell, step, landed, snap)
+        lease = await k.journal.claim("w1", timedelta(seconds=TTL))
+        assert lease is not None
+        await work("w1", lease)
+        hooks.reset()
+        result.fired = bool(landed)
+        result.landed_at = landed[0] if landed else ""
+        expected = "running/" + ("untouched" if klass == "MODEL" else "sent")
+        result.window_ok = not result.fired or (result.window == expected and chunked == [True])
+
+        clock.advance(TTL + 2)
+        await k.journal.reap()
+        successor = await k.journal.acquire(handle.run_id, "w2", timedelta(seconds=TTL))
+        if successor is not None:
+            result.recovered = True
+            await work("w2", successor)
+
+        events = await k.events(handle.run_id)
+        final = fold(events)
+        result.status = final.phase
+        row = final.steps.get(step)
+        result.disposal = (row.state if row else "—") + (
+            " partial" if row is not None and isinstance(row.result, dict) and row.result.get("partial") else ""
+        )
+        result.applied = world.applied_counts().get(identity, 0) if identity else sum(world.applied_counts().values())
+        result.receipts = sum(1 for r in world.receipts if identity is None or r.logical_identity == identity)
+
+        replay = await run_verify(k.journal, handle.run_id, demo.tool_chain.fn, tools=k.tools)
+        verdicts = invariants.verify(
+            invariants.TrialFacts(
+                world_receipts=[
+                    {"endpoint": r.endpoint, "effect_key": r.effect_key,
+                     "logical_identity": r.logical_identity, "ts": r.ts}
+                    for r in world.receipts
+                ],
+                world_applied=world.applied_counts(),
+                sut_committed={
+                    e.external_ref
+                    for e in (await k.journal.effects(handle.run_id))
+                    if e.status in ("COMMITTED", "RESOLVED_COMMITTED") and e.external_ref
+                },
+                journal=[
+                    {"seq": e.seq, "type": e.type, "ts": e.ts.isoformat(),
+                     "step_index": e.step_index, "attempt_no": e.attempt_no,
+                     "body": e.body.model_dump(mode="json")}
+                    for e in events
+                ],
+                status=_status(final.phase),
+                required_effects=required_effects(variant),
+                claims=KeelAdapter.claims,
+                effect_class="EXTERNAL" if klass == "MODEL" else klass,
+                faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
+                restarts=1 if result.recovered else 0,
+                replay=replay.as_dict(),
+            )
+        )
+        result.verdicts = {n: v for n, v in verdicts.as_dict().items() if n in JUDGED}
+        result.details = {n: f.detail for n, f in verdicts.findings.items() if n in JUDGED}
+        # S9, sim form (§12.4): Σ charged ≥ Σ provider-billed, every attempt that asked counted.
+        charged = final.charged.tokens_charged
+        result.verdicts["S9"] = "PASS" if charged >= provider.billed > 0 else "FAIL"
+        result.details["S9"] = f"charged {charged} >= billed {provider.billed}"
+        # The cell's own claim beyond the verifier's: the answer is never a stream's partial text. A
+        # completed streamed step's result is the one outcome; `partial` only where PURE allowed it.
+        if row is not None and isinstance(row.result, dict) and row.result.get("partial") and klass != "PURE":
+            result.verdicts["S3"] = "FAIL"
+            result.details["S3"] = f"a partial result became step {step}'s outcome"
+        return result
+    finally:
+        demo.WORLD_URL = previous_url
+        hooks.reset()
+        await server.stop()
+
+
 def _identity(effect_class: str, variant: str) -> str:
     """The logical identity of the effect this cell aims at. The two bands run against different
     endpoints — `issues.create` honours nothing, `issues.upsert` deduplicates — so the identity is
@@ -808,6 +992,7 @@ async def test_cell(cell: Cell) -> None:
         run_gated_cell if cell.boundary in GATED_BOUNDARIES
         else run_delegation_cell if cell.boundary in DELEGATION_BOUNDARIES
         else run_segment_cell if cell.boundary in SEGMENT_BOUNDARIES
+        else run_stream_cell if cell.boundary in STREAM_BOUNDARIES
         else run_cell
     )
     result = await runner(cell)
@@ -890,15 +1075,16 @@ def render() -> str:
         f"{len(ran)} cells run, {len(CELLS) - len(ran)} N/A, {len(failed)} failed. "
         f"Regenerate with `uv run pytest tests/conformance -q`.",
         "",
-        "Sixteen of the seventeen boundaries exist: the ten of the write path (§28.6), the three the",
-        "inbox and approvals brought with them (§4.10), the two delegation brought (§4.11), and the",
-        "continuation boundary (§4.9). The remaining one — `during:stream(chunk=k)`, with streaming —",
-        "is absent rather than stubbed, so a spec naming it is refused instead of firing nothing.",
-        "§29.2's *all seventeen hook boundaries* is the honest completion date.",
+        "All seventeen boundaries exist: the ten of the write path (§28.6), the three the inbox and",
+        "approvals brought with them (§4.10), the two delegation brought (§4.11), the continuation",
+        "boundary (§4.9), and `during:stream(chunk=k)` with STREAMS (§10.7) — §29.2's *all seventeen",
+        "hook boundaries*.",
         "",
         "S8 is judged here and nowhere else yet: these cells hold every journal in the tree, and the",
         "matrix's collector reads one per trial, so the matrix prints N/A with that reason (§15.11).",
-        "C2 is N/A wherever the workload never crosses a continuation boundary.",
+        "C2 is N/A wherever the workload never crosses a continuation boundary. S9 is judged in its",
+        "sim form (§12.4: Σ charged ≥ Σ provider-billed, abandoned attempts included) on the stream",
+        "cells only — the one boundary where a chunk can move a charge — and is N/A elsewhere.",
         "",
     ]
     return "\n".join(lines)
