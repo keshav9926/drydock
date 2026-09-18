@@ -80,8 +80,11 @@ class Worker:
         breaker: CircuitBreaker | None = None,
         segment_steps: int = segments.FORCED_SEGMENT_STEPS,
         policy: Any = None,
+        sandbox: Any = None,
     ) -> None:
         self.journal = journal
+        #: §20.5: where LOCAL_FS tools write — a directory per run per lease epoch.
+        self.sandbox = sandbox
         #: §20.2: consulted at every live TOOL step's entry, in every run this worker holds.
         self.policy = policy
         #: N (§18.3): where a forced continuation boundary falls. Configuration, never program input.
@@ -203,6 +206,7 @@ class Worker:
             cancel_grace_s=self.cancel_grace,
             breaker=self.breaker,
             allowed_tools=caps,
+            sandbox=self.sandbox,
         )
         ctx = Ctx(
             engine,

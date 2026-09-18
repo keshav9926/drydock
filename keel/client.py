@@ -112,6 +112,7 @@ class Keel:
         clock: Clock | None = None,
         programs: Iterable[Program] = (),
         policy: Any = None,
+        sandbox: Any = None,
     ) -> None:
         if dsn and journal:
             raise KeelError("pass exactly one of dsn / journal")
@@ -129,6 +130,8 @@ class Keel:
         #: §20.2 / §24.1: the `Policy` every worker built from this client consults (StaticPolicy,
         #: `keel/runtime/policy.py`, is the default implementation). None: allow-all.
         self.policy = policy
+        #: §20.5: `LocalSandbox(root)` gives LOCAL_FS tools a per-epoch workspace; None, no workspace.
+        self.sandbox = sandbox
         self.programs: dict[str, Program] = {p.name: p for p in programs} or dict(PROGRAMS)
 
     # --- registration --------------------------------------------------------
@@ -223,6 +226,7 @@ class Keel:
             tools=self.tools,
             clock=self.clock,
             policy=self.policy,
+            sandbox=self.sandbox,
             **kwargs,
         )
 

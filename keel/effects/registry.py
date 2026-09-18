@@ -84,6 +84,10 @@ class ToolSpec:
             raise ContractViolation(f"{self.name}: partial_ok is only valid with PURE")
         if self.timeout <= 0:
             raise ToolRegistrationError(f"{self.name}: timeout must be positive")
+        if Modifier.LOCAL_FS in self.modifiers and self.effect_class not in (EffectClass.PURE, EffectClass.IDEMPOTENT):
+            # §9.3: EXTERNAL + LOCAL_FS needs the Sandbox snapshot and its tree-hash probe, which are
+            # git, which is cut (§29.2). Until then a workspace write is PURE or IDEMPOTENT-by-content.
+            raise ContractViolation(f"{self.name}: LOCAL_FS is PURE or IDEMPOTENT-by-content (no snapshot/probe)")
 
     # decorators: @create_issue.probe / @create_issue.compensate (§24.3)
     def probe_hook(self, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -195,6 +199,7 @@ class _ToolExecutor:
             attempt_no=sctx.attempt_no,
             effect_key=sctx.effect_key,
             deadline=sctx.deadline,
+            workspace=sctx.workspace,
             credentials={n: os.environ[n] for n in spec.secrets if n in os.environ},
             resources=sctx.resources,
             emit=sctx.emit,

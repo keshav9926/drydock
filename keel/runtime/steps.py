@@ -200,6 +200,7 @@ class StepEngine:
         cancel_grace_s: float = DEFAULT_CANCEL_GRACE_S,
         breaker: Any = None,
         allowed_tools: frozenset[str] | None = None,
+        sandbox: Any = None,
     ) -> None:
         self.journal = journal
         self.lease = lease
@@ -226,6 +227,8 @@ class StepEngine:
         self.breaker = breaker
         #: The run's capability set (`runtime/policy.py`): what a delegation may pass on (§17.2).
         self.allowed_tools = allowed_tools
+        #: §20.5: the per-epoch workspace a LOCAL_FS tool is handed (`runtime/sandbox.py`).
+        self.sandbox = sandbox
         self._waiting_intent: StepIntent | None = None
         #: VERIFY (§10.9). One flag rather than a second loop: a separate replayer would drift from
         #: this one, and the drift would be invisible — VERIFY would keep passing while the thing
@@ -1461,6 +1464,10 @@ class StepEngine:
         eff_class = intent.effect_class
         if eff_class is not None and eff_class != EffectClass.PURE:
             await self._pre_dispatch_gate(timeout)
+        workspace = None
+        if self.sandbox is not None and Modifier.LOCAL_FS in intent.modifiers:
+            # This epoch's own directory: a zombie of an older epoch writes only into its own (§20.5).
+            workspace = await asyncio.to_thread(self.sandbox.checkout, self.lease.run_id, self.lease.epoch)
         sctx = StepCtx(
             run_id=self.lease.run_id,
             run_root_id=self.run_root_id,
@@ -1470,6 +1477,7 @@ class StepEngine:
             effect_key=intent.effect_key,
             provider=self.provider,
             tools=self.tools,
+            workspace=workspace,
         )
         executor = EXECUTORS[intent.kind]
         chunks = _Chunks(self, intent, attempt_no, started_seq) if Modifier.STREAMS in intent.modifiers else None

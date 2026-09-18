@@ -127,6 +127,8 @@ class StepCtx:
     resources: dict[str, Any] = field(default_factory=dict)
     #: A STREAMS attempt's chunk sink, `await emit(piece, usage_cum=None)`; None without STREAMS.
     emit: Any = None
+    #: A LOCAL_FS tool's per-epoch checkout (`runtime/sandbox.py`, §20.5); None without a Sandbox.
+    workspace: Any = None
 
 
 @runtime_checkable
