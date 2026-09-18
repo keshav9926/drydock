@@ -27,7 +27,10 @@ lines and fail on a *behavioural* change rather than on a clock.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from crashproof.verifier.invariants import TrialFacts, iso
@@ -367,6 +370,48 @@ def _moral(row: Any, facts: TrialFacts, target: str, applied: int, receipts: int
         f"finished the run — {receipts} request, {applied} applied, nothing re-sent and nothing "
         f"guessed."
     )
+
+
+# --- the page -----------------------------------------------------------------
+#: Where keel's page takes its data. Opened bare, the page offers a file picker instead.
+EMPTY = '<script id="journal" type="application/json">null</script>'
+
+
+def timeline_page(row: Any, facts: TrialFacts) -> str:
+    """§26.2's page with this trial in it: keel's `api/static/timeline.html` with the journal and
+    the verdict strip embedded, so the one file is the link — no server, nothing beside it.
+
+    The page is keel's and renders without anything only Crashproof can produce (§26.2); the strip
+    and the World line are ours, and this is where they are added. keel's file is found where keel
+    is installed and read as text — nothing of keel is imported or run, the boundary
+    `test_layering` enforces. A runtime with no journal gets a page that says so beside the same
+    World line, which is the contrast the demo prints."""
+    spec = importlib.util.find_spec("keel")
+    template = (Path(spec.origin).parent / "api" / "static" / "timeline.html").read_text(encoding="utf8")
+    if EMPTY not in template:
+        raise ValueError("keel's timeline.html no longer carries the journal placeholder")
+    fault = (placement(facts) or [{}])[0]
+    target = _required(facts)
+    doc = {
+        "events": facts.journal,
+        "verdict": {
+            "cell": row.cell_id,
+            "trial": row.trial_id,
+            "seed": row.seed,
+            "recovery_mechanism": row.recovery_mechanism,
+            "fault": {k: fault.get(k) for k in ("type", "boundary", "landmark")},
+            "world": {
+                "effect": target,
+                "receipts": sum(1 for r in facts.world_receipts if r["logical_identity"] == target),
+                "applied": facts.world_applied.get(target, 0),
+            },
+            "verdicts": row.verdicts,
+        },
+    }
+    # Every `<` as JSON's own < escape, so nothing in a journal can close the element it sits in.
+    # Not `sort_keys`: the strip prints the verdicts in the row's order, S1 first.
+    data = json.dumps(doc, ensure_ascii=False, default=str).replace("<", "\\u003c")
+    return template.replace(EMPTY, EMPTY.replace(">null<", f">{data}<"), 1)
 
 
 # --- reading the artefacts ----------------------------------------------------

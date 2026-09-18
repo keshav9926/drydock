@@ -364,6 +364,9 @@ def demo(
     seed: Annotated[int, typer.Option("--seed")] = 7,
     out_dir: Annotated[Path, typer.Option("--out")] = Path("bench/results/demo"),
     canonical: Annotated[bool, typer.Option("--canonical", help="elide ids, times and paths, for diffing")] = False,
+    html_out: Annotated[
+        Path | None, typer.Option("--html", help="also write the timeline page, journal and verdicts embedded")
+    ] = None,
 ) -> None:
     """One crash, one recovery, the whole argument on one screen (§26.3).
 
@@ -373,6 +376,8 @@ def demo(
 
     Run it twice: once as it is, and once with `--adapter langgraph --config sync`. Same fault,
     same landmark, same World, same seed.
+
+    `--html F` writes §26.2's static page for the same trial: one file, openable from disk.
     """
     import json
 
@@ -411,6 +416,10 @@ def demo(
     where = "<results>" if canonical else store.results_path
     for line in script.narrate(row, facts, row_path=where, canonical=canonical):
         out.print(line, highlight=False, markup=False, soft_wrap=True)
+    if html_out is not None:
+        html_out.parent.mkdir(parents=True, exist_ok=True)
+        html_out.write_text(script.timeline_page(row, facts), encoding="utf8")
+        err.print(f"wrote {html_out}")
     # A demo that exits 0 on a violated invariant is a screenshot, not a check.
     raise typer.Exit(EXIT_INVARIANT_FAIL if _violated([row]) else 0)
 

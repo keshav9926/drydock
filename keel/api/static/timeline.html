@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keel timeline</title>
+<!--
+  The one page (§26.2): a Keel journal folded into BEFORE CRASH / AFTER RESTART, the same two
+  columns as §26.1. Vanilla JS, no build step, no framework, no network.
+
+  The data is an exported journal, not a stream: FastAPI + SSE is cut (§29.2's cut order). Either
+  it is embedded below by `crashproof demo --html OUT` (with the verdict strip, which only
+  Crashproof can produce), or the page is opened bare and a file is loaded into it:
+  `keel events RUN --json` output, or a trial's `sut/journal.json`.
+
+  The fold here is display-only. C1's projection hash comes from keel.state.fold alone.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbf9; --fg: #1d1f21; --muted: #5b6168; --rule: #d9dad6; --panel: #f2f2ee;
+  --live: #1a5fb4; --memo: #6b7075; --recovered: #8a5a00; --cut: #b3261e; --pass: #1f7a3a; --fail: #b3261e;
+  --mark: #fff3c4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161819; --fg: #e4e4e0; --muted: #a3a8ad; --rule: #34383b; --panel: #1f2224;
+    --live: #8ab4f8; --memo: #9aa0a6; --recovered: #f2c46d; --cut: #ff8a80; --pass: #6fcf87; --fail: #ff8a80;
+    --mark: #3b3420;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main, footer { max-width: 1400px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.3rem; margin: 8px 0 4px; word-break: break-all; }
+h2 { font-size: .8rem; letter-spacing: .08em; margin: 0 0 8px; }
+.meta, .note, footer { color: var(--muted); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; margin-top: 16px; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+section.col { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+th, td { text-align: left; padding: 2px 8px 2px 0; vertical-align: top; }
+th { color: var(--muted); font-weight: 400; border-bottom: 1px solid var(--rule); }
+td.num { text-align: right; }
+tr.recovery td { font-weight: 700; }
+tr.ambiguous td { background: var(--mark); }
+tr.memo td { color: var(--memo); font-style: italic; }
+td.origin-live { color: var(--live); }
+td.origin-memo { color: var(--memo); }
+td.origin-recovered { color: var(--recovered); }
+.cut { color: var(--cut); font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; margin: 8px 0 0; padding: 0; list-style: none; }
+.verdict { margin-top: 16px; font: .85rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.pass { color: var(--pass); } .fail { color: var(--fail); font-weight: 700; } .na { color: var(--muted); }
+.load { margin-top: 16px; }
+footer { font-size: .8rem; border-top: 1px solid var(--rule); }
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+<h1 id="title">Keel timeline</h1>
+<p class="meta" id="meta"></p>
+<p class="note" id="note" hidden></p>
+<div class="cols" id="cols" hidden>
+  <section class="col" aria-labelledby="before-title"><h2 id="before-title">BEFORE CRASH</h2><div id="before"></div><ul class="cut" id="cut"></ul></section>
+  <section class="col" aria-labelledby="after-title"><h2 id="after-title">AFTER RESTART</h2><div id="after"></div></section>
+</div>
+<div class="verdict" id="verdict" hidden><div id="world"></div><div id="strip"></div></div>
+<div class="load" id="load" hidden>
+  <label>Load a journal: <input type="file" id="file" accept=".json,.jsonl,application/json"></label>
+  <p class="note"><code>keel events RUN --json &gt; run.json</code>, or a trial's <code>sut/journal.json</code>.</p>
+</div>
+</main>
+<footer>
+A static export: FastAPI + SSE are cut (§29.2's cut order), so this page reads an exported journal
+rather than a live stream, and shows it as it was when exported. The fold is display-only; a
+projection hash comes from <code>keel.state.fold</code> alone.
+</footer>
+<script id="journal" type="application/json">null</script>
+<script>
+"use strict";
+const CRASH_CAUSES = ["ORPHANED", "DRAIN"];  // §4.19: the split is the RECOVERY_STARTED with one of these
+const WAITING = { approval: "WAITING_APPROVAL", children: "WAITING_CHILDREN", sleep: "SLEEPING",
+  signal: "WAITING_SIGNAL", resolution: "WAITING_RESOLUTION", retry_backoff: "SLEEPING" };
+const OUTCOMES = ["STEP_COMPLETED", "STEP_FAILED", "STEP_AMBIGUOUS", "STEP_RESOLVED", "STEP_CANCELLED"];
+
+// `keel events --json` is [{env, body}]; a trial's sut/journal.json is {events: [{seq, type, ...}]}.
+function normalise(doc) {
+  const raw = Array.isArray(doc) ? doc : doc && Array.isArray(doc.events) ? doc.events : null;
+  if (!raw) return null;
+  return raw.map(e => e.env
+    ? { seq: e.env.seq, epoch: e.env.lease_epoch, type: e.body.type, step: e.body.step_index ?? null, body: e.body, run: e.env.run_id }
+    : { seq: e.seq, epoch: e.lease_epoch, type: e.type, step: e.step_index ?? null, body: e.body || {}, run: doc.run_id })
+    .sort((a, b) => a.seq - b.seq);
+}
+
+function tokens(b) { return b.usage ? (b.usage.input_tokens || 0) + (b.usage.output_tokens || 0) : 0; }
+
+function fold(events) {
+  const st = { phase: "-", program: "", version: "", steps: new Map(), liveFrom: {}, epochs: new Set(), tokens: 0 };
+  for (const e of events) {
+    const b = e.body, s = st.steps.get(e.step);
+    if (e.epoch > 0) st.epochs.add(e.epoch);
+    if (e.type === "RUN_CREATED") { st.phase = "CREATED"; st.program = b.program; st.version = b.program_version; }
+    else if (e.type === "RECOVERY_STARTED") { if (st.phase !== "PAUSED") st.phase = "RUNNING"; }
+    else if (e.type === "RECOVERY_COMPLETED") st.liveFrom[e.epoch] = b.live_from_step;
+    else if (e.type === "RUN_WAITING") st.phase = WAITING[b.reason] || "WAITING";
+    else if (e.type === "RUN_PAUSED") st.phase = "PAUSED";
+    else if (e.type === "RUN_PAUSE_LIFTED") st.phase = "RUNNING";
+    else if (["RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED", "RUN_SUSPENDED"].includes(e.type)) st.phase = e.type.slice(4);
+    else if (e.type === "STEP_INTENDED")
+      st.steps.set(e.step, { i: e.step, kind: b.kind, name: b.name, cls: b.effect_class, state: "INTENDED", attempt: 0, outcome: null, tokens: 0, note: "" });
+    else if (e.type === "STEP_ATTEMPT_STARTED" && s) { s.state = "RUNNING"; s.attempt = b.attempt_no; }
+    else if (e.type === "APPROVAL_DECIDED" && s) s.note = b.decision + (b.by ? " by " + b.by : "");
+    else if (OUTCOMES.includes(e.type)) {
+      st.tokens += tokens(b);
+      if (s) { s.state = e.type === "STEP_RESOLVED" ? b.resolution : e.type.slice(5); s.outcome = e.epoch; s.tokens += tokens(b); }
+    }
+  }
+  return st;
+}
+
+// memo | recovered | live against an epoch, as `keel events` computes it (§25.4).
+function origin(st, i, epoch) {
+  const s = st.steps.get(i);
+  if (!s) return "";
+  const lf = st.liveFrom[epoch];
+  if (lf !== undefined && i >= lf) return "live";
+  return s.outcome === epoch ? "recovered" : "memo";
+}
+
+function short(v) {
+  const t = typeof v === "string" ? v : JSON.stringify(v) ?? "";
+  return t.length > 60 ? t.slice(0, 59) + "…" : t;
+}
+
+function detail(e) {
+  const b = e.body;
+  switch (e.type) {
+    case "RUN_CREATED": return `${b.program} ${b.program_version}`;
+    case "RECOVERY_STARTED": return `cause=${b.cause} from_seq=${b.from_seq}`;
+    case "RECOVERY_COMPLETED": return `live_from_step=${b.live_from_step} replayed_steps=${b.replayed_steps}`;
+    case "STEP_INTENDED": return `${b.kind} ${b.name}` + (b.effect_class ? ` [${b.effect_class}]` : "");
+    case "STEP_ATTEMPT_STARTED": return `attempt ${b.attempt_no}`;
+    case "STEP_COMPLETED": return b.usage ? `${b.usage.input_tokens}/${b.usage.output_tokens} tok` : short(b.result);
+    case "STEP_FAILED": return `${b.error} retryable=${b.retryable}`;
+    case "STEP_AMBIGUOUS": return `cause=${b.cause}`;
+    case "STEP_RESOLVED": return `${b.resolution} via ${b.method}`;
+    case "APPROVAL_DECIDED": return b.decision + (b.by ? ` by ${b.by}` : "");
+    case "RUN_WAITING": return b.reason;
+    case "RUN_COMPLETED": return short(b.result);
+    case "RUN_FAILED": return short(b.error);
+    case "RUN_SUSPENDED": return short(b.reason);
+  }
+  return "";
+}
+
+const MARK = { PASS: "✓", FAIL: "✗" };
+
+function verdictLines(v) {
+  if (!v) return null;
+  const w = v.world || {};
+  return {
+    world: `World  ${w.effect}  receipts=${w.receipts}  applied=${w.applied}` + (v.recovery_mechanism ? `  ·  recovery=${v.recovery_mechanism}` : ""),
+    strip: Object.entries(v.verdicts || {}).map(([k, x]) => ({ name: k, verdict: x, text: k + (MARK[x] || "·") })),
+  };
+}
+
+// The whole page as data, so it can be checked without a browser.
+function timeline(doc) {
+  const verdict = doc && !Array.isArray(doc) ? doc.verdict || null : null;
+  const events = normalise(doc);
+  const out = { title: verdict ? `${verdict.cell} · ${verdict.trial}` : "Keel timeline", meta: "", note: null,
+    before: null, after: null, verdict: verdictLines(verdict) };
+  if (!events) {
+    out.note = doc && doc.events === null
+      ? "No journal exposed: this runtime keeps a checkpoint, not an event log, so neither column has anything to read. The World line below is the finding."
+      : "Not a Keel journal export: expected `keel events RUN --json` output or a trial's sut/journal.json.";
+    return out;
+  }
+  const st = fold(events), latest = Math.max(0, ...st.epochs);
+  const run = events.find(e => e.run)?.run;
+  out.title = (run ? `run ${run}` : st.program || "run") + (verdict ? ` · ${verdict.cell} · ${verdict.trial}` : "");
+  out.meta = `${st.program} ${st.version} · phase=${st.phase} · epochs=${st.epochs.size} · tokens ${st.tokens}`;
+  const crash = events.filter(e => e.type === "RECOVERY_STARTED" && CRASH_CAUSES.includes(e.body.cause)).pop();
+  const pre = crash ? events.filter(e => e.seq < crash.seq) : [];
+  const post = crash ? events.filter(e => e.seq >= crash.seq) : events;
+
+  if (crash) {
+    const was = fold(pre), last = pre[pre.length - 1];
+    out.before = {
+      title: `BEFORE CRASH · state @ seq ${last ? last.seq : "-"} · epoch ${last ? last.epoch : "-"} ${verdict ? "killed" : "ended"}`,
+      head: ["step", "what", "state", "tokens"],
+      rows: [...was.steps.values()].sort((a, b) => a.i - b.i).map(s => ({
+        cells: [`#${s.i}`, `${s.kind} ${s.name}` + (s.cls ? ` [${s.cls}]` : ""),
+          s.state + (s.state === "RUNNING" ? ` attempt ${s.attempt}` : "") + (s.note ? ` · ${s.note}` : ""),
+          s.tokens ? String(s.tokens) : ""],
+        cls: s.state === "RUNNING" ? "ambiguous" : "" })),
+      cut: [],
+    };
+    const f = verdict && verdict.fault;
+    if (f && f.type) out.before.cut.push(`✂ ${f.type} @ ${f.boundary} · landmark ${f.landmark} · trial ${verdict.trial}`);
+    const open = [...was.steps.values()].filter(s => s.state === "RUNNING").map(s => `#${s.i}`);
+    out.before.cut.push(`✂ last append seq ${last ? last.seq : "-"}` + (open.length ? ` · ${open.join(" ")} started, no outcome` : " · no step open"));
+  } else {
+    out.note = "No ORPHANED or DRAIN recovery in this journal: nothing crashed, so the run is one column.";
+  }
+
+  const rows = [];
+  for (const e of post) {
+    const o = e.step === null ? "" : origin(st, e.step, latest);
+    rows.push({ cells: [String(e.seq), e.step === null ? "-" : `#${e.step}`, e.type, detail(e), o],
+      cls: e.type === "RECOVERY_STARTED" ? "recovery" : e.type === "STEP_AMBIGUOUS" || e.type === "STEP_RESOLVED" ? "ambiguous" : "",
+      origin: o });
+    if (e === crash) {
+      const memo = [...st.steps.values()].filter(s => s.outcome !== null && s.outcome < crash.epoch && origin(st, s.i, crash.epoch) === "memo");
+      if (memo.length) rows.push({ cells: ["▸", memo.map(s => `#${s.i}`).join(" "), "memo",
+        `${memo.length} steps returned from the journal · nothing appended for them in epoch ${crash.epoch}`, "memo"], cls: "memo", origin: "" });
+    }
+  }
+  out.after = {
+    title: crash ? `AFTER RESTART · epoch ${crash.epoch} · cause=${crash.body.cause}` : "THE RUN · no restart",
+    head: ["seq", "step", "event", "detail", "origin"],
+    rows,
+  };
+  return out;
+}
+
+if (typeof document !== "undefined") {
+  const $ = id => document.getElementById(id);
+  const table = (head, rows) => {
+    const t = document.createElement("table"), thead = t.createTHead(), hr = thead.insertRow();
+    for (const h of head) { const th = document.createElement("th"); th.scope = "col"; th.textContent = h; hr.append(th); }
+    const body = t.createTBody();
+    for (const r of rows) {
+      const tr = body.insertRow();
+      if (r.cls) tr.className = r.cls;
+      r.cells.forEach((c, k) => {
+        const td = tr.insertCell();
+        td.textContent = c;
+        if (k === 0 && head[0] === "seq") td.className = "num";
+        if (k === r.cells.length - 1 && r.origin) td.className = "origin-" + r.origin;
+      });
+    }
+    return t;
+  };
+  const show = doc => {
+    const v = timeline(doc);
+    $("title").textContent = v.title;
+    document.title = v.title;
+    $("meta").textContent = v.meta;
+    $("note").hidden = !v.note;
+    $("note").textContent = v.note || "";
+    $("cols").hidden = !v.after;
+    $("before").replaceChildren();
+    $("after").replaceChildren();
+    $("cut").replaceChildren();
+    if (v.before) {
+      $("before-title").textContent = v.before.title;
+      $("before").append(table(v.before.head, v.before.rows));
+      for (const c of v.before.cut) { const li = document.createElement("li"); li.textContent = c; $("cut").append(li); }
+    } else {
+      $("before-title").textContent = "BEFORE CRASH · nothing crashed";
+    }
+    if (v.after) {
+      $("after-title").textContent = v.after.title;
+      $("after").append(table(v.after.head, v.after.rows));
+    }
+    $("verdict").hidden = !v.verdict;
+    if (v.verdict) {
+      $("world").textContent = v.verdict.world;
+      $("strip").replaceChildren(...v.verdict.strip.flatMap(s => {
+        const span = document.createElement("span");
+        span.className = s.verdict === "PASS" ? "pass" : s.verdict === "FAIL" ? "fail" : "na";
+        span.title = `${s.name} ${s.verdict}`;
+        span.textContent = s.text;
+        return [span, " "];
+      }));
+    }
+  };
+  const embedded = JSON.parse($("journal").textContent);
+  if (embedded !== null) show(embedded);
+  else $("load").hidden = false;
+  $("file").addEventListener("change", async ev => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try { show(JSON.parse(await file.text())); }
+    catch (err) { $("note").hidden = false; $("note").textContent = `Not a journal export: ${err.message}`; }
+  });
+}
+</script>
+</body>
+</html>
