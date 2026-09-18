@@ -36,6 +36,9 @@ jobs:
       - name: unit, property and conformance
         env:
           KEEL_PBT_PROFILE: ci
+          # The sim iterates sets of strings; with a per-process hash seed the same Hypothesis seed
+          # explores a different run on every job. Pinned, a red job reproduces locally.
+          PYTHONHASHSEED: "0"
         run: uv run pytest tests/unit tests/property tests/conformance -q --hypothesis-seed=0
       # The conformance cells write their table. If the committed one differs, the code and the
       # published artefact have diverged — which is exactly what a generated file is for.

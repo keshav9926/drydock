@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from keel.core.errors import Cancelled, NondeterminismDetected, PromptDrift
+from keel.core.errors import Cancelled, NondeterminismDetected, PromptDrift, StepFailed
 from keel.core.hashing import canonical_json
 from keel.journal.protocol import ReplayRow
 from keel.replay.determinism import logical_projection, logical_projection_hash
@@ -187,7 +187,16 @@ async def verify(
         cancelled_past_the_end = (
             state.cancel_acknowledged_at is not None and ctx.step_index >= state.next_step_index
         )
-        if state.phase == "FAILED" or cancelled_past_the_end:
+        # And a run parked between a decided failure and its terminal event: the drain that failed
+        # a DELEGATE step (`fail_parent`) may consume a pause in the same pass, so the run is PAUSED
+        # with its last step FAILED for good. The program re-raises that very failure, which is
+        # what the original will do on resume; RUN_FAILED is simply not written yet.
+        step = state.steps.get(getattr(exc, "step_index", -1))
+        journaled_failure = (
+            isinstance(exc, StepFailed) and step is not None and step.state == "FAILED"
+            and step.next_attempt_at is None and ctx.step_index >= state.next_step_index
+        )
+        if state.phase == "FAILED" or cancelled_past_the_end or journaled_failure:
             out.error = f"{type(exc).__name__}: {exc}"
         else:
             out.ok = False
