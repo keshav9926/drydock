@@ -267,16 +267,25 @@ that ran them, as every published run's do.
 - **K1 (everyone passes) has not fired.** It needs zero S1–S5 FAILs and zero raw duplicates at T2/T3
   in every F0 cell; in the week-2 matrix every arm but Keel duplicates the `EXTERNAL` issue at
   `after:tool_effect` 30 of 30, and Restate fails S1.
-- **K3 (unfair triggers) has not fired for the arms it can be computed on, and is not computable for
-  four.** `crashproof placement` over the week-2 shim trials puts 100 % of fired faults inside the
-  intended window in every tool-boundary cell of Keel and LangGraph ×3, and the arms never differ. For
-  DBOS ×2, Temporal and Restate it prints *not computable*: the placement join reads Keel's journal and
-  LangGraph's checkpoints, and not yet DBOS's steps, Temporal's history or Restate's journal — the same
-  per-runtime commit timestamps `ambiguity_window_width` needs (week 3). Model-boundary faults have no
-  K3 window. The proxy/shim agreement column is its cross-check: 87 of 112 comparable twins agree, and
+- **K3 (unfair triggers) fired for one trigger on one runtime: DBOS at `after:tool_return`.**
+  `crashproof placement` reads each runtime's own commit record (Keel's journal on the host clock,
+  LangGraph's checkpoints, DBOS's `completed_at_epoch_ms`, Temporal's `ActivityTaskCompleted`, Restate's
+  `Notification: Run`) and puts 100 % of fired faults inside the intended window in every tool-boundary
+  shim cell of Keel, LangGraph ×3, Temporal and Restate. DBOS lands 60 % / 53 % (`native`, EXTERNAL /
+  IDEMPOTENT) and 80 % / 57 % (`pydantic_ai`) there, 40 and 47 points from the other arms: its step
+  checkpoint is written off the event loop and often commits before the shim's kill. Joined per trial,
+  every in-window kill duplicated and every out-of-window kill did not (12/12, 14/14, 6/6, 13/13) — so
+  those four cells measure the kill's timing, not DBOS, and per §30 they are **exploratory**, not
+  headline; DBOS at `after:tool_effect` (100 % in window) is its T2 result. Model-boundary faults have no
+  K3 window. The proxy/shim agreement column is the cross-check: 87 of 112 comparable twins agree, and
   the 25 that differ are the instrument — `kill@after:tool_return` from outside lands after `taskkill`'s
-  latency (15 of them), `pause_past_ttl` parks the request at the proxy instead of freezing before the
-  send (6), and LangGraph `async`'s shim kill lands before its checkpoint flush (4, receipt counts only).
+  latency (15), `pause_past_ttl` parks the request at the proxy instead of freezing before the send
+  (6), and LangGraph `async`'s shim kill lands before its checkpoint flush (4, receipt counts only).
+- **K4 (window too narrow) is week 3's; its instrument exists.** `crashproof placement DIR --window`
+  measures `ambiguity_window_width` on baseline trials — World receipt to the SUT's own commit record —
+  median over W1 shim: DBOS 7.8 / 8.5 ms, Keel 9.1, LangGraph 12.3 (`async`) / 12.8 (`sync`) / 20.5
+  (`exit`), Temporal 18.7, Restate 23.4 (on the WSL clock its World shares). K4 also needs a realistic kill rate
+  to turn a width into an exposure, which the benchmark does not measure and does not invent.
 - **K5 (adapter infeasible) has not fired** for any merged arm. DBOS ×2, Temporal and Restate express
   W1, W5 and W5-pre in cited primitives with no counter, pre-send lookup, retry or dedup of the
   adapter's own, and all three F1 formulas carry a doc citation ([dbos](docs/adapters/dbos.md),
