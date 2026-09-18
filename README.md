@@ -92,7 +92,49 @@ How each arm is built, and the key formula behind its fairness level:
 [`docs/adapters/restate.md`](docs/adapters/restate.md). What a finding has to clear before it
 goes to someone else's issue tracker: [`docs/upstream-report-template.md`](docs/upstream-report-template.md).
 
-## Status — phase 8 of 8: outside the holder
+## Status — phase 9 of 10: depth
+
+Week 3 of §29.2. The runtime is complete to its v1 scope and the harness can say what its own
+instrument is doing. Every mechanism now has property rules over the real runtime, the last two hook
+boundaries exist, and the three §29.3 deliverables are in draft: the [write-up](docs/writeup.md), the
+[upstream reports](docs/upstream/README.md) (draft, not filed) and the release re-run to come.
+
+- **Property depth** (§12). `KeelMachine` drives the real worker, engine, inbox, approvals,
+  delegation, takeover, reaper, retry policies, breaker, segments and streams over `MemoryJournal` and a
+  `SimClock`, checks S1–S9, C1–C3, J1–J2 after every rule and L1–L3 at teardown, and turns a shrunk
+  failure into a fault spec (`sim.to_fault_spec`, `bench/specs/regressions/`). Five Keel bugs pinned
+  as r001–r005, and one design gap — an IDEMPOTENT outcome nobody knows hid an applied effect behind a
+  clean FAILED — amended in the document rather than patched (K6's first case).
+- **Long horizon** (§18). `ctx.sleep` parked on the store's clock; the durable plan as `PLAN_UPDATED`;
+  `ctx.compact()` as a MODEL step that resets the context projection; continuation segments —
+  `Continue(state)` with a program-declared model, `SEGMENT_STARTED`, the forced boundary, recovery
+  and VERIFY from the latest boundary, `state_schema_mismatch` → SUSPENDED, C2, `before:segment_write`
+  — and W3 `long_horizon_50` smoked on the Keel arm (50 puts, counter 49, 5 plan items, the sleep
+  honoured, recovery replaying 6 steps from segment 1 instead of 51).
+- **Streaming** (§10.7). `STEP_CHUNK` batched every 256 tokens / 500 ms under the fence, `partial_ok`
+  for PURE, a mid-stream failure disposed by the class, the budget charged from `usage_cum`,
+  `during:stream(chunk=k)` — **all seventeen boundaries**, 66 conformance cells (54 run, 12 N/A) —
+  `model_stream_truncate`, and W7 `streaming_answer` smoked on Keel; which arms can stream is on each
+  adapter page.
+- **The human's last moves** (§7, §20). `keel signal --resolve STEP=completed|failed|cancelled` and
+  `Keel.resolve_step` settle a `RESOLVED_UNKNOWN` step (a resolve implies the resume); `StaticPolicy`
+  with `allowed_tools` and `require_approval` as a pre-step verdict that takes two indices; the
+  §18.6 drift detectors on `keel show`; the `Sandbox` per-epoch checkout for `LOCAL_FS`; §20.7's
+  audit queries. Cut, in §29.2's own order: the Sandbox git snapshot, FastAPI + SSE; FORK stays cut.
+- **Honest numbers** (§15, §19.5). `crashproof confirm` writes the n = 300 plan from the rows (week 2's:
+  25 cells, 7 500 trials, running at `dcdd533`); `report` and `compare` tell the tiers apart by seed
+  and print screening in an appendix; `crashproof placement` reads every arm's own commit record — K3
+  fired for DBOS at `after:tool_return`, those cells exploratory — and `--window` measures
+  `ambiguity_window_width` (7.8–23.4 ms medians); `report --fmt html` and the static timeline page.
+- **What the instrument got wrong, found and fixed this phase**: the POSIX self-`SIGSTOP` racing the
+  supervisor (four Restate freeze trials scored against Restate — pending the release re-run), a stale
+  forced segment cut (r005), VERIFY on a run paused after a decided failure (r004), the sticky-queue
+  default hiding behind Temporal's pinned heartbeat, and a VM clock that failed a Keel baseline on S4.
+
+461 unit + property + conformance tests and 31 against Postgres at the phase commit. The write-up is
+`notes/Phase-9-Depth.{html,pdf}`; the confirmation rows land in the pages when the run completes.
+
+### Phase 8: outside the holder
 
 Week 2 of §29.1. Everyone who is *not* the lease holder — a human with a decision, a child with a
 result, a network with an opinion — now influences a run through one table, applied by the holder
