@@ -195,6 +195,25 @@ class Ctx:
             raise
         return await self._run(intent)
 
+    async def sleep(self, seconds: float) -> None:
+        """SLEEP step: a durable timer, zero compute while it runs (§18.4).
+
+        INTENT, STARTED, RUN_WAITING{sleep, wake_at} and the release commit together; `wake_at` is
+        the store's `now()` plus `seconds`, never the worker's clock. The timer sweep wakes the run,
+        and the step completes on the first wake the store's clock says is due — so a spurious
+        wake re-parks, and a replay after the wake returns at once (§10.4)."""
+        index = self._open()
+        args = {"seconds": float(seconds)}
+        intent = StepIntent(
+            step_index=index,
+            kind=StepKind.SLEEP,
+            name="sleep",
+            args=args,
+            args_hash=_args_hash(args),
+            program_version=self.program_version,
+        )
+        await self._run(intent)
+
     async def now(self) -> datetime:
         """NOW step; recorded once, replayed forever."""
         index = self._open()

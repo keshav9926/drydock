@@ -62,6 +62,8 @@ class StepState:
     method: str | None = None
     #: A retryable failure the runtime decided to retry, and when (§8.7). None: the failure stands.
     next_attempt_at: Any = None
+    #: A waiting step's `wake_at`, from the RUN_WAITING that parked it — a SLEEP's timer (§18.4).
+    wake_at: Any = None
 
     @property
     def settled(self) -> bool:
@@ -344,6 +346,8 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.phase = _WAITING_PHASE[b.reason]
         st.waiting_reason = b.reason
         st.wake_at = b.wake_at
+        if b.step_index in st.steps:
+            st.steps[b.step_index].wake_at = b.wake_at
     elif t == "RUN_PAUSED":
         st.phase = "PAUSED"
     elif t == "RUN_PAUSE_LIFTED":

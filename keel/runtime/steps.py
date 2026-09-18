@@ -458,6 +458,12 @@ class StepEngine:
                 return _value_of(journaled)
             if journaled.kind == "DELEGATE":
                 parked = await self._wait_children(intent, journaled)
+            elif journaled.kind == "SLEEP":
+                if await self._wake_if_due(intent, journaled):
+                    return None  # §10.4: a completed sleep's value is None
+                parked = await self._commit_park(
+                    "sleep", intent.step_index, phase="SLEEPING", wake_at=journaled.wake_at
+                )
             else:
                 approval = self.state.approval_at(intent.step_index)
                 # Park *again*, with its own RUN_WAITING. The acquisition already appended
@@ -471,21 +477,74 @@ class StepEngine:
                 if parked:
                     hooks.at("during:approval_wait", step_index=intent.step_index, wake_at=self.state.wake_at)
             if parked:
-                reason = "children" if journaled.kind == "DELEGATE" else "approval"
+                reason = {"DELEGATE": "children", "SLEEP": "sleep"}.get(journaled.kind, "approval")
                 raise Parked(reason, wake_at=self.state.wake_at)
             # A signal raced the release: drain it and decide again.
 
+    async def _wake_if_due(self, intent: StepIntent, journaled: Any) -> bool:
+        """A sleep completes when the *store's* clock says `wake_at` has passed, whatever woke it
+        (§8.7 Timer: never before `wake_at`). The timer row is only the doorbell — the drain
+        consumed it as a plain wake, as it does a backoff's — so a spurious wake re-parks and a
+        timer consumed by an epoch that died is not needed by the next one."""
+        async with self.journal.append(self.lease) as tx:
+            now = await tx.now()
+            if journaled.wake_at is not None and now < journaled.wake_at:
+                return False
+            result = {"woke_at": now.isoformat()}
+            seq = await tx.append(
+                StepCompleted(step_index=intent.step_index, attempt_no=journaled.attempts or 1, result=result)
+            )
+            await tx.set_run(phase="RUNNING", wake_at=None)
+        step = self.state.step(intent.step_index) or journaled
+        step.state, step.result = COMPLETED, result
+        step.outcome_seq, step.outcome_epoch = seq, self.lease.epoch
+        return True
+
+    async def _park_for_sleep(self, intent: StepIntent) -> Any:
+        """INTENT, STARTED, RUN_WAITING{sleep, wake_at} and the release: one transaction, then
+        nothing until the timer sweep (§18.4). `wake_at` is the store's `now()` plus the duration."""
+        seconds = float((intent.args or {}).get("seconds", 0.0))
+        hooks.at("before:intent_commit", **_where(intent))
+        while not await self._commit_park(
+            "sleep", intent.step_index, phase="SLEEPING", wake_in=seconds, intent=intent
+        ):
+            await self._drain_inbox(intent.step_index, force=True)
+        hooks.at("after:intent_commit", **_where(intent))
+        hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
+        raise Parked("sleep", wake_at=self.state.wake_at)
+
     async def _commit_park(
-        self, reason: str, step_index: int, *, phase: str, wake_at: Any = None, wake_in: float | None = None
+        self,
+        reason: str,
+        step_index: int,
+        *,
+        phase: str,
+        wake_at: Any = None,
+        wake_in: float | None = None,
+        intent: StepIntent | None = None,
     ) -> bool:
         """RUN_WAITING and the release, one transaction (§5.4 (4)). False when a signal arrived
         since the last drain: the transaction rolled back and the caller must drain again.
-        `wake_in` is measured from the store's `now()`, never the worker's."""
+        `wake_in` is measured from the store's `now()`, never the worker's. With `intent`, the
+        waiting step's INTENT and attempt 1's STARTED open the same transaction — every wait is
+        INTENT + STARTED + RUN_WAITING + release, together (§18.4)."""
         try:
             async with self.journal.append(self.lease) as tx:
+                now = await tx.now() if wake_in is not None or intent is not None else None
                 if wake_in is not None:
-                    wake_at = await tx.now() + timedelta(seconds=wake_in)
-                await tx.append(RunWaiting(reason=reason, wake_at=wake_at, step_index=step_index))
+                    wake_at = now + timedelta(seconds=wake_in)
+                causation = None
+                if intent is not None:
+                    causation = await tx.append(_intended(intent))
+                    await tx.append(
+                        StepAttemptStarted(
+                            step_index=intent.step_index, attempt_no=1, lease_epoch=self.lease.epoch, started_at=now
+                        ),
+                        causation_seq=causation,
+                    )
+                await tx.append(
+                    RunWaiting(reason=reason, wake_at=wake_at, step_index=step_index), causation_seq=causation
+                )
                 await tx.release_park(phase=phase, wake_at=wake_at)
         except WakeRaced:
             await self._refold()
@@ -1168,6 +1227,8 @@ class StepEngine:
             return await self._park_for_approval(intent)
         if intent.kind is StepKind.DELEGATE:
             return await self._spawn_children(intent)
+        if intent.kind is StepKind.SLEEP:
+            return await self._park_for_sleep(intent)
         if intent.kind is StepKind.TOOL:
             await self._gate(intent)
         tool = self._tool_of(intent)
