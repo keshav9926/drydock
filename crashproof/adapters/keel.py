@@ -89,7 +89,7 @@ def build_app(workload: Workload, variant: str, world: WorldClient, shim: ToolSh
     Imported lazily so that merely importing this module — which the supervisor does — does not
     drag Keel into the harness process.
     """
-    from keel.agents.demo import tool_chain
+    from keel.agents.demo import long_horizon, tool_chain
     from keel.client import Keel
     from keel.core.protocols import EffectClass, Idempotency, ProbeResult
     from keel.effects.registry import ToolCtx, tool
@@ -104,8 +104,20 @@ def build_app(workload: Workload, variant: str, world: WorldClient, shim: ToolSh
         dsn,
         provider=WorkloadProvider(workload, shim),
         tools=tools,
-        programs=[tool_chain],
+        programs=[tool_chain, long_horizon],
     )
+
+
+#: The reference program each workload runs as (`keel/agents/demo.py`). W3's shape — a loop with a
+#: cadence of compactions, plan items, a sleep and continuation boundaries — is not a ReAct turn, so
+#: it has its own program; everything else is the one ReAct loop.
+PROGRAM_OF = {"long_horizon_50": "long_horizon"}
+
+
+def program_of(workload: Workload) -> Any:
+    from keel.agents import demo
+
+    return getattr(demo, PROGRAM_OF.get(workload.workload, "tool_chain"))
 
 
 def _build_tool(
@@ -187,9 +199,15 @@ class WorkloadProvider:
         self.tokens = 0
 
     async def complete(self, req: Any) -> Any:
+        from keel.runtime.ctx import COMPACT_SYSTEM
+
         key = node_key(req)
-        node = self.workload.node_for(key)
-        node_id = "-".join(f"{n}{i}" for n, i in key) or "start"
+        # A compaction is Keel's own question, not a turn of the workload's script (W3): it is answered
+        # with a summary that is a pure function of what it is asked to summarise, and never selects
+        # a node — the context it carries holds the same tool answers the next turn's request does.
+        compact = getattr(req, "system", None) == COMPACT_SYSTEM
+        node = None if compact else self.workload.node_for(key)
+        node_id = "compact" if compact else "-".join(f"{n}{i}" for n, i in key) or "start"
         from crashproof.faults.injectors.base import FaultResponse
         from keel.core.errors import Rejected, UnknownOutcome
 
@@ -210,9 +228,12 @@ class WorkloadProvider:
         from keel.providers.protocol import Message, ModelResponse, ToolCall, Usage
 
         self.calls += 1
-        decision = Workload.decision_of(
-            node, alternate=self.shim is not None and self.shim.alternate_armed
-        )
+        if node_id == "compact":
+            decision = {"final": f"summary: {len(node_key(req))} tool results answered"}
+        else:
+            decision = Workload.decision_of(
+                node, alternate=self.shim is not None and self.shim.alternate_armed
+            )
         results = _results_by_tool(req)
         calls = [
             ToolCall(id=f"tu_{i}", name=c["name"], args=_resolve(c.get("args", {}), results))
@@ -308,7 +329,9 @@ class KeelAdapter:
     name = "keel"
     recovery_mechanism = "self"
     key_sources = frozenset({"none", "framework"})
-    workloads = frozenset({"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre"})
+    workloads = frozenset(
+        {"tool_chain_1_effect", "approval_gated_deploy", "approval_gated_deploy_pre", "long_horizon_50"}
+    )
     workload_evidence = {
         "tool_chain_1_effect": "keel/agents/demo.py: ctx.model -> ctx.tool -> ctx.model",
         "approval_gated_deploy": (
@@ -318,6 +341,10 @@ class KeelAdapter:
         "approval_gated_deploy_pre": (
             "as approval_gated_deploy, with `before_approval` calls made as their own ctx.tool steps "
             "before ctx.approve"
+        ),
+        "long_horizon_50": (
+            "keel/agents/demo.py long_horizon: ctx.model -> ctx.tool per round; ctx.compact(), "
+            "ctx.plan.complete, ctx.sleep and Continue(state) on the input's cadence"
         ),
     }
     claims: dict[str, str] = {
@@ -423,7 +450,6 @@ class KeelAdapter:
         journal says it did". Every other invariant in the suite would pass a run that reached the
         right answer by a path its own history does not describe.
         """
-        from keel.agents.demo import tool_chain
         from keel.replay.verify import verify as run_verify
 
         run_ref = handle.run_ref or (handle.trial_dir / "sut" / "run_id").read_text(encoding="utf8").strip()
@@ -431,7 +457,9 @@ class KeelAdapter:
         out = await run_verify(
             app.journal,
             uuid.UUID(run_ref),
-            tool_chain.fn if hasattr(tool_chain, "fn") else tool_chain,
+            # The Program, not its function: VERIFY restores a continuation boundary's state through
+            # the program's declared model, and replays from the latest boundary (§10.8).
+            program_of(self.workload),
             tools=self._verify_tools(handle),
         )
         return out.as_dict()
@@ -484,7 +512,7 @@ class KeelAdapter:
         world = WorldClient(handle.world_url)
         app = build_app(self.workload, self.variant, world, None, handle.dependency.dsn or "")
         try:
-            run = await app.start("tool_chain", self.workload.input)
+            run = await app.start(program_of(self.workload).name, self.workload.input)
             handle.run_ref = str(run.run_id)
             (handle.trial_dir / "sut" / "run_id").write_text(handle.run_ref, encoding="utf8")
         finally:

@@ -57,6 +57,9 @@ class Matrix:
     #: A fault aimed at a model boundary needs a model landmark. Aiming a model fault at a
     #: tool landmark is a trigger that can never match, which is a silently empty cell.
     model_landmark: str = "model:*"
+    #: Which occurrence of the landmark a trigger fires on. 1 everywhere a workload calls its tool
+    #: once; W3 aims mid-segment (§14.1), where the recovery it measures replays from a boundary.
+    occurrence: int = 1
     #: How long the harness-as-human waits before granting under `approval_delay` (W5). Pinned in
     #: the matrix file and printed, like every other number that could move a result.
     approval_delay_ms: float = 500.0
@@ -149,7 +152,8 @@ class Matrix:
             landmark = "approval:*"
         else:
             landmark = self.model_landmark if "model" in boundary else self.landmark
-        trigger: dict[str, Any] = {"boundary": boundary, "landmark": landmark, "occurrence": 1}
+        occurrence = 1 if boundary == "supervisor" or "model" in boundary else self.occurrence
+        trigger: dict[str, Any] = {"boundary": boundary, "landmark": landmark, "occurrence": occurrence}
         if fault_type in MODIFIERS:
             # The whole point of a modifier: it addresses a *later incarnation*, so it is exempt
             # from the reachability bound and invisible to a runtime that never produces one.

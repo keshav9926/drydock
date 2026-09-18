@@ -73,6 +73,20 @@ class ScriptNode(Frozen):
     key: tuple[tuple[str, int], ...] = ()
     decision: dict[str, Any]
     alternate: dict[str, Any] | None = None
+    #: A loop node (W3, §14.1): it answers `key` followed by k answers of its own tool, k < `repeat`,
+    #: with every argument that is exactly `"@n"` replaced by k — and `then` once k == `repeat`. Still
+    #: a pure function of the answered-tools key, written once instead of `repeat` times. Unset (0) in
+    #: every workload before W3, so their documents — and their `spec_hash` — are unchanged.
+    repeat: int = 0
+    then: dict[str, Any] | None = None
+
+    def loop_count(self, key: tuple[tuple[str, int], ...]) -> int | None:
+        """How many of this loop's own answers `key` already holds, or None if it is not this loop's."""
+        tool = self.decision["tool_calls"][0]["name"]
+        rest = key[len(self.key):]
+        if key[: len(self.key)] != self.key or len(rest) > self.repeat or any(n != tool for n, _ in rest):
+            return None
+        return len(rest)
 
     @property
     def gated(self) -> bool:
@@ -168,6 +182,13 @@ class Workload(Frozen):
 
     def node_for(self, key: tuple[tuple[str, int], ...]) -> ScriptNode | None:
         for node in self.script:
+            if node.repeat:
+                k = node.loop_count(key)
+                if k is None or (k == node.repeat and node.then is None):
+                    continue
+                # One visit of the loop, as the node it stands for: `@n` bound, or the exit.
+                decision = node.then if k == node.repeat else json.loads(json.dumps(node.decision).replace('"@n"', str(k)))
+                return ScriptNode(key=key, decision=dict(decision))
             if node.key == key:
                 return node
         return None
@@ -183,9 +204,10 @@ class Workload(Frozen):
         kind, _, name = landmark.partition(":")
         if kind == "model":
             nodes = self.script if name in ("*", "") else [n for n in self.script if _node_id(n) == name]
-            return len(nodes)
+            # A loop node is visited `repeat` times, and once more for its `then`.
+            return sum(n.repeat + (n.then is not None) if n.repeat else 1 for n in nodes)
         if kind == "tool":
-            calls = [c for node in self.script for c in node.all_tool_calls()]
+            calls = [c for node in self.script for c in node.all_tool_calls() for _ in range(node.repeat or 1)]
             if name in ("*", ""):
                 return len(calls)
             return sum(1 for c in calls if c.get("name") == name)

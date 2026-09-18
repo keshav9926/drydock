@@ -1,0 +1,68 @@
+# W3 — long_horizon_50: fifty rounds, three segments, one durable sleep, five compactions (§14.1,
+# §29.2).
+#
+# Each round the model decides `kv_put(counter, i)` and the agent makes the call. The cadence around
+# the rounds is the run's *input*, identical for every arm, so a binding reads it rather than
+# hard-coding it: a compaction every `compact_every` rounds, a plan item completed every
+# `plan_every`, a sleep of `sleep_s` after the put of `sleep_at`, and a continuation boundary every
+# `continue_every` rounds. §14.1 says "every 20 steps"; a step is a runtime's own unit — Keel counts
+# model, tool, plan and compaction steps, another runtime counts activities — so the neutral count is
+# rounds, which every arm has.
+#
+# `kv.put` is IDEMPOTENT by full value at a receiver that dedups on it (`dedup: true, natural: true`):
+# a re-put after a crash applies once *without* a key, which is why the variant is F0 and still
+# measures something. Each value is its own logical identity (`key`, `value`), so the World labels
+# the fifty puts `kv.put#1`..`#50` in arrival order and "final counter = 49" is `kv.put#50`'s value.
+#
+# The script is one loop node: `repeat: 50` answers the key [] followed by k answered `kv_put`s,
+# k < 50, with `@n` = k — the same pure function of request content as every other node, written
+# once instead of fifty times — and `then` is the answer after the fiftieth.
+#
+# Arms. Keel: `keel/agents/demo.py::long_horizon`. Temporal's continue-as-new is §29.2's second arm,
+# and it is N/A: the Temporal adapter is `agent_code = pydantic_ai` only, §13.5 puts W3 outside that
+# path ("continuation semantics differ per runtime"), and a native Temporal adapter is a V2 item.
+# DBOS and Restate are N/A until an adapter README cites a continuation primitive (§27.7).
+workload: long_horizon_50
+version: 1
+budget: {max_model_calls: 80, max_tokens: 400000}
+tool_timeout_s: 1
+
+tools:
+  - {name: kv_put, effect_class: IDEMPOTENT, endpoint: kv.put, idempotency: NATURAL}
+
+variants:
+  IDEMPOTENT:
+    key_source: none
+    required_effects: [
+      "kv.put#1", "kv.put#2", "kv.put#3", "kv.put#4", "kv.put#5", "kv.put#6", "kv.put#7", "kv.put#8", "kv.put#9", "kv.put#10",
+      "kv.put#11", "kv.put#12", "kv.put#13", "kv.put#14", "kv.put#15", "kv.put#16", "kv.put#17", "kv.put#18", "kv.put#19", "kv.put#20",
+      "kv.put#21", "kv.put#22", "kv.put#23", "kv.put#24", "kv.put#25", "kv.put#26", "kv.put#27", "kv.put#28", "kv.put#29", "kv.put#30",
+      "kv.put#31", "kv.put#32", "kv.put#33", "kv.put#34", "kv.put#35", "kv.put#36", "kv.put#37", "kv.put#38", "kv.put#39", "kv.put#40",
+      "kv.put#41", "kv.put#42", "kv.put#43", "kv.put#44", "kv.put#45", "kv.put#46", "kv.put#47", "kv.put#48", "kv.put#49", "kv.put#50",
+    ]
+    world_state: {
+      "kv.put#1": 1, "kv.put#2": 1, "kv.put#3": 1, "kv.put#4": 1, "kv.put#5": 1, "kv.put#6": 1, "kv.put#7": 1, "kv.put#8": 1, "kv.put#9": 1, "kv.put#10": 1,
+      "kv.put#11": 1, "kv.put#12": 1, "kv.put#13": 1, "kv.put#14": 1, "kv.put#15": 1, "kv.put#16": 1, "kv.put#17": 1, "kv.put#18": 1, "kv.put#19": 1, "kv.put#20": 1,
+      "kv.put#21": 1, "kv.put#22": 1, "kv.put#23": 1, "kv.put#24": 1, "kv.put#25": 1, "kv.put#26": 1, "kv.put#27": 1, "kv.put#28": 1, "kv.put#29": 1, "kv.put#30": 1,
+      "kv.put#31": 1, "kv.put#32": 1, "kv.put#33": 1, "kv.put#34": 1, "kv.put#35": 1, "kv.put#36": 1, "kv.put#37": 1, "kv.put#38": 1, "kv.put#39": 1, "kv.put#40": 1,
+      "kv.put#41": 1, "kv.put#42": 1, "kv.put#43": 1, "kv.put#44": 1, "kv.put#45": 1, "kv.put#46": 1, "kv.put#47": 1, "kv.put#48": 1, "kv.put#49": 1, "kv.put#50": 1,
+    }
+
+world:
+  endpoints:
+    - {id: kv.put, service: kv, dedup: true, natural: true, kind: write, logical_identity: [key, value]}
+
+script:
+  - key: []
+    repeat: 50
+    decision: {tool_calls: [{name: kv_put, args: {key: counter, value: "@n"}}]}
+    then: {final: "counter=@kv_put.result.value"}
+
+# The result must name the last value put; the plan's five items completed and the timer honoured are
+# read from the journal (the smoke table prints them), because they are Keel-owned state no other arm
+# would report the same way.
+expected:
+  status: COMPLETED
+  result: {matches: "counter=49"}
+  input: {task: "count to 49 in kv", iterations: 50, compact_every: 10, plan_every: 10,
+          sleep_at: 25, sleep_s: 2, continue_every: 20}

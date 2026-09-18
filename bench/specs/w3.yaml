@@ -1,0 +1,41 @@
+# W3 — long_horizon_50: fifty rounds across three continuation segments (§14.1, §29.2).
+#
+# The mechanisms under test are the long-horizon ones: `Continue(state)` every 20 rounds, a
+# compaction and a completed plan item every 10, a 2 s durable sleep after round 25. The faults are
+# aimed at the 23rd put — inside the second segment — so the recovery they measure re-executes from a
+# boundary rather than from step 0, which is the whole claim of §10.8:
+#
+#   kill@after:tool_effect          the put landed, the journal does not know: the successor replays
+#                                   segment 1 from memo and re-puts under IDEMPOTENT natural dedup —
+#                                   applied once, receipted twice
+#   pause_past_ttl@before:tool_call the zombie: frozen before put 23 leaves, a successor takes over
+#                                   from the boundary, the thawed request lands after — deduplicated
+#
+# C2 is judged on every trial (N/A before a boundary exists); C1 replays from the latest boundary.
+#
+# Keel only. Temporal's continue-as-new is §29.2's second arm and is N/A: the Temporal adapter is
+# `agent_code = pydantic_ai` only, §13.5 puts W3 outside that path ("continuation semantics differ
+# per runtime"), and a native Temporal adapter is V2. DBOS and Restate: N/A until an adapter README
+# cites a continuation primitive (§27.7). LangGraph: no continuation primitive in the fact sheet.
+workload: long_horizon_50
+mode: shim
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+# Fifty rounds, five compactions, a 2 s sleep woken by a 0.2 s sweep, and a detection window.
+timeout: 120
+landmark: tool:kv_put
+occurrence: 23
+verifier: [S1, S2, S3, S4, S5, L1, L2, C1, C2]
+
+variants:
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - kill@after:tool_effect
+  - pause_past_ttl@before:tool_call
+
+adapters:
+  - name: keel
+    key_source: none
+    configs:
+      - {id: default}
