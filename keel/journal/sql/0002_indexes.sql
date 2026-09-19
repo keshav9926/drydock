@@ -10,8 +10,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS events_terminal_once   ON events (run_id)     
 CREATE UNIQUE INDEX IF NOT EXISTS events_superseded_once ON events (run_id)                         WHERE type = 'RUN_SUPERSEDED';
 CREATE UNIQUE INDEX IF NOT EXISTS events_segment_once    ON events (run_id, (payload->>'segment_no')) WHERE type = 'SEGMENT_STARTED';
 CREATE UNIQUE INDEX IF NOT EXISTS events_approval_once   ON events (run_id, step_index)             WHERE type = 'APPROVAL_REQUESTED';
-CREATE UNIQUE INDEX IF NOT EXISTS events_resolved_once   ON events (run_id, step_index, (payload->>'method'))
-  WHERE type = 'STEP_RESOLVED';
+CREATE UNIQUE INDEX IF NOT EXISTS events_resolved_once   ON events (run_id, step_index, attempt_no, (payload->>'method'))
+  WHERE type = 'STEP_RESOLVED';  -- per attempt: 0005
 CREATE UNIQUE INDEX IF NOT EXISTS events_patch_once      ON events (run_id, (payload->>'name'))     WHERE type = 'PATCH_APPLIED';
 
 -- seek paths

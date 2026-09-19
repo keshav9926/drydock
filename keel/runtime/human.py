@@ -9,8 +9,8 @@ and it is drained, like every signal, by the lease holder under the fence:
     SIGNAL_RECEIVED{custom} ▸ STEP_RESOLVED{step i, COMPLETED|FAILED, method=human, evidence} ▸ effects row
 
 A second STEP_RESOLVED, not a STEP_COMPLETED: `events_outcome_once` already holds the attempt's
-STEP_AMBIGUOUS, and `events_resolved_once` keys on `(step_index, method)` — escalate once, a human
-once (§6.2). Re-execution returns `evidence.result` of the last STEP_RESOLVED as the step's value;
+STEP_AMBIGUOUS, and `events_resolved_once` keys on `(step_index, attempt_no, method)` — for one
+attempt, escalate once and a human once (§6.2). Re-execution returns `evidence.result` of the last STEP_RESOLVED as the step's value;
 RESOLVED_FAILED raises `StepFailed` like any terminal failure.
 
 **A resolve implies resume** (§7.2.1): the acquiring worker picks `cause=RESUME` when a pending
@@ -21,9 +21,9 @@ hands a suspended run back when such a row lands after the cause was chosen.
 Section-local decisions, each named once:
 
 - `failed` settles the step as RESOLVED_FAILED; it does not start attempt n+1. §7.3 lets the retry
-  policy decide after a RESOLVED_FAILED, but a re-attempt that went ambiguous again would need a
-  second `escalate` row, which `events_resolved_once` refuses. The program is handed `StepFailed`
-  and may issue a new call (a new index, a new key) if it wants the effect after all.
+  policy decide after a RESOLVED_FAILED, but the human answered the question that was asked — did
+  it land — not whether to send it again. The program is handed `StepFailed` and may issue a new
+  call (a new index, a new key) if it wants the effect after all.
 - `completed` hands the program the signal's `result` when one is given, else §23.4's sentinel
   `{"__keel_resolved__": "COMMITTED", effect_key, evidence}` — the probe path's honest answer when
   nothing was read back. §10.3's "validated against the tool's `result` model" is not built: tools

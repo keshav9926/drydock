@@ -1791,10 +1791,10 @@ class StepEngine:
     async def _probe(self, intent: StepIntent, probe: Any, attempt_no: int) -> Any:
         """Ask the receiver. Three answers, and three different things to do (§7.4).
 
-        # ponytail: `events_resolved_once` is UNIQUE on (run_id, step_index, method), so a step
-        # may carry one probe resolution. A second becomes reachable only when timeouts start
-        # producing ambiguity (day 4); that is the phase that should decide whether the guard
-        # grows an attempt_no.
+        One probe row per *attempt* (`events_resolved_once` keys on attempt_no): ABSENT starts n+1
+        under the same key, and an n+1 that goes ambiguous is probed in its turn. Keyed per step,
+        that second row was a unique violation — the v1 confirmation tier's one FAILED
+        `pause_past_ttl` run, where the successor's re-attempt then timed out.
         """
         sctx = StepCtx(
             run_id=self.lease.run_id,

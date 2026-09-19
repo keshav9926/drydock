@@ -256,6 +256,10 @@ class MemoryJournal:
                 raise IllegalTransition(f"second RECOVERY_STARTED for epoch {ev.lease_epoch}")
             if t == "APPROVAL_REQUESTED" and old.type == t and old.step_index == si:
                 raise IllegalTransition(f"second APPROVAL_REQUESTED for step {si}")  # events_approval_once
+            if t == "STEP_RESOLVED" and old.type == t and (old.step_index, old.attempt_no, old.body.method) == (
+                si, an, ev.body.method
+            ):
+                raise IllegalTransition(f"second {ev.body.method} resolution for step {si} attempt {an}")  # events_resolved_once
             if t in _TERMINAL and old.type in _TERMINAL:
                 raise IllegalTransition("second terminal event")
             if t == "SEGMENT_STARTED" and old.type == t and old.body.segment_no == ev.body.segment_no:

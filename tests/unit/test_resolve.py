@@ -19,6 +19,7 @@ import pytest
 from keel import EffectClass, Keel, program, tool
 from keel.core.clock import FakeClock
 from keel.core.errors import StepFailed, UnknownOutcome
+from keel.core.protocols import ProbeResult
 from keel.journal.memory import MemoryJournal
 from keel.replay.verify import verify
 from keel.state.fold import fold
@@ -37,6 +38,20 @@ async def send_mail(args: dict[str, Any], tctx: Any) -> dict[str, Any]:
 async def put_doc(args: dict[str, Any], tctx: Any) -> dict[str, Any]:
     CALLS.append("put_doc")
     raise UnknownOutcome("502 with no body")
+
+
+@tool(effect=EffectClass.EXTERNAL, timeout=1.0, resolution="probe", name="page_oncall")
+async def page_oncall(args: dict[str, Any], tctx: Any) -> dict[str, Any]:
+    CALLS.append("page_oncall")
+    raise UnknownOutcome("the pager gateway timed out")
+
+
+@page_oncall.probe_hook
+async def _probe_page(effect_key: str, args: dict[str, Any], tctx: Any) -> ProbeResult:
+    """Attempt 1 never reached the gateway; attempt 2 did, and only its answer was lost."""
+    if tctx.attempt_no == 1:
+        return ProbeResult("ABSENT", evidence="no page under this key")
+    return ProbeResult("COMMITTED", evidence="paged", result={"paged": True})
 
 
 @program(name="mailer", version="1.0")
@@ -63,7 +78,7 @@ def _calls() -> None:
 def _keel(clock: FakeClock) -> Keel:
     return Keel(
         journal=MemoryJournal(clock=clock),
-        tools=[send_mail, put_doc],
+        tools=[send_mail, put_doc, page_oncall],
         programs=[mailer, careful_mailer],
         clock=clock,
     )
@@ -222,3 +237,26 @@ async def test_the_cli_writes_the_same_row(monkeypatch: pytest.MonkeyPatch) -> N
     assert (row.type, row.payload["kind"], row.payload["resolve_step"], row.payload["as"], row.payload["evidence"]) == (
         "custom", "resolve_step", 0, "completed", "seen",
     )
+
+
+async def test_a_reattempt_that_goes_ambiguous_is_probed_in_its_turn() -> None:
+    """ABSENT closes attempt 1 and starts attempt 2 under the same key (§7.4); attempt 2's answer is
+    lost too, so it is probed in its turn. Keyed per step rather than per attempt, that second probe
+    row was a unique violation and the run FAILED — the v1 confirmation tier's `pause_past_ttl`
+    trial whose successor's re-attempt timed out under load."""
+    k = _keel(FakeClock())
+    handle = await k.start(mailer, {"tool": "page_oncall"})
+    await _work(k, "w1")
+
+    events = await k.events(handle.run_id)
+    state = fold(events)
+    assert state.phase == "COMPLETED", [e.type for e in events]
+    assert state.result["sent"] == {"paged": True}
+    assert CALLS == ["page_oncall", "page_oncall"]
+    resolved = [(e.body.attempt_no, e.body.resolution, e.body.method) for e in events if e.type == "STEP_RESOLVED"]
+    assert resolved == [(1, "RESOLVED_FAILED", "probe"), (2, "RESOLVED_COMPLETED", "probe")]
+    [row] = await k.journal.effects(handle.run_id)
+    assert (row.status, row.resolution) == ("RESOLVED_COMMITTED", "probe")
+
+    result = await verify(k.journal, handle.run_id, mailer, tools=k.tools)
+    assert result.ok and result.projection_hash is not None, result.as_dict()
