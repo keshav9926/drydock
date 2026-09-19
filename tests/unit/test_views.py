@@ -349,3 +349,28 @@ def test_a_trial_whose_store_clock_moved_is_void() -> None:
     assert store_clock_steady(None) and store_clock_steady({"offset_s": 0.3})
     assert store_clock_steady({"start": {"offset_s": 0.451}, "end": {"offset_s": 0.470}})
     assert not store_clock_steady({"start": {"offset_s": 0.451}, "end": {"offset_s": 0.221}})
+
+
+def test_a_row_superseded_by_a_re_take_is_not_rechecked_against_the_re_takes_directory(tmp_path) -> None:
+    """A void trial's row stays in results.jsonl under its re-take (fold keeps the last write), and
+    the trial directory is the re-take's. The release re-run's one shim void scored L1 FAIL as a
+    spawn failure; rechecking that row against the re-taken directory reported a drift that never
+    happened."""
+    from typer.testing import CliRunner
+
+    from crashproof.cli.main import app
+    from crashproof.runner.store import ResultStore, slug
+
+    cell = "keel.default.EXTERNAL.kill@after:tool_effect"
+    store = ResultStore(tmp_path)
+    good = facts()
+    store.append({"cell_id": cell, "trial_id": "t-7", "seed": 7, "valid": False,
+                  "verdicts": {**invariants.verify(good).as_dict(), "L1": "FAIL"}})  # the void original
+    store.append({"cell_id": cell, "trial_id": "t-7", "seed": 7, "valid": True,
+                  "verdicts": invariants.verify(good).as_dict()})  # its re-take owns the directory
+    trial = tmp_path / slug(cell) / "t-7"
+    trial.mkdir(parents=True)
+    (trial / "facts.json").write_text(json.dumps(invariants.dump(good), default=str), encoding="utf8")
+    result = CliRunner().invoke(app, ["verify", str(store.results_path), "--recheck"])
+    assert result.exit_code == 0, result.output
+    assert "1 superseded by a re-take, skipped" in " ".join(result.output.split())  # the console wraps

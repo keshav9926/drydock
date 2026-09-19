@@ -534,7 +534,15 @@ def verify(
         raise typer.Exit(2)
 
     root = target.parent
-    rows = list(ResultStore(root).rows())
+    # A re-taken trial's row supersedes the void one it replaced (`fold` keeps the last write per
+    # (cell_id, seed)), and the trial directory is the re-take's: re-verifying the superseded row
+    # against it is a drift that never happened. Superseded rows are skipped and counted.
+    written = list(ResultStore(root).rows())
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in written:
+        latest[(row["cell_id"], row["seed"])] = row
+    rows = list(latest.values())
+    superseded = len(written) - len(rows)
     missing, drifted, unstable, failed = [], [], [], []
     for row in rows:
         trial_dir = root / slug(row["cell_id"]) / row["trial_id"]
@@ -554,7 +562,10 @@ def verify(
         if fresh.failed and row.get("valid", True):
             failed.append(f"{row['cell_id']}/{row['trial_id']}: {fresh.failed}")
 
-    err.print(f"{len(rows) - len(missing)} of {len(rows)} rows re-verified from their trial directories")
+    err.print(
+        f"{len(rows) - len(missing)} of {len(rows)} rows re-verified from their trial directories"
+        + (f" ({superseded} superseded by a re-take, skipped)" if superseded else "")
+    )
     if missing:
         err.print(f"[red]{len(missing)} row(s) are not re-verifiable: their trial directory holds no facts.json[/]")
     for label, items, colour in (
