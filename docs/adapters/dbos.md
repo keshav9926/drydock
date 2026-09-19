@@ -5,8 +5,9 @@ documented primitives and nothing else, twice: once as DBOS code written directl
 Pydantic AI agent under Pydantic AI's DBOS integration.
 
 Source: [`crashproof/adapters/dbos.py`](../../crashproof/adapters/dbos.py). Versions under test:
-`dbos 2.31.1`, `pydantic-ai-slim 2.43.0` (both pinned in every row's `config_pin`). Quotes below are
-from the pages named, fetched against those versions, or from the installed package where it says so.
+`dbos 2.31.1`, pinned in every row's `config_pin`, and `pydantic-ai-slim 2.43.0`, pinned in every
+`pydantic_ai` row's (a `native` row pins `dbos` and `python` only). Quotes below are from the pages
+named, fetched against those versions, or from the installed package where it says so.
 
 ## Declarations
 
@@ -181,34 +182,87 @@ it adds no durable operation to the run.
    launching a DBOS app in the harness: `DBOS` is a process-wide singleton, and the harness must not
    register the workload's workflows.
 
-## 1-seed smoke (not a published matrix)
+## 30 seeds — the release run
 
-`bench/specs/smoke_dbos.yaml`, `smoke_dbos_w5.yaml`, `smoke_dbos_w5_pre.yaml`, seed 7, both rows. Every
-trial valid, COMPLETED, restarts as scheduled, every judged verdict PASS, `+calls` 0 everywhere.
+`bench/results/v1_{w1_shim,w1_proxy,w5,w5_pre,reask}` (pages [`v1_w1_shim`](../../bench/reports/v1_w1_shim.md),
+[`v1_w1_proxy`](../../bench/reports/v1_w1_proxy.md), [`v1_w5`](../../bench/reports/v1_w5.md),
+[`v1_w5_pre`](../../bench/reports/v1_w5_pre.md), [`v1_reask`](../../bench/reports/v1_reask.md)), seeds 7–36,
+every row at `keel_commit 251e52d`, both rows of the pair: 3 240 DBOS trials (1 560 shim · 1 080 proxy ·
+300 W5 · 180 W5-pre · 120 reask), 0 void. Every judged verdict PASS in every cell, L1 30/30 everywhere,
+`lost` 0, `+calls` 0 on every kill cell, and every kill cell restarted once per trial — except the
+proxy's `after:tool_return` in `pydantic_ai` (below). The pages print no restart count; those are the
+rows' `restarts`.
 
 | cell | native | pydantic_ai | §13.7 |
 |---|---|---|---|
-| W1 EXTERNAL T1 `before:tool_call` | 1 applied, 0 dup | 1 applied, 0 dup | 0 / +0 — held |
-| W1 EXTERNAL T2 `after:tool_effect` | **2 applied, 1 dup** | **2 applied, 1 dup** | 1 / +0 — held |
-| W1 EXTERNAL T3 `after:tool_return` | 2 applied, 1 dup | **1 applied, 0 dup** | 1 / +0 — held native, **not** pydantic_ai (see below) |
-| W1 IDEMPOTENT (F1) T1 / T2 / T3 | applied 1; receipts 1 / 2 / 2 | applied 1; receipts 1 / 2 / 2 | H3: applied 1 at F1 — held |
-| W5 `approval_delay` + duplicate click | deploy 1 | deploy 1 | H7 — held; the second message grants nothing |
-| W5 `kill_while_waiting` | deploy 1, 3 model calls | deploy 1, 3 model calls | H7: one for DBOS — held, and no re-ask |
-| W5 `approval_expiry` | `not done: approval expired`, nothing deployed | same | expires by `recv` timeout |
-| W5 `kill@after:tool_effect` | deploy 2 | deploy 2 | at-least-once past the gate |
-| W5-pre `approval_delay` / `kill_while_waiting` | notify 1, deploy 1 | notify 1, deploy 1 | memoized pre-wait step: no re-fire |
+| W1 EXTERNAL T1 `before:tool_call`, shim and proxy | 1 applied, 0 dup, 30/30 | 1 applied, 0 dup, 30/30 | 0 / +0 — held |
+| W1 EXTERNAL T2 `after:tool_effect`, shim and proxy; `sigterm_grace_ok` / `_too_short` at T2 | **2 applied, 1 dup, 30/30** in each | **2 applied, 1 dup, 30/30** in each | kill: 1 / +0 — held; `sigterm_grace_too_short`: 1 dup — held; `sigterm_grace_ok`: measured, no prediction (§13.7, H8) — it prints the kill's counts |
+| W1 EXTERNAL T3 `after:tool_return`, shim | 2 applied in **21/30**, 1 in 9 | 2 applied in **14/30**, 1 in 16 | 1 / +0 — not held in the 9 (`native`) and 16 (`pydantic_ai`) trials that applied once; K3 fails, so exploratory (below) |
+| W1 EXTERNAL `kill@after:tool_return`, proxy | 1 applied, 0 dup, 30/30; restarted 30/30 | 1 applied, 0 dup, 30/30; restarted **12/30** | an instrument finding (below) |
+| W1 IDEMPOTENT (F1) T1 / T2 / T3, shim; `sigterm_grace_ok` / `_too_short` at T2 | applied 1, 30/30; receipts 1 / 2 / **2 in 19 of 30**, and 2 in each SIGTERM cell | applied 1, 30/30; receipts 1 / 2 / **2 in 16 of 30**, and 2 in each SIGTERM cell | H3: applied 1 at F1 — held; T3: K3 fails, so exploratory (below) |
+| W1 IDEMPOTENT (F1) kill T1 / T2 / T3, proxy | applied 1, 30/30; receipts 1 / 2 / 1 | applied 1, 30/30; receipts 1 / 2 / 1; T3 restarted 10/30 | H3 — held |
+| W1 `pause_past_ttl@before:tool_call`, shim and proxy | 1 applied, 0 dup, 0 restarts | same | one worker, no successor: the thawed process finishes its own run |
+| W1 `tool_timeout` · `tool_500` (both modes) · `tool_dropped_response` · `tool_malformed` (proxy) | FAILED 30/30, 1 applied, 0 dup, `+calls` −1 | same | no retry, as declared — the fault ends the run |
+| W1 `model_500` · `provider_outage` @ `before:model_call` | FAILED 30/30, nothing applied, `+calls` −2 | same | same |
+| W1 `model_timeout@before:model_call` · `tool_delay@after:tool_effect` | COMPLETED 30/30, 1 applied, 0 dup | same | |
+| reask `kill@after:tool_effect` + `model_reask_alternate@before:model_call` | 2 applied, 1 dup, 30/30; 3 model calls, `+calls` 0 | same | the model is never re-asked: the second effect is T2's duplicate, not a changed plan |
+| W5 `approval_delay` + duplicate click | deploy 1, 30/30 | deploy 1, 30/30 | H7 — held; the second message grants nothing |
+| W5 `kill_while_waiting` | deploy 1, 3 model calls, 30/30 | same | H7: one for DBOS — held, and no re-ask |
+| W5 `approval_expiry` | nothing deployed, 30/30, `+calls` −1 | same | expires by `recv` timeout |
+| W5 `kill@after:tool_effect` | deploy 2, 30/30 | same | at-least-once past the gate |
+| W5-pre `approval_delay` / `kill_while_waiting` | notify 1, deploy 1, 30/30 each | same | memoized pre-wait step: no re-fire |
 
-**T3 is a race in this arm, not a window.** The shim's `after:tool_return` kill is `call_soon`'d; DBOS
-records an async step's output with `await asyncio.to_thread(...)`, which starts the checkpoint write
-on an executor thread *before* the loop runs the kill. So the kill's fsync-then-exit on the loop
-thread races DBOS's commit on another thread. In the pydantic_ai EXTERNAL trial the commit won
-(`completed_at_epoch_ms` …529458 against the fault row's …529.4617) and nothing re-fired; in the other
-three T3 trials the kill won. H1 (T2 ≡ T3) therefore holds only as often as the kill wins, and 30
-seeds are what will say how often; one seed says it is not always.
+**At T3 the shim's kill races DBOS's checkpoint.** The shim's `after:tool_return` kill is `call_soon`'d
+(`crashproof/faults/injectors/shim.py`); DBOS records an async step's output with
+`await asyncio.to_thread(...)` (installed 2.31.1: `dbos/_outcome.py`, `Pending._wrap`), which starts the
+checkpoint write on an executor thread *before* the loop runs the kill. So the kill's fsync-then-exit on
+the loop thread races DBOS's commit on another thread, and the race decides whether it lands inside K3's
+window. At 30 seeds the EXTERNAL issue was applied twice in 21 of 30 `native` trials and 14 of 30
+`pydantic_ai` (`dup_eff` 21 and 14), and the World received the IDEMPOTENT request twice in 19 and 16 of
+30 (`dup_rcpt` 19 and 16, applied once throughout); in the other 9, 16, 11 and 14 trials it applied and
+received the effect once. H1 (T2 ≡ T3) holds in the trials that duplicated and in no other.
+`crashproof placement` over the release trials puts 70 % (21/30) of the `native` EXTERNAL kills inside
+K3's window — after the World receipt, before the step's `completed_at_epoch_ms` — 63 % (19/30) of
+`native` IDEMPOTENT, and 47 % (14/30) and 53 % (16/30) of `pydantic_ai`'s, and the other 9, 11, 16 and 14
+outside it; every other tool-boundary shim cell of every arm, DBOS's T1 and T2 included, is at 100 %, and
+between arms K3 fails by 53 (EXTERNAL) and 47 (IDEMPOTENT) points. The placement counts equal the
+duplicate counts; no page joins the two per trial. Per §30 a shim cell that fails K3 demotes to
+exploratory, so these four are exploratory; DBOS's T2 cells, at 100 %, are not. The week-2 run at
+`dcdd533` printed `dup_eff` 18 (`native`) and 24 (`pydantic_ai`) and `dup_rcpt` 16 and 17 for the same
+four cells ([`week2_w1_shim`](../../bench/reports/week2_w1_shim.md)); the release run prints 21 and 14,
+19 and 16.
+`bench/confirm/v1.yaml` selects both EXTERNAL T3 cells for the 300-seed tier on their non-unanimity
+(`logical_correctness` 9/30 and 16/30 at screening): confirmation running.
 
-Recovery latency (kill → first live step): ≈3.5–4.1 s native, ≈5.2–6.3 s pydantic_ai. The difference
-is importing Pydantic AI in the restarted process — a finding about the integration layer, as §13.5
-says the pair exists to show.
+**From the proxy the same trigger duplicated nothing.** The edge's kill leaves after the response bytes
+are flushed (`crashproof/proxy/server.py`) and reaches the pid through `taskkill`. In all 120 trials of
+the four proxy `kill@after:tool_return` cells (both configs, both bands) the kill executed and the World
+applied and received the effect once, with no request after the kill — the cells print no `lat`.
+`native` restarted in 30 of 30 trials per band; `pydantic_ai` in 12 of 30 (EXTERNAL) and 10 of 30
+(IDEMPOTENT), and its other 18 and 20 trials completed without a restart. The four twins are among the
+agreement page's 25 disagreements (shim / proxy: `duplicate_effects` 21/0 and `duplicate_receipts` 21/0
+in `native` EXTERNAL, 14/0 and 14/0 in `pydantic_ai` EXTERNAL; `duplicate_receipts` 19/0 and 16/0
+IDEMPOTENT), which it reads as the instrument: a kill from outside "arrives only after `taskkill`'s
+latency — often after the parse, sometimes after the run has finished, which is what a proxy cell with
+fewer restarts than its shim twin shows" ([`agreement_v1`](../../bench/reports/agreement_v1.md)).
+The page's rule: "a cell where they differ is a finding about the instrument, printed with both numbers".
+
+Recovery latency (kill → the first request the World receives after it, the pages' `lat`): over the W1
+shim kill cells, `native` 3.0–3.1 s and `pydantic_ai` 4.4–4.7 s; in the SIGTERM cells, as
+`sigterm_grace_ok` / `_too_short`, `native` 3.1 / 3.0 s and `pydantic_ai` 4.7 / 4.6 s EXTERNAL, `native`
+3.1 / 3.1 s and `pydantic_ai` 6.2 / 5.2 s IDEMPOTENT (`v1_w1_shim`). As `native` / `pydantic_ai`:
+3.3–3.4 s / 4.4–4.7 s from the proxy (`v1_w1_proxy`); 2.8 s / 4.3 s for W5's `kill@after:tool_effect` and
+3.3 s / 4.5 s for its `kill_while_waiting` (`v1_w5`); 3.5 s / 4.7 s for W5-pre's (`v1_w5_pre`). The kill → restart part, the rows' `restart_latency_ms` (no page prints it), is a
+median 60–106 ms in every W1 shim kill and SIGTERM cell of both configs (`bench/results/v1_w1_shim`). The
+rest of `lat` — process start, imports, launch, dequeue, and the recovered workflow re-executing up to the
+re-sent step, which in the `pydantic_ai` row runs through Pydantic AI's agent loop — is recorded only
+whole (the rows' `time_to_first_live_step_ms`); no row splits it by phase, so no part of the gap between
+the two rows is attributed here.
+§13.5 reads a difference between the two rows as a finding about Pydantic AI, but no page compares them —
+each `compare_v1_*` page pairs Keel with one arm, and `v1_w1_shim`'s §15.9 says no difference on it is
+confirmed — so the medians above stand side by side. The two differences in the counts above are outside
+that reading: T3's duplicates sit in K3-failing shim cells, exploratory per §30, and the proxy T3 restarts
+in cells the agreement page reads as the instrument.
 
 ## Adapter rules obeyed
 
