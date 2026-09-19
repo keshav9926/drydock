@@ -12,18 +12,18 @@ what differs and left out of the tally: its difference may be the runtime, not t
 `n` is the seeds both sides ran; seeds only one side ran are counted beside it and folded
 into neither.
 
-Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
+Rows through 2026-09-19T22:44:48+00:00 (the last trial's end).
 
 | results | rows | keel_commit |
 |---|---|---|
-| `bench/results/v1_w1_shim` | 6241 | `251e52d` ×6241 |
-| `bench/results/v1_w1_proxy` | 4585 | `251e52d` ×4585 |
+| `bench/results/v1_w1_shim` | 8360 | `251e52d` ×8360 |
+| `bench/results/v1_w1_proxy` | 6403 | `251e52d` ×6403 |
 
 | cell | n | safety (shim) | safety (proxy) | dup_eff | dup_rcpt | recovery | latency | agree |
 |---|---|---|---|---|---|---|---|---|
-| `dbos.native.EXTERNAL.baseline` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
+| `dbos.native.EXTERNAL.baseline` | 30 (+300 shim only) | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `dbos.native.EXTERNAL.kill@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 30 / 30 | 30 / 30 | 30/30 / 30/30 | 3.1s / 3.4s | yes |
-| `dbos.native.EXTERNAL.kill@after:tool_return` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 21 / 0 | 21 / 0 | 30/30 / 30/30 | 3.0s / — | **no** — duplicate_effects 21/0; duplicate_receipts 21/0 |
+| `dbos.native.EXTERNAL.kill@after:tool_return` | 30 (+300 shim only) | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 21 / 0 | 21 / 0 | 30/30 / 30/30 | 3.0s / — | **no** — duplicate_effects 21/0; duplicate_receipts 21/0 |
 | `dbos.native.EXTERNAL.kill@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.4s | yes |
 | `dbos.native.EXTERNAL.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `dbos.native.EXTERNAL.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
@@ -35,9 +35,9 @@ Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
 | `dbos.native.IDEMPOTENT.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `dbos.native.IDEMPOTENT.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `dbos.native.IDEMPOTENT.tool_timeout@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
-| `dbos.pydantic_ai.EXTERNAL.baseline` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
+| `dbos.pydantic_ai.EXTERNAL.baseline` | 30 (+300 shim only) | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `dbos.pydantic_ai.EXTERNAL.kill@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 30 / 30 | 30 / 30 | 30/30 / 30/30 | 4.4s / 4.7s | yes |
-| `dbos.pydantic_ai.EXTERNAL.kill@after:tool_return` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 14 / 0 | 14 / 0 | 30/30 / 30/30 | 4.4s / — | **no** — duplicate_effects 14/0; duplicate_receipts 14/0 |
+| `dbos.pydantic_ai.EXTERNAL.kill@after:tool_return` | 30 (+300 shim only) | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 14 / 0 | 14 / 0 | 30/30 / 30/30 | 4.4s / — | **no** — duplicate_effects 14/0; duplicate_receipts 14/0 |
 | `dbos.pydantic_ai.EXTERNAL.kill@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 4.5s / 4.5s | yes |
 | `dbos.pydantic_ai.EXTERNAL.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `dbos.pydantic_ai.EXTERNAL.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
@@ -49,11 +49,11 @@ Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
 | `dbos.pydantic_ai.IDEMPOTENT.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `dbos.pydantic_ai.IDEMPOTENT.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `dbos.pydantic_ai.IDEMPOTENT.tool_timeout@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
-| `keel.default.EXTERNAL.baseline` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
+| `keel.default.EXTERNAL.baseline` | 330 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 3 | 300/300 / 300/300 | — / — | **no** — duplicate_receipts 0/3 |
 | `keel.default.EXTERNAL.kill@after:tool_effect` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 2.3s / 2.3s | yes |
-| `keel.default.EXTERNAL.kill@after:tool_return` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 2.4s / — | yes |
+| `keel.default.EXTERNAL.kill@after:tool_return` | 330 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 300/300 / 300/300 | 2.3s / — | yes |
 | `keel.default.EXTERNAL.kill@before:tool_call` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 2.3s / 2.4s | yes |
-| `keel.default.EXTERNAL.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 4 / 30 | 4 / 30 | 30/30 / 30/30 | 2.4s / 2.4s | **no** — duplicate_effects 4/30; duplicate_receipts 4/30 |
+| `keel.default.EXTERNAL.pause_past_ttl@before:tool_call` | 30 (+300 shim only) | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 4 / 30 | 4 / 30 | 30/30 / 30/30 | 2.4s / 2.4s | **no** — duplicate_effects 4/30; duplicate_receipts 4/30 |
 | `keel.default.EXTERNAL.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
 | `keel.default.EXTERNAL.tool_timeout@before:tool_call` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
 | `keel.default.IDEMPOTENT.baseline` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
@@ -63,9 +63,9 @@ Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
 | `keel.default.IDEMPOTENT.pause_past_ttl@before:tool_call` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 18 / 30 | 30/30 / 30/30 | 2.4s / 2.4s | **no** — duplicate_receipts 18/30 |
 | `keel.default.IDEMPOTENT.tool_500@after:tool_effect` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 30 / 30 | 30/30 / 30/30 | 0.6s / 0.6s | yes |
 | `keel.default.IDEMPOTENT.tool_timeout@before:tool_call` | 30 | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓ | 0 / 0 | 30 / 30 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
-| `langgraph.async.EXTERNAL.baseline` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
+| `langgraph.async.EXTERNAL.baseline` | 30 (+300 proxy only) | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `langgraph.async.EXTERNAL.kill@after:tool_effect` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 30 / 30 | 60 / 30 | 30/30 / 30/30 | 2.6s / 2.4s | **no** — duplicate_receipts 60/30 |
-| `langgraph.async.EXTERNAL.kill@after:tool_return` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 30 / 29 | 60 / 30 | 30/30 / 30/30 | 2.5s / 2.4s | **no** — duplicate_effects 30/29; duplicate_receipts 60/30 |
+| `langgraph.async.EXTERNAL.kill@after:tool_return` | 30 (+300 proxy only) | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 30 / 29 | 60 / 30 | 30/30 / 30/30 | 2.5s / 2.4s | **no** — duplicate_effects 30/29; duplicate_receipts 60/30 |
 | `langgraph.async.EXTERNAL.kill@before:tool_call` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 30 / 0 | 30/30 / 30/30 | 2.5s / 2.4s | **no** — duplicate_receipts 30/0 |
 | `langgraph.async.EXTERNAL.pause_past_ttl@before:tool_call` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `langgraph.async.EXTERNAL.tool_500@after:tool_effect` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 30 / 30 | 30 / 30 | 30/30 / 30/30 | 3.1s / 2.8s | yes |
@@ -105,9 +105,9 @@ Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
 | `langgraph.sync.IDEMPOTENT.pause_past_ttl@before:tool_call` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.1s / 3.1s | yes |
 | `langgraph.sync.IDEMPOTENT.tool_500@after:tool_effect` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 30 / 30 | 30/30 / 30/30 | 3.4s / 3.6s | yes |
 | `langgraph.sync.IDEMPOTENT.tool_timeout@before:tool_call` | 30 | S1✓ S3✓ L1✓ L2✓ | S1✓ S3✓ L1✓ L2✓ | 0 / 0 | 30 / 30 | 30/30 / 30/30 | 0.0s / 0.0s | yes |
-| `restate.pydantic_ai.EXTERNAL.baseline` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
+| `restate.pydantic_ai.EXTERNAL.baseline` | 30 (+300 proxy only) | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | — / — | yes |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_effect` | 30 | S1✗ S2✓ S3✓ L1✓ L2✓ | S1✗ S2✓ S3✓ L1✓ L2✓ | 30 / 30 | 30 / 30 | 30/30 / 30/30 | 3.7s / 3.7s | yes |
-| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | 30 | S1✗ S2✓ S3✓ L1✓ L2✓ | S1✗ S2✓ S3✓ L1✓ L2✓ | 30 / 12 | 30 / 12 | 30/30 / 30/30 | 3.8s / 3.8s | **no** — duplicate_effects 30/12; duplicate_receipts 30/12 |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | 30 (+300 proxy only) | S1✗ S2✓ S3✓ L1✓ L2✓ | S1✗ S2✓ S3✓ L1✓ L2✓ | 30 / 12 | 30 / 12 | 30/30 / 30/30 | 3.8s / 3.8s | **no** — duplicate_effects 30/12; duplicate_receipts 30/12 |
 | `restate.pydantic_ai.EXTERNAL.kill@before:tool_call` | 30 | S1✓ S2✓ S3✓ L1✓ L2✓ | S1✓ S2✓ S3✓ L1✓ L2✓ | 0 / 0 | 0 / 0 | 30/30 / 30/30 | 3.7s / 3.7s | yes |
 | `restate.pydantic_ai.EXTERNAL.pause_past_ttl@before:tool_call` | 30 | S1✗ S2✓ S3✓ L1✓ L2✓ | S1✗ S2✓ S3✓ L1✓ L2✓ | 45 / 50 | 45 / 50 | 30/30 / 30/30 | 19.3s / 21.5s | **no** — duplicate_effects 45/50; duplicate_receipts 45/50 |
 | `restate.pydantic_ai.EXTERNAL.tool_500@after:tool_effect` | 30 | S1✗ S2✓ S3✓ L1✓ L2✓ | S1✗ S2✓ S3✓ L1✓ L2✓ | 30 / 30 | 30 / 30 | 30/30 / 30/30 | 0.1s / 0.1s | yes |
@@ -272,7 +272,7 @@ folded into the agreement count.
 
 ## Reading it
 
-87 of 112 comparable twinned cells agree. Every disagreement names what differs, in the order shim / proxy.
+86 of 112 comparable twinned cells agree. Every disagreement names what differs, in the order shim / proxy.
 
 What the proxy realisation loses, per §11.2: `before:tool_call` fires on a request that
 has already left the SUT (the shim's fires with nothing sent); `after:tool_return` is meant

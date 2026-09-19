@@ -1,12 +1,12 @@
 # compare — `keel.*` (A) vs `langgraph.sync.*` (B)
 
-780 paired trials on (workload, variant, trigger, spec_hash, seed).
+780 paired trials on (workload, variant, trigger, spec_hash, seed). Unpaired: 900 in A, 0 in B.
 
-Rows through 2026-09-19T13:20:53+00:00 (the last trial's end).
+Rows through 2026-09-19T22:44:10+00:00 (the last trial's end).
 
 | results | rows | keel_commit |
 |---|---|---|
-| `bench/results/v1_w1_shim` | 1561 | `251e52d` ×1561 |
+| `bench/results/v1_w1_shim` | 2478 | `251e52d` ×2478 |
 
 ## Safety — counted, never estimated
 

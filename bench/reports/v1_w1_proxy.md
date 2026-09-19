@@ -7,9 +7,9 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | (location, fault) | `dbos.native` | `dbos.pydantic_ai` | `keel.default` | `langgraph.async` | `langgraph.exit` | `langgraph.sync` | `restate.pydantic_ai` | `temporal.pydantic_ai` |
 |---|---|---|---|---|---|---|---|---|
 |  | recovery=self<br>claims: PURE at-least-once · IDEM effectively-once · EXT at-least-once | recovery=self<br>claims: PURE at-least-once · IDEM effectively-once · EXT at-least-once | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once | recovery=engine<br>claims: PURE exactly-once · IDEM exactly-once · EXT exactly-once | recovery=engine<br>claims: PURE at-least-once · IDEM effectively-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
+| `baseline` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 300/300 [0.99–1.00]<br>dup_eff 0 · dup_rcpt 3 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 300/300 [0.99–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 300/300 [0.99–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
 | `kill@after:tool_effect` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 3.4s · +calls 0 · diverged 30/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 4.7s · +calls 0 · diverged 30/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.3s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.4s · +calls 0 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 60<br>lat 2.4s · +calls 2 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.7s · +calls 0 · diverged 30/30 | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 3.7s · +calls 0 · diverged 30/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 5.4s · +calls 0 · diverged 30/30 |
-| `kill@after:tool_return` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 29 · dup_rcpt 30<br>lat 2.4s · +calls 2 · diverged 29/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 9/9 [0.70–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 · diverged 0/9 · void 21 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 · diverged 0/30 | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 12 · dup_rcpt 12 · lost 0<br>lat 3.8s · +calls 0 · diverged 12/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 |
+| `kill@after:tool_return` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 300/300 [0.99–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 1/300 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 300/300 [0.99–1.00]<br>dup_eff 294 · dup_rcpt 428<br>lat 2.8s · +calls 2 · diverged 294/300 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 9/9 [0.70–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 · diverged 0/9 · void 21 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 · diverged 0/30 | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 300/300 [0.99–1.00]<br>dup_eff 97 · dup_rcpt 97 · lost 0<br>lat 3.8s · +calls 0 · diverged 97/300 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 |
 | `kill@before:tool_call` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 3.4s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 4.5s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.4s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.4s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.3s · +calls 2 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.8s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 3.7s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 7.1s · +calls 0 · diverged 0/30 |
 | `pause_past_ttl@before:tool_call` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 3.1s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 3.1s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 2.4s · +calls 0 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 3.1s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 3.1s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 3.1s · +calls 0 · diverged 0/30 | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 50 · dup_rcpt 50 · lost 0<br>lat 21.5s · +calls 0 · diverged 30/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 50 · dup_rcpt 50 · lost 0<br>lat 6.3s · +calls 0 · diverged 30/30 |
 | `tool_500@after:tool_effect` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.8s · +calls 0 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.4s · +calls 1 · diverged 30/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 3.6s · +calls 0 · diverged 30/30 | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 0.1s · +calls 0 · diverged 30/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30 · lost 0<br>lat 1.1s · +calls 0 · diverged 30/30 |
@@ -31,6 +31,19 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | `tool_dropped_response@after:tool_effect` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.5s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.7s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.4s · +calls 1 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 3.6s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.1s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.1s · +calls 0 · diverged 0/30 |
 | `tool_malformed@after:tool_effect` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.4s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.6s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.7s · +calls 1 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 3.6s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.1s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.1s · +calls 0 · diverged 0/30 |
 | `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls -1 · diverged 0/30 | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.0s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 0 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 1 · diverged 0/30 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.0s · +calls 0 · diverged 0/30 | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.0s · +calls 0 · diverged 0/30 |
+
+## Appendix — the screening tier of the confirmed cells (§15.3)
+
+The grid reports these cells at the confirmation tier (seeds ≥ 100,000); this is what the screening tier showed for them. A safety FAIL in either tier is a FAIL in the grid.
+
+| cell | screening |
+|---|---|
+| `keel.default.EXTERNAL.baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
+| `keel.default.EXTERNAL.kill@after:tool_return` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 · diverged 0/30 |
+| `langgraph.async.EXTERNAL.baseline` | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
+| `langgraph.async.EXTERNAL.kill@after:tool_return` | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 29 · dup_rcpt 30<br>lat 2.4s · +calls 2 · diverged 29/30 |
+| `restate.pydantic_ai.EXTERNAL.baseline` | S1✓ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1✗ S2✓ S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 12 · dup_rcpt 12 · lost 0<br>lat 3.8s · +calls 0 · diverged 12/30 |
 
 ## Counterexamples
 
@@ -66,6 +79,103 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_effect` | S1 | `bc86bef89209` | 34 | `t-34` | claim=exactly_once but applied more than once |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_effect` | S1 | `bc86bef89209` | 35 | `t-35` | claim=exactly_once but applied more than once |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_effect` | S1 | `bc86bef89209` | 36 | `t-36` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100016 | `t-100016` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100017 | `t-100017` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100018 | `t-100018` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100026 | `t-100026` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100031 | `t-100031` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100035 | `t-100035` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100038 | `t-100038` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100039 | `t-100039` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100042 | `t-100042` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100043 | `t-100043` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100048 | `t-100048` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100052 | `t-100052` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100053 | `t-100053` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100054 | `t-100054` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100059 | `t-100059` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100061 | `t-100061` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100063 | `t-100063` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100064 | `t-100064` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100065 | `t-100065` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100068 | `t-100068` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100069 | `t-100069` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100070 | `t-100070` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100077 | `t-100077` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100082 | `t-100082` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100087 | `t-100087` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100088 | `t-100088` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100090 | `t-100090` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100092 | `t-100092` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100094 | `t-100094` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100098 | `t-100098` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100102 | `t-100102` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100105 | `t-100105` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100106 | `t-100106` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100109 | `t-100109` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100110 | `t-100110` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100119 | `t-100119` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100121 | `t-100121` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100124 | `t-100124` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100126 | `t-100126` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100129 | `t-100129` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100133 | `t-100133` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100135 | `t-100135` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100136 | `t-100136` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100137 | `t-100137` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100140 | `t-100140` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100145 | `t-100145` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100147 | `t-100147` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100149 | `t-100149` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100152 | `t-100152` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100154 | `t-100154` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100158 | `t-100158` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100161 | `t-100161` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100164 | `t-100164` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100166 | `t-100166` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100170 | `t-100170` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100179 | `t-100179` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100182 | `t-100182` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100184 | `t-100184` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100185 | `t-100185` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100187 | `t-100187` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100188 | `t-100188` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100189 | `t-100189` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100190 | `t-100190` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100194 | `t-100194` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100196 | `t-100196` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100197 | `t-100197` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100199 | `t-100199` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100201 | `t-100201` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100208 | `t-100208` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100216 | `t-100216` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100218 | `t-100218` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100219 | `t-100219` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100220 | `t-100220` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100224 | `t-100224` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100230 | `t-100230` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100235 | `t-100235` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100239 | `t-100239` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100241 | `t-100241` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100245 | `t-100245` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100251 | `t-100251` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100254 | `t-100254` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100257 | `t-100257` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100264 | `t-100264` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100265 | `t-100265` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100266 | `t-100266` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100269 | `t-100269` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100271 | `t-100271` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100272 | `t-100272` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100273 | `t-100273` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100274 | `t-100274` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100277 | `t-100277` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100283 | `t-100283` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100285 | `t-100285` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100287 | `t-100287` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100291 | `t-100291` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100295 | `t-100295` | claim=exactly_once but applied more than once |
+| `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 100296 | `t-100296` | claim=exactly_once but applied more than once |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 9 | `t-9` | claim=exactly_once but applied more than once |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 13 | `t-13` | claim=exactly_once but applied more than once |
 | `restate.pydantic_ai.EXTERNAL.kill@after:tool_return` | S1 | `78b881f297eb` | 16 | `t-16` | claim=exactly_once but applied more than once |
@@ -231,11 +341,11 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 
 ## Provenance
 
-Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
+Rows through 2026-09-19T22:44:48+00:00 (the last trial's end).
 
 | results | rows | keel_commit |
 |---|---|---|
-| `bench/results/v1_w1_proxy` | 4585 | `251e52d` ×4585 |
+| `bench/results/v1_w1_proxy` | 6403 | `251e52d` ×6403 |
 
 | config | pin |
 |---|---|
@@ -248,7 +358,7 @@ Rows through 2026-09-19T13:29:38+00:00 (the last trial's end).
 | `restate.pydantic_ai` | backend=restate-server single binary, fresh RESTATE_BASE_DIR per trial, wiped at teardown, detection_timeout_s=7, durability=invocation journal; agent_code=pydantic_ai (RestateAgent wrapper, not a capability), extra={'abort_timeout_s': 5.0, 'approval_wait': 'ctx.awakeable + restate.select(ctx.sleep(expires_in))', 'asgi': 'hypercorn.asyncio.serve in the worker process, 127.0.0.1:<port fixed per trial>', 'client_retries': 'none (FunctionModel has no provider client; the World client does not retry)', 'inactivity_timeout_s': 2.0, 'journal_retention': '1d', 'platform': 'linux (WSL2)', 'server_env': {'RESTATE_BOOTSTRAP_NUM_PARTITIONS': '1', 'RESTATE_DEFAULT_NUM_PARTITIONS': '1', 'RESTATE_DISABLE_TELEMETRY': 'true', 'RESTATE_LISTEN_MODE': 'tcp', 'RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE': '32 MB'}, 'tools': 'restate_context().run_typed per call (RestateAgent auto_wrap_tools=False)', 'world_client_timeout_s': 5.0}, retry=InvocationRetryPolicy(initial_interval=50ms, exponentiation_factor=2.0, max_interval=60s, max_attempts=70, on_max_attempts=pause); ctx.run with default RunOptions (the invocation policy), worker_count=1 |
 | `temporal.pydantic_ai` | backend=temporal server start-dev --db-filename (SQLite), one per trial, detection_timeout_s=2, durability=event history; agent_code=pydantic_ai (TemporalDurability), extra={'applies_to': 'model-request and tool-call activities alike', 'client_retries': 'none (FunctionModel has no provider client; the World client does not retry)', 'heartbeat_throttle': 'SDK default: 0.8 x heartbeat_timeout', 'heartbeat_timeout_s': 2.0, 'start_to_close_s': 5.0, 'sticky_queue_schedule_to_start_timeout_s': 2.0, 'workflow_task_timeout_s': 10.0, 'world_client_timeout_s': 5.0}, heartbeat_s=2, retry=RetryPolicy(initial_interval=1s, backoff_coefficient=2.0, maximum_interval=100s, maximum_attempts=0) + TemporalDurability non_retryable_error_types, tool_timeout_s=5, worker_count=1 |
 
-**Mixed n.** Cells in this report were run at different seed counts ([5, 9, 30]); each cell prints its own n in the liveness line. A reduced-n cell is a weaker estimate, not a different verdict: safety is still PASS only on zero violations in the n that ran, and the interval beside it widens to say so (§15.3).
+**Mixed n.** Cells in this report were run at different seed counts ([5, 9, 30, 300]); each cell prints its own n in the liveness line. A reduced-n cell is a weaker estimate, not a different verdict: safety is still PASS only on zero violations in the n that ran, and the interval beside it widens to say so (§15.3).
 
 **How to read a cell.** The first line is safety: PASS means zero violations in n, and a single violation is a FAIL with its counterexample listed above — safety is never a proportion. The second line is liveness with a Wilson interval. The third is raw observation, published whatever the verdicts say: `dup_eff` counts effects the World actually applied more than once, `dup_rcpt` counts requests it received more than once. The gap between them is what the receiver's idempotency bought, and the runtime gets no credit for it.
 
@@ -303,10 +413,10 @@ a random production crash would reach rarely.
 thirty trials can and cannot exclude, and the MDD table above says what gap would have been visible
 at all. Neither is hidden behind a flag.
 
-**3. This page is the screening tier only.** Every cell here is at n ≤ 30. §15.3's confirmation
-tier — every non-unanimous cell and every cell under a claimed difference re-run at n = 300 on fresh
-seeds, together with the arm it is compared against — has not been run for these rows, so no
-difference on this page is confirmed.
+**3. Confirmation is automatic where it matters.** Every non-unanimous cell and every cell under a
+claimed difference goes to n = 300 on fresh seeds, together with the arm it is compared against.
+Unanimous cells that no claim depends on stay at thirty, because three hundred more of the same
+outcome tighten an interval nothing rests on.
 
 **4. The variance being sampled is the right one.** Schedules are seeded and shared between arms, so
 the residual variance is the SUT's own internal timing — which is precisely the quantity a

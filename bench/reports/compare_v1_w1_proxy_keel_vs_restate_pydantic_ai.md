@@ -1,28 +1,30 @@
 # compare — `keel.*` (A) vs `restate.pydantic_ai.*` (B)
 
-540 paired trials on (workload, variant, trigger, spec_hash, seed).
+1140 paired trials on (workload, variant, trigger, spec_hash, seed).
 
-Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
+2 cell(s) ran at the confirmation tier (seeds ≥ 100,000) and are compared at that n only; their screening numbers are in the appendix. Holm runs over each family with mixed n — each p is valid at its own n, printed beside it (§15.3, §15.6).
+
+Rows through 2026-09-19T22:44:48+00:00 (the last trial's end).
 
 | results | rows | keel_commit |
 |---|---|---|
-| `bench/results/v1_w1_proxy` | 1084 | `251e52d` ×1084 |
+| `bench/results/v1_w1_proxy` | 2302 | `251e52d` ×2302 |
 
 ## Safety — counted, never estimated
 
 | observation | A | B |
 |---|---|---|
-| `duplicate_effects` | 30 | 212 |
-| `duplicate_receipts` | 210 | 420 |
+| `duplicate_effects` | 30 | 309 |
+| `duplicate_receipts` | 213 | 517 |
 | `missing_required` | 0 | 0 |
 
 ## recovery_rate · tool_chain_1_effect · EXTERNAL
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·baseline` (n=300) | 300/300 | 300/300 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 300/300 | 300/300 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·tool_500@after:tool_effect` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
@@ -48,9 +50,9 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·baseline` (n=300) | 299/300 | 300/300 | — | 0/1 | 1.000 | 1.000 | — | too noisy to claim (1 discordant pairs) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 30/30 | 0/30 | 1.00 | 30/0 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 30/30 | 18/30 | 0.40 | 12/0 | 0.0005 | 0.002 | 0.32 | A better (p=0.0005) |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 300/300 | 203/300 | 0.32 | 97/0 | 0.0000 | 0.0000 | 0.09 | A better (p=0.0000) |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·tool_500@after:tool_effect` (n=30) | 30/30 | 0/30 | 1.00 | 30/0 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
@@ -76,9 +78,9 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 
 | cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `EXTERNAL·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·baseline` (n=300) | 0/300 | 0/300 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 0/30 | 30/30 | -1.00 | 0/30 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 0/30 | 12/30 | -0.40 | 0/12 | 0.0005 | 0.002 | 0.32 | A better (p=0.0005) |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 1/300 | 97/300 | -0.32 | 1/97 | 0.0000 | 0.0000 | 0.09 | A better (p=0.0000) |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
 | `EXTERNAL·tool_500@after:tool_effect` (n=30) | 0/30 | 30/30 | -1.00 | 0/30 | 0.0000 | 0.0000 | 0.51 | A better (p=0.0000) |
@@ -134,7 +136,7 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 |---|---|---|---|---|---|---|---|---|
 | `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.02 | too noisy to claim |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `EXTERNAL·tool_500@after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
@@ -162,7 +164,7 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 |---|---|---|---|---|---|---|---|---|
 | `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 2.32 | too noisy to claim |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
 | `EXTERNAL·tool_500@after:tool_effect` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
@@ -190,12 +192,12 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 |---|---|---|---|---|---|---|---|---|
 | `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
 | `EXTERNAL·kill@after:tool_effect` (n=30) | 2206.3 | 3787.5 | -1566.3 | [-1737.6, -1353.1] | 0.0000 | 0.0000 | 182.34 | B higher |
-| `EXTERNAL·kill@after:tool_return` (n=30) | 279.4 | 3765.1 | -3488.1 | [-3665.2, -3423.5] | 0.0000 | 0.0000 | 203.21 | B higher |
+| `EXTERNAL·kill@after:tool_return` (n=300) | 434.9 | 4054.7 | -3762.7 | [-3988.0, -3551.4] | 0.0000 | 0.0000 | 368.07 | B higher |
 | `EXTERNAL·kill@before:tool_call` (n=30) | 2323.0 | 3610.3 | -1268.6 | [-1378.5, -1168.4] | 0.0000 | 0.0000 | 164.42 | B higher |
-| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 3308.0 | 21245.1 | -17910.0 | [-20611.9, -16407.7] | 0.0000 | 0.0000 | 2256.20 | B higher |
-| `EXTERNAL·tool_500@after:tool_effect` (n=30) | -113.6 | 227.9 | -344.4 | [-431.4, -240.0] | 0.0001 | 0.0001 | 133.60 | B higher |
-| `EXTERNAL·tool_dropped_response@after:tool_effect` (n=30) | -99.3 | 266.1 | -365.7 | [-401.8, -264.7] | 0.0000 | 0.0000 | 121.14 | B higher |
-| `EXTERNAL·tool_malformed@after:tool_effect` (n=30) | -99.1 | 101.2 | -166.5 | [-285.4, -78.0] | 0.001 | 0.001 | 158.58 | B higher |
+| `EXTERNAL·pause_past_ttl@before:tool_call` (n=30) | 3308.0 | 21245.1 | -17910.0 | [-20611.9, -16264.2] | 0.0000 | 0.0000 | 2256.20 | B higher |
+| `EXTERNAL·tool_500@after:tool_effect` (n=30) | -113.6 | 227.9 | -344.4 | [-421.0, -236.3] | 0.0001 | 0.0001 | 133.60 | B higher |
+| `EXTERNAL·tool_dropped_response@after:tool_effect` (n=30) | -99.3 | 266.1 | -365.7 | [-401.8, -272.9] | 0.0000 | 0.0000 | 121.14 | B higher |
+| `EXTERNAL·tool_malformed@after:tool_effect` (n=30) | -99.1 | 101.2 | -166.5 | [-275.1, -78.0] | 0.001 | 0.001 | 158.58 | B higher |
 | `EXTERNAL·tool_timeout@before:tool_call` (n=30) | 888.4 | 4931.9 | -3979.2 | [-4099.1, -3919.1] | 0.0000 | 0.0000 | 124.78 | B higher |
 
 ## wall_clock_overhead_ms · tool_chain_1_effect · IDEMPOTENT
@@ -203,7 +205,7 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 | cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
 |---|---|---|---|---|---|---|---|---|
 | `IDEMPOTENT·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
-| `IDEMPOTENT·kill@after:tool_effect` (n=30) | 2260.3 | 3709.6 | -1420.5 | [-1575.5, -1297.3] | 0.0000 | 0.0000 | 142.88 | B higher |
+| `IDEMPOTENT·kill@after:tool_effect` (n=30) | 2260.3 | 3709.6 | -1420.5 | [-1566.2, -1297.3] | 0.0000 | 0.0000 | 142.88 | B higher |
 | `IDEMPOTENT·kill@after:tool_return` (n=30) | 303.7 | 3642.3 | -3395.5 | [-3519.8, -3134.1] | 0.0000 | 0.0000 | 176.74 | B higher |
 | `IDEMPOTENT·kill@before:tool_call` (n=30) | 2469.1 | 3708.6 | -1270.7 | [-1425.2, -1135.7] | 0.0000 | 0.0000 | 178.43 | B higher |
 | `IDEMPOTENT·pause_past_ttl@before:tool_call` (n=30) | 3476.0 | 22066.0 | -18605.6 | [-21022.7, -15338.8] | 0.0000 | 0.0000 | 2269.22 | B higher |
@@ -211,6 +213,57 @@ Rows through 2026-09-19T13:17:08+00:00 (the last trial's end).
 | `IDEMPOTENT·tool_dropped_response@after:tool_effect` (n=30) | 587.7 | 278.8 | 290.9 | [141.6, 479.0] | 0.016 | 0.032 | 226.27 | A higher |
 | `IDEMPOTENT·tool_malformed@after:tool_effect` (n=30) | 522.9 | 348.1 | 132.9 | [-97.7, 344.2] | 0.585 | 0.585 | 216.76 | too noisy to claim |
 | `IDEMPOTENT·tool_timeout@before:tool_call` (n=30) | 1576.4 | 5318.2 | -3741.9 | [-3912.9, -3556.9] | 0.0000 | 0.0000 | 210.60 | B higher |
+
+## Appendix — the screening tier of the confirmed cells (§15.3)
+
+### recovery_rate · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+
+### logical_correctness · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=30) | 30/30 | 30/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 30/30 | 18/30 | 0.40 | 12/0 | 0.0005 | 0.002 | 0.32 | A better (p=0.0005) |
+
+### replay_divergence · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A | B | δ | discord (A/B) | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=30) | 0/30 | 0/30 | — | 0/0 | 1.000 | 1.000 | — | too noisy to claim (0 discordant pairs) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 0/30 | 12/30 | -0.40 | 0/12 | 0.0005 | 0.002 | 0.32 | A better (p=0.0005) |
+
+### recovery_latency_ms · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
+| `EXTERNAL·kill@after:tool_return` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
+
+### extra_model_calls · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+
+### extra_tokens · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 0.0 | 0.0 | 0.0 | [0.0, 0.0] | 1.000 | 1.000 | 0.00 | too noisy to claim |
+
+### wall_clock_overhead_ms · tool_chain_1_effect · EXTERNAL · screening
+
+| cell | A median | B median | Δ | 95% CI | p | Holm p | MDD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `EXTERNAL·baseline` (n=0) | — | — | — | — | — | — | — | too noisy to claim (0 paired observations) |
+| `EXTERNAL·kill@after:tool_return` (n=30) | 279.4 | 3765.1 | -3488.1 | [-3665.2, -3423.5] | 0.0000 | 0.0000 | 203.21 | B higher |
 
 A safety observation is a count of what happened, so it carries no p-value: whether a runtime filed the issue twice is not a sample from a population. The estimates above it are, and every one of them is made per `(location, fault)` cell — averaging a kill at `after:tool_effect` together with a `pause_past_ttl` answers neither question. Holm runs across the cells of one metric table and nowhere else (§15.6). Every row with a p-value counts toward `m` and prints its adjusted p, including rows rules 1–4 already disqualified; only rows confounded by `detection = harness` are out.
 
