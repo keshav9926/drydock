@@ -1,0 +1,243 @@
+# The confirmation tier's plan (§15.3), written by `crashproof confirm`; regenerate, never hand-edit.
+#
+# Selection: a binary estimate not unanimous at screening; any metric under a claimed difference for
+# the `claims` arm pairs (re-derived with compare()); Keel's cell at the same (variant, location,
+# fault); and each confirmed fault cell's baseline, the τ₀ its delta metrics are paired against.
+# Safety verdicts (S*, C*, L*) select nothing.
+#
+# Running it is `bench`: one serial process per command (shard with --cells into separate --out dirs
+# to parallelise), re-issued with --resume when a long run is killed for memory. `host: wsl` commands
+# run from the WSL clone (restate-sdk has no Windows wheel). Then put each confirmation results.jsonl
+# beside its screening rows — `cat` both into one directory — and `crashproof report` / `compare`
+# report every confirmed cell at the confirmation n, with its screening numbers in an appendix.
+tier_rule: a row whose seed is >= 100000 is confirmation tier; below it, screening
+confirmation:
+  base_seed: 100000
+  seeds: 300
+  seed_range:
+  - 100000
+  - 100299
+claims: []
+estimate: 'per cell: n x (the cell''s mean screening wall_ms + 3 s setup), serial'
+total:
+  cells: 17
+  trials: 5100
+  estimate_hours: 10.2
+sources:
+- results: bench/results/v1_w1_shim/results.jsonl
+  screening_rows: 6240
+  cells: 7
+  trials: 2100
+  estimate_hours: 4.7
+  confirm:
+  - cell: dbos.native.EXTERNAL.after:tool_return
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: d2a3818f3b434e9a96d9f3c6c9d260960af6611ecf0513f3212527320c128e26
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 5.62
+    why:
+    - 'logical_correctness 9/30 at screening: not unanimous'
+    - 'replay_divergence 21/30 at screening: not unanimous'
+  - cell: dbos.native.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: 60f0b8eed63c9b18d17c378613cebd462a9ba800efc0239e14f04cb3b04f3485
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 2.45
+    why:
+    - 'τ₀ for `dbos.native.EXTERNAL.after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: dbos.pydantic_ai.EXTERNAL.after:tool_return
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: d2a3818f3b434e9a96d9f3c6c9d260960af6611ecf0513f3212527320c128e26
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 8.91
+    why:
+    - 'logical_correctness 16/30 at screening: not unanimous'
+    - 'replay_divergence 14/30 at screening: not unanimous'
+  - cell: dbos.pydantic_ai.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: 60f0b8eed63c9b18d17c378613cebd462a9ba800efc0239e14f04cb3b04f3485
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 5.31
+    why:
+    - 'τ₀ for `dbos.pydantic_ai.EXTERNAL.after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: keel.default.EXTERNAL.after:tool_return
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: d2a3818f3b434e9a96d9f3c6c9d260960af6611ecf0513f3212527320c128e26
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 4.61
+    why:
+    - Keel's arm at the same (variant, location, fault) as `dbos.native.EXTERNAL.after:tool_return`
+    - Keel's arm at the same (variant, location, fault) as `dbos.pydantic_ai.EXTERNAL.after:tool_return`
+  - cell: keel.default.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: 60f0b8eed63c9b18d17c378613cebd462a9ba800efc0239e14f04cb3b04f3485
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 1.88
+    why:
+    - 'τ₀ for `keel.default.EXTERNAL.after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+    - 'τ₀ for `keel.default.EXTERNAL.pause_past_ttl@before:tool_call`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: keel.default.EXTERNAL.pause_past_ttl@before:tool_call
+    spec: bench/specs/week2_w1_shim.yaml
+    spec_hash: 88d3c98423018ca0c2075f3ead58b5db597d861b738f19525aebdbe2d7d48745
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 6.33
+    why:
+    - 'logical_correctness 26/30 at screening: not unanimous'
+    - 'replay_divergence 4/30 at screening: not unanimous'
+  commands:
+  - spec: bench/specs/week2_w1_shim.yaml
+    host: windows
+    cells: 7
+    trials: 2100
+    estimate_hours: 4.7
+    command: uv run crashproof bench --matrix bench/specs/week2_w1_shim.yaml --cells 'dbos.native.EXTERNAL.after:tool_return' --cells 'dbos.native.EXTERNAL.baseline' --cells 'dbos.pydantic_ai.EXTERNAL.after:tool_return' --cells 'dbos.pydantic_ai.EXTERNAL.baseline' --cells 'keel.default.EXTERNAL.after:tool_return' --cells 'keel.default.EXTERNAL.baseline' --cells 'keel.default.EXTERNAL.pause_past_ttl@before:tool_call' --seeds 300 --base-seed 100000 --out bench/results/v1_w1_shim_confirm
+- results: bench/results/v1_w1_proxy/results.jsonl
+  screening_rows: 4274
+  cells: 6
+  trials: 1800
+  estimate_hours: 3.4
+  confirm:
+  - cell: keel.default.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: cc14b561acc8c0a8d6b1227a91fdf06f6634d119f124bf8b2b23d2faa3b4ab76
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 1.88
+    why:
+    - 'τ₀ for `keel.default.EXTERNAL.kill@after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: keel.default.EXTERNAL.kill@after:tool_return
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: 78b881f297ebcf427222821f478ccb15d0380d0ea457947a15bf614f18f6418b
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 2.14
+    why:
+    - Keel's arm at the same (variant, location, fault) as `langgraph.async.EXTERNAL.kill@after:tool_return`
+    - Keel's arm at the same (variant, location, fault) as `restate.pydantic_ai.EXTERNAL.kill@after:tool_return`
+  - cell: langgraph.async.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: cc14b561acc8c0a8d6b1227a91fdf06f6634d119f124bf8b2b23d2faa3b4ab76
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 3.3
+    why:
+    - 'τ₀ for `langgraph.async.EXTERNAL.kill@after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: langgraph.async.EXTERNAL.kill@after:tool_return
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: 78b881f297ebcf427222821f478ccb15d0380d0ea457947a15bf614f18f6418b
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 5.18
+    why:
+    - 'logical_correctness 1/30 at screening: not unanimous'
+    - 'replay_divergence 29/30 at screening: not unanimous'
+  - cell: restate.pydantic_ai.EXTERNAL.baseline
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: cc14b561acc8c0a8d6b1227a91fdf06f6634d119f124bf8b2b23d2faa3b4ab76
+    host: wsl
+    screening_n: 30
+    screening_mean_wall_s: 3.07
+    why:
+    - 'τ₀ for `restate.pydantic_ai.EXTERNAL.kill@after:tool_return`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: restate.pydantic_ai.EXTERNAL.kill@after:tool_return
+    spec: bench/specs/week2_w1_proxy.yaml
+    spec_hash: 78b881f297ebcf427222821f478ccb15d0380d0ea457947a15bf614f18f6418b
+    host: wsl
+    screening_n: 30
+    screening_mean_wall_s: 6.88
+    why:
+    - 'logical_correctness 18/30 at screening: not unanimous'
+    - 'replay_divergence 12/30 at screening: not unanimous'
+  commands:
+  - spec: bench/specs/week2_w1_proxy.yaml
+    host: windows
+    cells: 4
+    trials: 1200
+    estimate_hours: 2.0
+    command: uv run crashproof bench --matrix bench/specs/week2_w1_proxy.yaml --cells 'keel.default.EXTERNAL.baseline' --cells 'keel.default.EXTERNAL.kill@after:tool_return' --cells 'langgraph.async.EXTERNAL.baseline' --cells 'langgraph.async.EXTERNAL.kill@after:tool_return' --seeds 300 --base-seed 100000 --out bench/results/v1_w1_proxy_confirm
+  - spec: bench/specs/week2_w1_proxy.yaml
+    host: wsl
+    cells: 2
+    trials: 600
+    estimate_hours: 1.3
+    command: uv run crashproof bench --matrix bench/specs/week2_w1_proxy.yaml --cells 'restate.pydantic_ai.EXTERNAL.baseline' --cells 'restate.pydantic_ai.EXTERNAL.kill@after:tool_return' --seeds 300 --base-seed 100000 --out bench/results/v1_w1_proxy_confirm_wsl
+- results: bench/results/v1_w5/results.jsonl
+  screening_rows: 1200
+  cells: 0
+  trials: 0
+  estimate_hours: 0.0
+  confirm: []
+  commands: []
+- results: bench/results/v1_w5_pre/results.jsonl
+  screening_rows: 720
+  cells: 4
+  trials: 1200
+  estimate_hours: 2.1
+  confirm:
+  - cell: keel.default.GATED.approval_delay@supervisor
+    spec: bench/specs/week2_w5_pre.yaml
+    spec_hash: 33dcd646713c49c815ebe987d77d8351fe4b7f4e7e07961d9482afce1826efb3
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 2.7
+    why:
+    - Keel's arm at the same (variant, location, fault) as `langgraph.sync.GATED.approval_delay@supervisor`
+  - cell: keel.default.GATED.baseline
+    spec: bench/specs/week2_w5_pre.yaml
+    spec_hash: 1216bed8898d701f9e28458ab6b0e0db0fede1a6dad21a22710b1212adb6d719
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 2.52
+    why:
+    - 'τ₀ for `keel.default.GATED.approval_delay@supervisor`: the baseline its delta metrics are paired against at the same seeds'
+  - cell: langgraph.sync.GATED.approval_delay@supervisor
+    spec: bench/specs/week2_w5_pre.yaml
+    spec_hash: 33dcd646713c49c815ebe987d77d8351fe4b7f4e7e07961d9482afce1826efb3
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 4.16
+    why:
+    - 'replay_divergence 1/30 at screening: not unanimous'
+  - cell: langgraph.sync.GATED.baseline
+    spec: bench/specs/week2_w5_pre.yaml
+    spec_hash: 1216bed8898d701f9e28458ab6b0e0db0fede1a6dad21a22710b1212adb6d719
+    host: windows
+    screening_n: 30
+    screening_mean_wall_s: 4.22
+    why:
+    - 'τ₀ for `langgraph.sync.GATED.approval_delay@supervisor`: the baseline its delta metrics are paired against at the same seeds'
+  commands:
+  - spec: bench/specs/week2_w5_pre.yaml
+    host: windows
+    cells: 4
+    trials: 1200
+    estimate_hours: 2.1
+    command: uv run crashproof bench --matrix bench/specs/week2_w5_pre.yaml --cells 'keel.default.GATED.approval_delay@supervisor' --cells 'keel.default.GATED.baseline' --cells 'langgraph.sync.GATED.approval_delay@supervisor' --cells 'langgraph.sync.GATED.baseline' --seeds 300 --base-seed 100000 --out bench/results/v1_w5_pre_confirm
+- results: bench/results/v1_reask/results.jsonl
+  screening_rows: 480
+  cells: 0
+  trials: 0
+  estimate_hours: 0.0
+  confirm: []
+  commands: []
+- results: bench/results/v1_w3/results.jsonl
+  screening_rows: 90
+  cells: 0
+  trials: 0
+  estimate_hours: 0.0
+  confirm: []
+  commands: []
+- results: bench/results/v1_w7/results.jsonl
+  screening_rows: 390
+  cells: 0
+  trials: 0
+  estimate_hours: 0.0
+  confirm: []
+  commands: []
