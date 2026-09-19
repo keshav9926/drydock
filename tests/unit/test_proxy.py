@@ -169,8 +169,11 @@ async def test_a_timeout_forwards_and_never_answers(make) -> None:
     assert rig.applied() == {"issues.create#1": 1}
     [row] = rig.trial.faults()
     assert row.boundary == "before:tool_call"
-    # And the SUT giving up is what frees the handler: a second call goes through at once.
-    assert (await rig.call(title="again", body="b"))["id"]
+    # And the held request does not hold the proxy: a second call goes through. Its own client and
+    # bound — a full forwarded round trip is three observation fsyncs and the World's receipt fsync,
+    # which the first call's 0.3 s outlasted on a loaded CI runner.
+    patient = WorldClient(rig.proxy.base_url, timeout=10.0)
+    assert (await asyncio.to_thread(patient.call, "issues.create", {"title": "again", "body": "b"}))["id"]
 
 
 async def test_a_delay_is_only_latency(make) -> None:
