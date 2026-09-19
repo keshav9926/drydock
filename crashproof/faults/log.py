@@ -4,11 +4,14 @@ A worker that has just been restarted must not fire a fault it already fired, an
 remember anything — it was killed. So firing state lives in files the supervisor owns and both
 incarnations can read.
 
-Three single writers, five files, no locks across processes:
+Five files, no locks across processes:
 
-    supervisor  → cursor.json, program_variant
-    firing site → faults.jsonl, observations.jsonl
-    World       → world/receipts.jsonl
+    supervisor  → cursor.json, program_variant           (single writer)
+    firing site → faults.jsonl, observations.jsonl       (appends; more than one process may write)
+    World       → world/receipts.jsonl                   (single writer)
+
+An append is one write the OS places at end-of-file (`_durably_append`), so the logs can have
+several writers — the proxy and the SUT's observe-only shim do — without interleaving.
 
 The write order inside the firing site is the whole reliability argument. Observe and fsync first,
 so the occurrence counter survives the kill that is about to happen; append the fault row and fsync
@@ -254,11 +257,42 @@ def _durably_write(path: Path, text: str) -> None:
 
 
 def _durably_append(path: Path, line: str) -> None:
-    """Append, flush, fsync — in that order, before anything irreversible happens next."""
-    with path.open("a", encoding="utf8") as fh:
-        fh.write(line + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
+    """Append and fsync, before anything irreversible happens next — as one write at the end of
+    the file as the OS sees it. The logs have more than one writing process (the proxy and the
+    SUT's shim both observe; so do Keel's non-worker roles), and Windows' `open(..., "a")` is a
+    seek to the end and then a write, which another process can land between: three writers of
+    1500 lines each lost 522 and tore 221, and one torn line took a bench run down."""
+    fd = _open_append(path)
+    try:
+        os.write(fd, (line + "\n").encode("utf8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    _CreateFileW = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    _CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                             wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    _CreateFileW.restype = wintypes.HANDLE
+    _FILE_APPEND_DATA, _SHARE_ALL, _OPEN_ALWAYS, _NORMAL = 0x0004, 0x7, 4, 0x80
+
+    def _open_append(path: Path) -> int:
+        # Append access without write access: every write goes to end-of-file, placed by the
+        # file system in the same step (WriteFile's docs: the same as offset 0xFFFFFFFF).
+        handle = _CreateFileW(str(path), _FILE_APPEND_DATA, _SHARE_ALL, None, _OPEN_ALWAYS, _NORMAL, None)
+        if handle is None or handle == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return msvcrt.open_osfhandle(handle, 0)  # binary, and no CRT seek before each write
+
+else:
+
+    def _open_append(path: Path) -> int:
+        return os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)  # one write(), one append
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

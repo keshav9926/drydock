@@ -8,6 +8,10 @@ than a trial that silently scores zero.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from crashproof.faults import schedule as sched
@@ -246,3 +250,21 @@ def test_a_fresh_trial_directory_is_empty_and_a_joining_one_is_not(tmp_path) -> 
     restarted = TrialDir(path, fresh=True)
     assert restarted.fired_ids() == set()
     assert restarted.occurrence_counts() == {}
+
+
+def test_appends_from_several_processes_neither_interleave_nor_vanish(tmp_path) -> None:
+    """The proxy and the SUT's shim append to one observation log at the same instant — the proxy
+    records `after:tool_return` as the SUT's shim does. On Windows `open(..., "a")` is a seek and
+    then a write; three writers lost a tenth of their lines and tore others, and one torn line took
+    the v1 confirmation run down."""
+    path = tmp_path / "observations.jsonl"
+    script = (
+        "import pathlib, sys\n"
+        "from crashproof.faults.log import _durably_append\n"
+        "for i in range(400):\n"
+        "    _durably_append(pathlib.Path(sys.argv[1]), '{\"w\": %s, \"i\": %d}' % (sys.argv[2], i))\n"
+    )
+    writers = [subprocess.Popen([sys.executable, "-c", script, str(path), str(w)]) for w in range(3)]
+    assert [p.wait(timeout=120) for p in writers] == [0, 0, 0]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf8").splitlines()]
+    assert sorted((r["w"], r["i"]) for r in rows) == [(w, i) for w in range(3) for i in range(400)]
