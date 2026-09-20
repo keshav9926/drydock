@@ -87,8 +87,12 @@ the run and journals the decision at its own drain — which is why `kill_while_
 one gated effect: the grant was never in a process's memory to lose. Under `approval_delay` the human
 clicks twice (§11.4 spec C, `approval_duplicate_gap_ms: 0` in the W5 matrices), and the second row
 names the same approval, unkeyed; the drain journals it `SIGNAL_IGNORED{approval_terminal}` rather
-than granting anything a second time. The published W5 rows predate the second click and the named
-approval, so those cells are due a re-run.
+than granting anything a second time. The release rows carry the second click and the named approval
+(`bench/reports/v1_w5.md`, `251e52d`, n = 30), re-running the week-2 cells at `dcdd533` that were the
+first with both (`bench/reports/week2_w5.md`): `approval_delay` deploys once 30/30 (`dup_eff 0`, S7
+PASS, `lat 0.2s`); `kill_while_waiting` the same at `lat 1.6s` (2.3 s at `dcdd533`);
+`approval_expiry` completes 30/30 with nothing deployed — `diverged 30/30` and one model call fewer
+than the baseline, the shape of a run that stopped at the gate.
 
 `binds_effect_key = effect_key(run_root_id, i+1, tool, args)` is computed before anyone decides,
 because the runtime owns the step counter, so the approval names the effect it authorises rather
@@ -120,22 +124,28 @@ segment. The sleep is `RUN_WAITING{sleep, wake_at}` with the lease and `runnable
 reaper's timer sweep wakes it, and the step completes when the store's clock says `wake_at` has passed.
 The harness plays a human at every WAITING, so it also "approves" the sleeping run once: Keel drains
 that row as `SIGNAL_IGNORED{unknown_approval}` and parks again with the same `wake_at` — the spurious
-wake a durable timer has to survive, visible in every W3 journal.
+wake a durable timer has to survive, visible in every W3 row as two `WAKE` recoveries, the first of
+which parks again.
 
-Smoke, `bench/specs/w3.yaml`, seed 7, at `4f13bce`; the faults are aimed at the 23rd put, inside
-segment 1 (rounds 20–39, first step 45). One seed is a check that each cell runs and lands where it
-was aimed, not a rate.
+Release, `bench/specs/w3.yaml` at 30 seeds (`bench/reports/v1_w3.md`, 90 trials at `251e52d`, 0
+void); the faults are aimed at the 23rd put, inside segment 1 — rounds 20–39 by the spec's
+`Continue` every 20, since a row carries each recovery's cause and `replayed_steps` and not the
+segment. Applied, receipts, replayed steps and result below are per trial and identical across the
+cell's 30; L1 is the page's per-cell count and latency its `lat`.
 
-| cell | applied / receipts | boundaries (segment, first step) | recovery from segment · replayed steps | plan | sleep, woke − started | result | S1 S3 S5 L1 C1 C2 |
-|---|---|---|---|---|---|---|---|
-| baseline | 50 / 50 | (1, 45), (2, 90) | wakes from 1 · 13 | 5/5 completed | 2.30 s | `counter=49` | all PASS |
-| `kill@after:tool_effect` | 50 / 51 | (1, 45), (2, 90) | ORPHANED from 1 · 6; wakes from 1 · 13 | 5/5 | 2.43 s | `counter=49` | all PASS |
-| `pause_past_ttl@before:tool_call` | 50 / 51 | (1, 45), (2, 90) | ORPHANED from 1 · 6; wakes from 1 · 13 | 5/5 | 2.21 s | `counter=49` | all PASS |
+| cell | applied / receipts | recovery from segment · replayed steps | result | L1 | S1–S5 L2 C1 C2 | latency |
+|---|---|---|---|---|---|---|
+| baseline | 50 / 50 | wakes from 1 · 13 | `counter=49`, plan 5/5 | 30/30 [0.89–1.00] | PASS | — |
+| `kill@after:tool_effect` | 50 / 51 | ORPHANED from 1 · 6; wakes from 1 · 13 | `counter=49`, plan 5/5 | 30/30 [0.89–1.00] | PASS | 2.4 s |
+| `pause_past_ttl@before:tool_call` | 50 / 51 | ORPHANED from 1 · 6; wakes from 1 · 13 | `counter=49`, plan 5/5 | 30/30 [0.89–1.00] | PASS | 2.3 s |
 
-The second receipt in each fault cell is `kv.put#23`, applied once: the re-put after the kill, and the
-zombie's thawed request after the successor's, both deduplicated by the receiver on the full value
-(F0, no key). The recovery replayed the 6 steps of segment 1 before put 23, not the 51 before it in the
-run — the claim §10.8 exists to make.
+The second receipt in all 60 fault trials is `kv.put#23`, applied once (`dup_eff 0 · dup_rcpt 30` on
+the page, both cells): the re-put after the kill, and the zombie's thawed request after the
+successor's, both deduplicated by the receiver on the full value (F0, no key). The recovery replayed
+the 6 steps of segment 1 before put 23, not the run's whole history — the claim §10.8 exists to make;
+`replayed_steps` is 6 on the ORPHANED recovery of all 60, and the two `WAKE` recoveries carry 13 and
+nothing (the spurious wake). C2 is on every row's verdicts (the page's grid stops at C1), PASS in
+all 90.
 
 **N/A for W3, with the reason.** Temporal continue-as-new (§29.2's second arm): the Temporal adapter
 is `agent_code = pydantic_ai` only, §13.5 puts W3 outside that path ("continuation semantics differ
@@ -152,36 +162,67 @@ then the tool call as JSON — each piece through the shim's `during:model_strea
 response. Keel journals the pieces as STEP_CHUNK batches (256 tokens or 500 ms) and the answer only as
 the outcome.
 
-Smoke, `bench/specs/w7.yaml`, seed 7, into a scratch `--out`. One seed checks that each cell runs and
-lands where aimed, not a rate. Every row: valid, COMPLETED, the answer equal to the scripted final
-response, every MODEL outcome a whole scripted answer, S1–S5 L1 L2 C1 PASS; "charged" is the budget
-recomputed from the journal (a settled attempt at its usage, an unsettled one at max(reservation, last
-`usage_cum`)).
+Release, `bench/specs/w7.yaml` at 30 seeds (`bench/reports/v1_w7.md`, 390 trials at `251e52d`, 0
+void). Every row: valid, COMPLETED, the answer equal to the scripted final response, S1–S5 L1 L2 C1
+PASS, `dup_eff 0`. There is no write tool, so "applied" is 0 in every trial and the receipt column is
+the PURE `logs.fetch`; C2 is not judged (no boundary). The verifier has no budget form, so "charged"
+is read off the smoke journal below, not off a row — the rows carry a token column, but it counts
+something else, and the last paragraph of this section says what.
 
-| cell | STEP_CHUNK (step.attempt: n) | attempt closed | charged (abandoned) |
-|---|---|---|---|
-| baseline | 0.1:1 1.1:1 2.1:1 | — | 249 (0) |
-| `kill@before:tool_call` | 0.1:1 1.2:1 2.1:1 | 1.1 attempt_abandoned | 249 (0) |
-| `kill@after:tool_return` | 0.1:1 1.2:1 2.1:1 | 1.1 attempt_abandoned | 249 (0) |
-| `kill@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
-| `kill@after:model_return` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
-| the four above `+model_reask_alternate` | as unarmed | as unarmed | 249 / 249 / 1309 / 1309 |
-| `pause_past_ttl@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned (ORPHANED) | 1305 (1) |
-| `model_500@before:model_call` | 0.2:1 1.1:1 2.1:1 | 0.1 error_response, retried | 1305 (1) |
-| `kill@during:model_stream(chunk=7)` | 0.2:1 1.1:1 2.1:1 | 0.1 attempt_abandoned | 1305 (1) |
-| `model_stream_truncate@during:model_stream(chunk=7)` | **0.1:1** 0.2:1 1.1:1 2.1:1 | 0.1 "the stream ended before its final response", retried | 1305 (1) |
+| cell | `logs.fetch` receipts | model calls | L1 | latency |
+|---|---|---|---|---|
+| baseline | 1 | 2 | 30/30 [0.89–1.00] | — |
+| `kill@before:tool_call` | 1 | 2 | 30/30 | 2.4 s |
+| `kill@after:tool_return` | 2 (`logs.fetch#1` twice) | 2 | 30/30 | 2.3 s |
+| `kill@before:model_call` | 1 | 3 | 30/30 | 2.5 s |
+| `kill@after:model_return` | 1 | 3 | 30/30 | 2.4 s |
+| `kill@before:tool_call+model_reask_alternate` | 1 | 2 | 30/30 | — |
+| `kill@after:tool_return+model_reask_alternate` | 2 (`logs.fetch#1` twice) | 2 | 30/30 | — |
+| `kill@before:model_call+model_reask_alternate` | 1 | 3 | 30/30 | 0.2 s |
+| `kill@after:model_return+model_reask_alternate` | 1 | 3 | 30/30 | 0.2 s |
+| `pause_past_ttl@before:model_call` | 1 | 3 | 30/30 | 2.6 s |
+| `model_500@before:model_call` | 1 | 3 | 30/30 | 1.4 s |
+| `kill@during:model_stream(chunk=7)` | 1 | 3 | 30/30 | 2.7 s |
+| `model_stream_truncate@during:model_stream(chunk=7)` | 1 | 3 | 30/30 | 1.8 s |
 
-Against §14.1: the final result is the scripted full response in all thirteen; no partial content is a
-result — the truncated attempt's chunk (`"Reading the CI log o"`, seven pieces) is journaled as
-STEP_CHUNK{attempt 1} and followed by STEP_FAILED{retryable}, and attempt 2's whole answer is the
-outcome; every abandoned m1 attempt stays charged at its reservation (1056 tokens: 249 + 1056 = 1305),
-not at the 34 tokens the truncated attempt's last `usage_cum` recorded. Two readings worth having: a kill at chunk 7 leaves **no** chunk
-for the dead attempt — seven pieces are ~2 tokens, below the 256-token batch, and the 500 ms timer had
-not run out — so STARTED alone is what the successor disposes of, which the recovery table says is the
-same thing; and the armed cells re-ask m1 only where m1 had no journaled outcome (killed before or
-after its model call returned), where they fetch `ci/test_retry.log.1` — the M1 positive control of
-§13.7 H10, identical for every arm by construction. Killed after m1 was journaled, Keel never asks it
-again and the alternate is never served.
+Receipts and model calls are per trial and identical in all 30 of each cell; latency is the page's
+`lat`, printed where the page prints one. The third model call is the re-asked m1 (`+calls 1`), and it
+appears exactly where m1 had no journaled outcome: killed, frozen or failed before or after its own
+call, or mid-stream — never in the tool-side cells. The two `model_*` faults retry under §8's MODEL
+policy (base 2 s, full jitter): the draw was 1 s or more and parked the run with the lease released in
+15 of 30 `model_500` trials and 17 of 30 `model_stream_truncate` trials, and was served in-process in
+the rest — which is why those two cells' latency spreads from 0.3 s to 2.5 s and 2.7 s, with the page's
+1.4 s and 1.8 s in the middle.
+
+Read off the seed-7 smoke journals at `2c91744` (the same thirteen cells, one seed, into a scratch
+`--out`; the numbers are recorded in that commit's message and in this page at that commit): each of
+m1, the fetch and m2 journals one STEP_CHUNK batch per attempt that got that far; a killed or frozen
+attempt closes `attempt_abandoned`, a `model_500` one `error_response`; every abandoned m1 attempt
+stays charged at its reservation (1056 tokens: 249 + 1056 = 1305, and 1309 with the alternate
+armed), not at the 34 tokens the truncated attempt's last `usage_cum` recorded — "charged" there
+being the budget recomputed from the journal, a settled attempt at its usage and an unsettled one at
+`max(reservation, last usage_cum)`. Against §14.1: the
+final result is the scripted full response in all thirteen; no partial content is a result — the
+truncated attempt's chunk (`"Reading the CI log o"`, seven pieces) is journaled as STEP_CHUNK{attempt 1}
+and followed by STEP_FAILED{retryable}, and attempt 2's whole answer is the outcome. Two readings worth
+having: a kill at chunk 7 leaves **no** chunk for the dead attempt —
+seven pieces are ~2 tokens, below the 256-token batch, and the 500 ms timer had not run out — so
+STARTED alone is what the successor disposes of, which the recovery table says is the same thing; and
+the armed cells re-ask m1 only where m1 had no journaled outcome (killed before or after its model call
+returned), where they fetch `ci/test_retry.log.1` — the M1 positive control of §13.7 H10, identical for
+every arm by construction. Killed after m1 was journaled, Keel never asks it again and the alternate is
+never served.
+
+The release rows carry no budget or STEP_CHUNK field, and the token column they *do* carry measures
+something else: `metrics.raw.tokens` is the shim's own count of every prompt the SUT sent, billed at
+the send and never at the return (`crashproof/runner/trial.py`), and `metrics.extra_tokens` is that
+trial's delta against its seed's baseline row — wire usage, not Keel's ledger. It reads 210 ×30 in the
+baseline and in the four tool-side cells (`extra_tokens` 0 in all four), 242 / `+32` in each of the six
+cells that re-ask m1, and 246 / `+36` in the two armed model-side ones: the price of one more prompt,
+which is not the question a reservation answers. So the rows do bear on what a crashed attempt costs —
+they just answer it at the wire, where an abandoned attempt that never came back is billed for what it
+sent and nothing more, while the journal's 1056 is what Keel had already committed to it. Neither
+number checks the other, and quoting one means naming which.
 
 **N/A for W7, with the reason** (each arm's page carries the citation): LangGraph documents stream
 emission (`stream_mode`) but no durable semantics for a streamed piece; Restate cites no streaming
@@ -214,15 +255,22 @@ lookup, no retry the framework does not do itself, no dedup in the adapter. It c
 
 ## Proxy mode
 
-`bench/specs/tier1p.yaml` runs the matrix-v0 and tier1a windows with the injector *outside* the
+`bench/specs/week2_w1_proxy.yaml` — `tier1p.yaml`'s eight triggers and two variants, over every arm,
+the spec behind `bench/reports/v1_w1_proxy.md` — runs W1's windows with the injector *outside* the
 SUT: the worker is pointed at `crashproof/proxy`, which is pointed at the World, and the shim in
 the worker rides along observe-only so model calls are still counted at the wire. Nothing in the
-adapter changes for it. Two translations the adapter already made for the shim now also apply to
-what arrives over the wire, and they are the whole of its involvement: a 5xx status is
+adapter changes for it. (Both of them append to the trial's observation log, and on Windows those
+appends were not atomic until `7a22596` — a fix after the release: about 16 % of proxy trials lost
+one tool-boundary line. No published metric reads those lines, and no baseline trial checked lost a
+model-call line, which is what the economy column counts.) Two translations the adapter already made
+for the shim now also apply to what arrives over the wire, and they are the whole of its involvement:
+a 5xx status is
 `UnknownOutcome` and a 4xx is `Rejected` (the receiver's semantics, §9.2), and a dropped connection
 or an unparseable body is `UnknownOutcome` too (§8.5's transport ambiguity). The class then decides:
 EXTERNAL becomes AMBIGUOUS, the probe finds COMMITTED, and the effect is not re-fired — which is
-what the `tool_dropped_response` and `tool_malformed` rows show, one applied effect each.
+what the `tool_dropped_response` and `tool_malformed` rows show, one applied effect each
+(`bench/reports/v1_w1_proxy.md`: `EXTERNAL` `dup_eff 0 · dup_rcpt 0` in 30/30 for both; `IDEMPOTENT`
+re-fires under the same key instead of probing, `dup_rcpt 30 · dup_eff 0`).
 
 `pause_past_ttl@before:tool_call` is the cell whose proxy realisation is meant to differ from its
 shim twin: the worker's request is parked *at the proxy* and the worker itself is frozen past its
@@ -230,7 +278,8 @@ lease, so the successor takes over, probes (ABSENT — the request is still park
 applies, and the parked request is forwarded at the thaw and lands second — the zombie residual of
 §8.4 by a different road, at-least-once against the declared claim.
 
-**The published tier1p rows mostly did not measure that.** The proxy freezes the process named by
+**The published tier1p rows mostly did not measure that** (`bench/reports/tier1p.md`, the phase-8
+run, superseded by the release set below). The proxy freezes the process named by
 `sut/pid-<n>`, and until `22f53d9` the successor wrote `pid-0` as well, so whichever of the two wrote
 last was frozen. Read from the trial journals, in 41 of the 60 Keel trials (23 of 30 `EXTERNAL`, 18 of
 30 `IDEMPOTENT`) the idle successor was frozen and the worker holding the run kept appending: its own
@@ -239,4 +288,39 @@ and the parked request applied again at the thaw. The duplicate counts on the pa
 `EXTERNAL`) come out the same either way, but the mechanism above ran in 19 of the 60, and the cell's
 `lat 1.0s` is the tool timeout. Only the worker under test now writes `pid-<n>` (the successor writes
 `pid-successor-<n>`), and a proxy that stops drops a request still parked instead of forwarding it
-after the trial. The cell is due a re-run.
+after the trial.
+
+Re-run at `251e52d` with both fixes in (`bench/reports/v1_w1_proxy.md`, n = 30), the mechanism above
+is what every trial measures — an `ORPHANED` recovery in 60 of 60 rows, one probe per `EXTERNAL` trial
+and none per `IDEMPOTENT` (it re-fires under the key): `EXTERNAL` applies twice 30/30
+(`dup_eff 30 · dup_rcpt 30`, at-least-once against the declared claim, S1 PASS), `IDEMPOTENT` receives
+twice and applies once 30/30 (`dup_eff 0 · dup_rcpt 30`), and the cell's `lat 2.4s` is the lease, not
+the tool timeout.
+
+The shim twin is the same cell watched from inside the process, and it does not produce the residual
+in every trial. `bench/reports/agreement_v1.md` pairs the two on the seeds both ran and prints them
+side by side, shim / proxy: `EXTERNAL` `duplicate_effects` 4 / 30 and `duplicate_receipts` 4 / 30,
+`IDEMPOTENT` `duplicate_receipts` 18 / 30, latency 2.4 s on both sides, every safety verdict equal —
+both twins are printed **no**, a disagreement of the instruments and not of the runtime. The shim's
+`EXTERNAL` cell then ran at the confirmation tier: 97 duplicate effects and 97 duplicate receipts in
+300 trials, `lat 2.4s`, S1–S5 PASS there as at the screening 30 that read 4
+(`bench/reports/v1_w1_shim.md`, seeds ≥ 100,000, with the screening reading in that page's appendix).
+So the residual is real from inside the process too and rarer there than at the edge, where the parked
+request lands in 30 of 30 in both bands. Why the thawed request does not always arrive when the freeze
+is done from inside is still not on a row — the `IDEMPOTENT` rows probe nothing, so any arrival is a
+receipt, and 12 of those 30 count none.
+
+One of the 300 FAILED (seed 100067): the probe answered ABSENT, the step re-attempted and went
+ambiguous a second time, and `events_resolved_once` keyed `(run_id, step_index, method)`, so the
+second resolution was a unique violation and the run failed where it should have resolved. The row is
+that shape — two probes, `issues.create#1` applied twice, no result — and its own verdicts all hold
+(S1–S5, L1, L2, C1 PASS): a run that fails cleanly is live and correct by every invariant the
+verifier has, which is why it took the tier to surface at all. The index now keys on `attempt_no`
+(`2ffbe91`, §6.2 amended, the MemoryJournal mirrors it); that fix is after the release, and every row
+here is `251e52d` without it.
+
+Two Keel cells on `bench/reports/v1_w1_proxy.md` print at the confirmation tier as well:
+`kill@after:tool_return`, 300/300 live with `dup_eff 0 · dup_rcpt 0` and one divergent trial, and the
+baseline, 300/300 live with one FAILED run — seed 100099, three `kv.search` receipts, two `WAKE`
+recoveries and nothing applied, which reads as the tool policy's three attempts and the two backoff
+parks between them.

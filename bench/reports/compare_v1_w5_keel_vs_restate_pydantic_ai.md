@@ -92,6 +92,8 @@ Two departures from §15.5, named: binary rows use McNemar's exact test at every
 
 `too noisy to claim` is a real answer — at thirty seeds it is the most common honest one, and the failing rule is named beside it. The point estimate, the interval and the adjusted p stay on the page whatever the verdict: a rule that fails takes away the verb, never the numbers.
 
+**The model is a fixture.** Every cell here ran against the scripted provider, which answers from request content alone. K11(b)'s `real-model` validation subset was not run, so a model-boundary cell (`model_500`, `model_timeout`, `provider_outage`, `model_reask_alternate`) says what the runtime did with a scripted answer, and nothing about what a real provider would have said.
+
 ### Minimum detectable difference (§15.7)
 
 Two-sided α = 0.05, power = 0.80, equal `n` per arm.

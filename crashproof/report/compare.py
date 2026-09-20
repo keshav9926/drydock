@@ -32,6 +32,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
+from crashproof.report.markdown import FIXTURE_CAVEAT
 from crashproof.report.matrix import CONFIRMATION_BASE_SEED, is_confirmation
 from crashproof.stats.ci import (
     DISCORDANT_FLOOR,
@@ -387,6 +388,9 @@ def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = (
         "and the failing rule is named beside it. The point estimate, the interval and the "
         "adjusted p stay on the page whatever the verdict: a rule that fails takes away the verb, "
         "never the numbers.",
+        "",
+        # K11(b): these pages verdict model-boundary cells too, so the caveat belongs here as well.
+        FIXTURE_CAVEAT,
         "",
         MDD_TABLES,
     ]

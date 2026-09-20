@@ -85,6 +85,16 @@ def _column_note(band: dict[str, CellSummary], adapter: str, config: str) -> str
     return f"recovery={sample.recovery_mechanism}<br>claims: {claims}"
 
 
+#: K11(b), §30: every page that prints a cell carries this, because the caveat belongs beside the
+#: cells it qualifies rather than in the essay about them.
+FIXTURE_CAVEAT = (
+    "**The model is a fixture.** Every cell here ran against the scripted provider, which answers "
+    "from request content alone. K11(b)'s `real-model` validation subset was not run, so a "
+    "model-boundary cell (`model_500`, `model_timeout`, `provider_outage`, `model_reask_alternate`) "
+    "says what the runtime did with a scripted answer, and nothing about what a real provider would "
+    "have said."
+)
+
 #: §30's K7 threshold. A cell whose void rate is over it is not published *from*: what its trials
 #: measured is the harness, and "publish nothing from them" is K7's own remedy. The raw counts and
 #: the void count stay — withdrawing a verdict is not hiding the evidence for it.
@@ -243,11 +253,7 @@ def _provenance(
         "`effectively_once` and applies twice has failed, and the seed that did it is named.",
         "",
         # K11(b), §30: the caveat travels with the cells it qualifies, not with the essay.
-        "**The model is a fixture.** Every cell here ran against the scripted provider, which "
-        "answers from request content alone. K11(b)'s `real-model` validation subset was not run, so "
-        "a model-boundary cell (`model_500`, `model_timeout`, `provider_outage`, "
-        "`model_reask_alternate`) says what the runtime did with a scripted answer, and nothing "
-        "about what a real provider would have said.",
+        FIXTURE_CAVEAT,
         "",
         # §15.11 rule 6: unconditional, not behind `report --mdd`. The objection this answers —
         # "you only ran it thirty times" — is one a reader has while looking at the page, and an
