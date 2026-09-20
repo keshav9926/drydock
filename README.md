@@ -105,8 +105,8 @@ one commit with a confirmation tier on the cells a claim depends on (the earlier
 `tier1a`, `tier1p`, `reask_alternate`, the four `week2_*` pages — stay published as what they were)
 ([below](#the-release-matrix-eight-arms-at-251e52d)). The [write-up](docs/writeup.md) is current; the
 [upstream reports](docs/upstream/README.md) are drafts and are not filed — that is the owner's call,
-not the harness's. All eleven kill criteria are read at the release and
-[three fired](#kill-criteria-at-the-release).
+not the harness's. All eleven kill criteria are read at the release:
+[two fired, and a third's remedy is taken anyway](#kill-criteria-at-the-release).
 
 - **Property depth** (§12). `KeelMachine` drives the real worker, engine, inbox, approvals,
   delegation, takeover, reaper, retry policies, breaker, segments and streams over `MemoryJournal` and a
