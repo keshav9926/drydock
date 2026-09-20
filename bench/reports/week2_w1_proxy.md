@@ -243,9 +243,11 @@ Rows through 2026-09-18T10:00:32+00:00 (the last trial's end).
 
 **Mixed n.** Cells in this report were run at different seed counts ([29, 30]); each cell prints its own n in the liveness line. A reduced-n cell is a weaker estimate, not a different verdict: safety is still PASS only on zero violations in the n that ran, and the interval beside it widens to say so (§15.3).
 
-**How to read a cell.** The first line is safety: PASS means zero violations in n, and a single violation is a FAIL with its counterexample listed above — safety is never a proportion. The second line is liveness with a Wilson interval. The third is raw observation, published whatever the verdicts say: `dup_eff` counts effects the World actually applied more than once, `dup_rcpt` counts requests it received more than once. The gap between them is what the receiver's idempotency bought, and the runtime gets no credit for it.
+**How to read a cell.** The first line is safety: PASS means zero violations in n, and a single violation is a FAIL with its counterexample listed above — safety is never a proportion. The second line is liveness with a Wilson interval. The third is raw observation, published whatever the verdicts say: `dup_eff` counts effects the World actually applied more than once, `dup_rcpt` counts requests it received more than once. The gap between them is what the receiver's idempotency bought, and the runtime gets no credit for it. A cell marked **withdrawn — K7** has a void rate over §30's 5 % threshold: its trials measured the harness rather than the runtime, so its counts are printed and no verdict is published from it.
 
 **Judged against claims.** An arm that declares `at_least_once` and produces a duplicate has not failed S1; the duplicate is in the table regardless. An arm that declares `effectively_once` and applies twice has failed, and the seed that did it is named.
+
+**The model is a fixture.** Every cell here ran against the scripted provider, which answers from request content alone. K11(b)'s `real-model` validation subset was not run, so a model-boundary cell (`model_500`, `model_timeout`, `provider_outage`, `model_reask_alternate`) says what the runtime did with a scripted answer, and nothing about what a real provider would have said.
 
 ### Minimum detectable difference (§15.7)
 
