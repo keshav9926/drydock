@@ -446,7 +446,7 @@ rather than the rows, so no page under `bench/reports` carries them and CI canno
 | **K4** window too narrow | not decidable | the widths are measured; the kill rate they must be multiplied by is not |
 | **K5** adapter infeasible | not fired | every arm expresses W1, W5 and W5-pre in cited primitives; what it cannot is N/A with the reason |
 | **K6** Keel fails itself | not fired on its measurement | no `hook` cell FAILs; two design defects found by other instruments, both fixed, both sections amended |
-| **K7** not reproducible | **FIRED** | two cells 70 % and 83 % void — withdrawn from the grid, counts kept |
+| **K7** not reproducible | **FIRED** | two cells 70 % and 83 % void — withdrawn from the grid, counts kept; recheck green, and 0 of 300 verdicts flip after a no-op commit |
 | **K8** no power | not fired | at n = 300 the compare pages claim differences rather than reading them all too noisy |
 | **K9** prior art collision | not fired on its text · remedy applied | two public artifacts hold a clause each and neither holds both; cite, do not compete |
 | **K10** schedule | not fired | matrix v0 landed on day 3 |
@@ -542,7 +542,15 @@ rather than the rows, so no page under `bench/reports` carries them and CI canno
   that they disagree (`duplicate_effects` 9/0 on the nine surviving proxy trials), which is itself the
   instrument finding. `crashproof verify --recheck` is green on every published row of every set, with
   one caveat: since `ef203c4` it skips a row a re-take superseded, which is weaker than §30's "differs
-  on any published row". The no-op-commit clause has not been run.
+  on any published row". The no-op-commit clause was run for the release: the same 300
+  `(spec_hash, seed)` pairs of ten `week2_w1_shim` cells — every Windows configuration, Keel's four
+  most timing-sensitive — re-run at `251e52d` plus one blank line in README.md
+  ([`bench/results/k7_noop`](bench/results/k7_noop/results.jsonl), commit `7860c3a`, kept local) flip
+  **0 of 300** safety verdicts, and no L or C verdict either. Raw counts moved in the three timing races
+  and nowhere else — DBOS `native`'s `after:tool_return` 21 → 25 duplicate applications, Keel's
+  `pause_past_ttl` residual 4 → 9 (the confirmation tier reads 97 of 300), Temporal's freeze 47 → 45 —
+  which is the line §30 draws: counts may move with timing, verdicts may not. Restate's cells were not
+  in the sample, because they run under WSL.
 - **K8 (no power) has not fired.** After the confirmation tier the `compare_v1_*` pages claim
   differences rather than reporting them all too noisy: Keel against `dbos.native`,
   `logical_correctness` 300/300 versus 59/300 and `replay_divergence` 0/300 versus 239/300 (p = 0.0000,

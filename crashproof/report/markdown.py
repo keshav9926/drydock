@@ -95,9 +95,11 @@ FIXTURE_CAVEAT = (
     "have said."
 )
 
-#: §30's K7 threshold. A cell whose void rate is over it is not published *from*: what its trials
-#: measured is the harness, and "publish nothing from them" is K7's own remedy. The raw counts and
-#: the void count stay — withdrawing a verdict is not hiding the evidence for it.
+#: §30's K7 threshold. A cell whose void rate is over it is not published *from*: its trials measured
+#: the harness, which is §30's "decision forced" for K7. That is stricter than K7's fallback, whose
+#: "publish nothing from them" waits on a recheck that is byte-identical here — the release chose the
+#: stricter reading. The raw counts and the void count stay: withdrawing a verdict is not hiding the
+#: evidence for it.
 VOID_RATE_WITHDRAWN = 0.05
 
 
