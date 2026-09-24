@@ -15,9 +15,11 @@ Keel can claim S9 while runtimes that count only completed calls report `budget_
 Admission runs in the same transaction as the STARTED it guards. Refusing before the barrier means
 no attempt and therefore no bill — a pre-dispatch refusal, `attempt_no = 0`, `retryable = False`.
 
-# ponytail: `max_tokens` and `max_model_calls` / `max_tool_calls` only. `max_usd` needs a pinned
-# price table and `max_wall_clock` needs a deadline the waiting kinds respect; both are day-4 cut
-# items (§28.4) and arrive with the dimensions that can be enforced honestly.
+`max_usd` is the same rule in dollars, priced from the table the run pinned at RUN_CREATED
+(`providers/pricing.py`). An unpriced binding is admitted and makes the run's figure a floor, not a
+bound — so from then on `max_usd` is not admitted against at all, and `keel show` says so.
+
+# ponytail: `max_wall_clock` needs a deadline the waiting kinds respect (§16.4); it arrives with them.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from keel.core.errors import KeelError
+from keel.state.fold import usd_of
 
 
 class BudgetExceeded(KeelError):
@@ -48,13 +51,17 @@ class Reservation:
     tokens: int = 0
     model_call: bool = False
     tool_call: bool = False
+    #: A MODEL attempt's rate from the pinned table and the reservation priced at it; None: unpriced.
+    price: tuple[float, float] | None = None
+    usd: float | None = None
 
 
-def reserve_model(prompt_tokens: int, max_tokens: int) -> Reservation:
+def reserve_model(prompt_tokens: int, max_tokens: int, price: tuple[float, float] | None = None) -> Reservation:
     """The most this attempt could cost: everything already in the prompt, plus everything the
     provider is allowed to generate. `count_tokens` is exact for the scripted provider and for
     Anthropic; anything else must over-count rather than under-count, or the bound is not one."""
-    return Reservation(tokens=prompt_tokens + max_tokens, model_call=True)
+    usd = usd_of({"input_tokens": prompt_tokens, "output_tokens": max_tokens}, price) if price else None
+    return Reservation(tokens=prompt_tokens + max_tokens, model_call=True, price=price, usd=usd)
 
 
 def reserve_tool() -> Reservation:
@@ -82,6 +89,11 @@ def admit(budget: Any, charged: Any, reservation: Reservation) -> None:
         # STARTED attempts, not outcomes: an attempt that crashed still asked the provider.
         if charged.model_calls + 1 > max_calls:
             raise BudgetExceeded("max_model_calls", charged.model_calls, 1, max_calls)
+
+    max_usd = limits.get("max_usd")
+    if max_usd is not None and reservation.usd is not None and charged.usd_priced:
+        if charged.usd_charged + reservation.usd > max_usd:
+            raise BudgetExceeded("max_usd", round(charged.usd_charged, 6), round(reservation.usd, 6), max_usd)
 
     max_tool_calls = limits.get("max_tool_calls")
     if max_tool_calls is not None and reservation.tool_call:

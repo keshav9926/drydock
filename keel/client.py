@@ -18,6 +18,7 @@ from keel.effects.registry import ToolRegistry, ToolSpec  # registers StepExecut
 from keel.events import Event, RunCreated
 from keel.journal.memory import MemoryJournal
 from keel.journal.protocol import JournalBackend, RunRow
+from keel.providers import pricing
 from keel.state.fold import fold
 from keel.state.views import RunSummary, RunView, run_summary, run_view
 
@@ -178,6 +179,10 @@ class Keel:
         rid = run_id or new_run_id()
         budget = budget or Budget()
         model_config = dict(model_config or {"provider": getattr(self.provider, "name", "scripted")})
+        # §16.4: the price table is pinned here, once, so a later price change never re-values this run.
+        ref = pricing.current_ref(str(model_config.get("provider") or getattr(self.provider, "name", "")))
+        if ref is not None:
+            model_config.setdefault("pricing_ref", ref)
         row = RunRow(
             run_id=rid,
             run_root_id=rid,

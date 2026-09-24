@@ -189,6 +189,22 @@ def show(
             f"phase={view.phase}  control={view.control_status or '-'}  "
             f"epoch={view.lease_epoch}  last_seq={view.last_seq}"
         )
+        c, b = view.charged, view.budget
+
+        def of(key: str) -> str:
+            return f" / {b[key]}" if key in b else ""
+
+        out.print(
+            f"charged: tokens {c['tokens']}{of('max_tokens')} · model calls {c['model_calls']}"
+            f"{of('max_model_calls')} · tool calls {c['tool_calls']}{of('max_tool_calls')} · "
+            f"usd {c['usd']:.6f}{of('max_usd')} ({view.pricing_ref or 'no price table'})"
+        )
+        if not c["usd_priced"]:
+            # §16.4: loudly, rather than a guessed number inside an S9 claim.
+            out.print(
+                "[red]usd unpriced: a model attempt ran on a binding with no entry in the pinned price table — "
+                "the usd figure is a floor, not a bound, and max_usd is not enforced[/]"
+            )
         if view.suspended_reason:
             out.print(f"[yellow]suspended: {view.suspended_reason}[/]")
         if view.error:

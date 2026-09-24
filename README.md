@@ -1049,8 +1049,9 @@ AFTER RESTART split, in the event stream where it already lives).
 
 **Named, not built:**
 
-- `max_usd` and `max_wall_clock` (phase 4): they need a pinned price table and a deadline every
-  waiting kind respects.
+- `max_wall_clock` and `Budget.deadline_at` (phase 4): they need a deadline every waiting kind respects.
+  `max_usd` is built since the release, over a pinned price table (`keel/providers/pricing.py`) that
+  holds one fixture rate for the scripted provider — no real provider ships with Keel yet.
 - A delegation's `deadline_s` is journaled in the contract and not enforced by the parent: a child
   that never reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full
   slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one

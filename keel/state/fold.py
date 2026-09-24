@@ -134,6 +134,12 @@ class ChildState:
         return self.state in ("COMPLETED", "FAILED", "CANCELLED")
 
 
+def usd_of(usage: Mapping[str, Any], price: Any) -> float:
+    """Tokens at a journaled (input, output) rate in USD per million (§16.4). The runtime prices a
+    reservation with it and the fold prices chunks and settlements, so the two cannot disagree."""
+    return (int(usage.get("input_tokens", 0)) * price[0] + int(usage.get("output_tokens", 0)) * price[1]) / 1_000_000
+
+
 @dataclass(slots=True)
 class Charged:
     """The budget projection: a run-wide fold, never bounded by a segment boundary, or a run would
@@ -148,13 +154,27 @@ class Charged:
     model_calls: int = 0  # STARTED attempts, not outcomes
     tool_calls: int = 0
     reserved: dict[tuple[int, int], int] = field(default_factory=dict)
+    #: USD, the same rule over the rate the attempt's STARTED journaled from the run's pinned table
+    #: (§16.4). One attempt with no rate — an unpriced binding — makes the whole figure a floor rather
+    #: than a bound, so `usd_priced` goes false for good and `max_usd` is no longer admitted against.
+    usd_charged: float = 0.0
+    usd_priced: bool = True
+    usd_held: dict[Any, tuple[float, Any]] = field(default_factory=dict)
 
-    def start(self, step_index: int, attempt_no: int, reservation: int | None, kind: str) -> None:
+    def start(
+        self, step_index: int, attempt_no: int, reservation: int | None, kind: str,
+        usd: float | None = None, price: Any = None,
+    ) -> None:
         if kind in ("MODEL", "COMPACT"):
             self.model_calls += 1
             if reservation:
                 self.tokens_charged += reservation
                 self.reserved[(step_index, attempt_no)] = reservation
+            if price is None:
+                self.usd_priced = False
+            else:
+                self.usd_charged += usd or 0.0
+                self.usd_held[(step_index, attempt_no)] = (usd or 0.0, price)
         elif kind == "TOOL":
             self.tool_calls += 1
 
@@ -162,8 +182,14 @@ class Charged:
         """A streamed attempt's running usage raises its floor, never lowers it (§9.1, §10.7): an
         attempt that never settles stays charged at `max(reservation, last usage_cum)`, because the
         tokens generated after the last batch are unrecorded and a closure settles nothing."""
+        if not usage_cum:
+            return
+        usd = self.usd_held.get((step_index, attempt_no))
+        if usd is not None and usd_of(usage_cum, usd[1]) > usd[0]:
+            self.usd_charged += usd_of(usage_cum, usd[1]) - usd[0]
+            self.usd_held[(step_index, attempt_no)] = (usd_of(usage_cum, usd[1]), usd[1])
         held = self.reserved.get((step_index, attempt_no))
-        if held is None or not usage_cum:
+        if held is None:
             return
         seen = int(usage_cum.get("input_tokens", 0)) + int(usage_cum.get("output_tokens", 0))
         if seen > held:
@@ -173,6 +199,9 @@ class Charged:
     def settle(self, step_index: int, attempt_no: int, usage: dict[str, int] | None) -> None:
         """Swap the reservation for what the attempt actually reported. An outcome carrying no
         usage — a provider error — leaves the reservation charged."""
+        usd = self.usd_held.pop((step_index, attempt_no), None)
+        if usd is not None and usage is not None:
+            self.usd_charged += usd_of(usage, usd[1]) - usd[0]
         reservation = self.reserved.pop((step_index, attempt_no), None)
         if reservation is None or usage is None:
             return
@@ -186,10 +215,17 @@ class Charged:
         tokens = int(slice_.get("max_tokens") or 0)
         self.tokens_charged += tokens
         self.reserved[("child", child_run_id)] = tokens
+        usd = float(slice_.get("max_usd") or 0.0)
+        self.usd_charged += usd
+        self.usd_held[("child", child_run_id)] = (usd, None)
 
     def settle_child(self, child_run_id: Any, usage: dict[str, Any] | None) -> None:
         """Swap the slice for what the child's own journal charged — itself an upper bound on the
         child's provider bill (§16.4), so S9 holds for the whole tree."""
+        usd = self.usd_held.pop(("child", child_run_id), None)
+        if usd is not None and usage is not None and "usd_charged" in usage:
+            self.usd_charged += float(usage["usd_charged"]) - usd[0]
+            self.usd_priced = self.usd_priced and bool(usage.get("usd_priced", True))
         reservation = self.reserved.pop(("child", child_run_id), None)
         if reservation is None or usage is None:
             return
@@ -498,7 +534,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s.attempts = b.attempt_no
         if s.first_started_at is None:
             s.first_started_at = b.started_at
-        st.charged.start(b.step_index, b.attempt_no, b.reservation, s.kind)
+        st.charged.start(b.step_index, b.attempt_no, b.reservation, s.kind, b.reservation_usd, b.price)
     elif t == "STEP_CHUNK":
         # Observability, and the budget: the one fold that reads a chunk (§10.7). Never the step's
         # state, never the context — the semantic content of a streamed step is its outcome.

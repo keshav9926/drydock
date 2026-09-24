@@ -296,6 +296,10 @@ class StepAttemptStarted(Body):
     started_at: AwareDatetime
     attempt_deadline: AwareDatetime | None = None
     reservation: int | None = None
+    #: A MODEL attempt's rate, USD per million (input, output) tokens, from the run's pinned price
+    #: table, and its reservation priced at it (§16.4). None on a MODEL attempt: an unpriced binding.
+    price: tuple[float, float] | None = None
+    reservation_usd: float | None = None
 
 
 class StepChunk(Body):

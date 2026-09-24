@@ -56,6 +56,10 @@ class RunView:
     #: §18.6's plan-vs-journal drift detectors (`keel/state/drift.py`): projection fields, not events.
     steps_since_plan_update: int | None = None
     items_completed_without_effects: list[str] = field(default_factory=list)
+    #: The declared limits and the budget projection against them (§16.4).
+    budget: dict[str, Any] = field(default_factory=dict)
+    charged: dict[str, Any] = field(default_factory=dict)
+    pricing_ref: str | None = None
 
 
 @dataclass(slots=True)
@@ -118,6 +122,15 @@ def run_view(row: RunRow, state: RunState, now: datetime, effects: list[EffectRo
         plan=[dict(i) for i in state.plan],
         steps_since_plan_update=drift.steps_since_plan_update(state),
         items_completed_without_effects=drift.items_completed_without_effects(state),
+        budget={k: v for k, v in dict(state.budget or {}).items() if v is not None},
+        charged={
+            "tokens": state.charged.tokens_charged,
+            "model_calls": state.charged.model_calls,
+            "tool_calls": state.charged.tool_calls,
+            "usd": round(state.charged.usd_charged, 6),
+            "usd_priced": state.charged.usd_priced,
+        },
+        pricing_ref=(row.model_config or {}).get("pricing_ref"),
     )
 
 

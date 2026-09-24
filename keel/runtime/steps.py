@@ -62,6 +62,7 @@ from keel.events import (
     StepResolved,
 )
 from keel.journal.protocol import DelegationRow, EffectRow, JournalBackend, Lease, RunRow
+from keel.providers import pricing
 from keel.providers.protocol import ModelRequest
 from keel.runtime import hooks
 from keel.runtime import human
@@ -747,6 +748,10 @@ class StepEngine:
                     causation_seq=seq,
                 )
                 return None
+            # The price table stays the one the run pinned at RUN_CREATED (§16.4): a rebind changes
+            # which entry is read, never which table — unless it names one itself.
+            if "pricing_ref" in self.model_config:
+                new.setdefault("pricing_ref", self.model_config["pricing_ref"])
             await tx.append(
                 ModelBindingChanged.model_validate({"model_config": new, "previous": dict(self.model_config)}),
                 causation_seq=seq,
@@ -799,7 +804,12 @@ class StepEngine:
         if intent.kind not in (StepKind.MODEL, StepKind.COMPACT) or self.provider is None:
             return Reservation()
         req = ModelRequest.model_validate(intent.args)
-        return reserve_model(await self.provider.count_tokens(req), req.max_tokens)
+        price = pricing.rate(
+            self.model_config.get("pricing_ref"),
+            str(self.model_config.get("provider") or self._provider_key()),
+            self.model_config.get("model"),
+        )
+        return reserve_model(await self.provider.count_tokens(req), req.max_tokens, price)
 
     async def _refuse(self, intent: StepIntent, exc: Exception, *, first: bool = True) -> None:
         """A pre-dispatch refusal: attempt_no 0, never retryable, no attempt and so no bill.
@@ -963,6 +973,7 @@ class StepEngine:
                 parent_tools=self.tools if self.allowed_tools is None or self.tools is None
                 else [t for t in self.tools if t.name in self.allowed_tools],
                 parent_remaining_tokens=self._remaining_tokens(),
+                parent_remaining_usd=self._remaining_usd(),
                 parent_depth=self.depth,
             )
             for c in contracts:
@@ -1123,6 +1134,9 @@ class StepEngine:
             slice_tokens = int(child.budget_reserved.get("max_tokens") or 0)
             reported = int(usage.get("tokens_charged") or 0)
             usage = {**usage, "tokens_charged": max(slice_tokens, reported)}
+            if "usd_charged" in usage:
+                slice_usd = float(child.budget_reserved.get("max_usd") or 0.0)
+                usage["usd_charged"] = max(slice_usd, float(usage["usd_charged"]))
             error, detail = "ChildCancelled", payload.get("error")
         else:
             error, detail = str(payload.get("error") or "ChildFailed"), None
@@ -1300,12 +1314,19 @@ class StepEngine:
         return list(w.args.get("contracts") or [])
 
     def _remaining_tokens(self) -> int | None:
+        return self._remaining("max_tokens")
+
+    def _remaining_usd(self) -> float | None:
+        """The same in dollars — None once the run is unpriced, when `max_usd` is not admitted (§16.4)."""
+        return self._remaining("max_usd") if self.state.charged.usd_priced else None
+
+    def _remaining(self, dimension: str) -> Any:
         """What the parent may still promise. Ordinals of the open DELEGATE step not yet spawned —
         waiting for a slot — were admitted at the INTENT commit against the whole fan-out, so their
         slices are spoken for: counting only spawned children would let a retry spend them twice
         (§17.4, Σ reservations ≤ remaining)."""
         limits = self.state.budget if isinstance(self.state.budget, dict) else {}
-        cap = limits.get("max_tokens")
+        cap = limits.get(dimension)
         if cap is None:
             return None
         promised = 0
@@ -1313,15 +1334,19 @@ class StepEngine:
         if w is not None and not self._fatal(w.step_index) and self.state.cancel_acknowledged_at != w.step_index:
             spawned = {c.child_ordinal for c in self.state.children_of(w.step_index)}
             promised = sum(
-                int((c.get("budget_slice") or {}).get("max_tokens") or 0)
+                (c.get("budget_slice") or {}).get(dimension) or 0
                 for ordinal, c in enumerate(self._contracts_of(w.step_index) or [])
                 if ordinal not in spawned
             )
-        return int(cap) - self.state.charged.tokens_charged - promised
+        if dimension == "max_usd":
+            return float(cap) - self.state.charged.usd_charged - promised
+        return int(cap) - self.state.charged.tokens_charged - int(promised)
 
     def _admit_slice(self, slice_: dict[str, Any]) -> bool:
-        remaining = self._remaining_tokens()
-        return remaining is None or int(slice_.get("max_tokens") or 0) <= remaining
+        tokens, usd = self._remaining_tokens(), self._remaining_usd()
+        return (tokens is None or int(slice_.get("max_tokens") or 0) <= tokens) and (
+            usd is None or float(slice_.get("max_usd") or 0.0) <= usd
+        )
 
     def _child_version(self, program: str) -> str:
         if self.resolve_program is None:
@@ -1383,6 +1408,8 @@ class StepEngine:
                     started_at=now,
                     attempt_deadline=deadline,
                     reservation=reservation.tokens or None,
+                    price=reservation.price,
+                    reservation_usd=reservation.usd,
                 ),
                 causation_seq=intent_seq,
             )
@@ -1403,7 +1430,9 @@ class StepEngine:
         self._first_started[intent.step_index] = now
         hooks.at("after:intent_commit", **_where(intent))
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
-        self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
+        self.state.charged.start(
+            intent.step_index, 1, reservation.tokens or None, str(intent.kind), reservation.usd, reservation.price
+        )
         # ---- write-ahead barrier passed: the effect may now begin ----
         return await self._dispatch(intent, 1, started_seq, deadline, timeout, started_local)
 
@@ -1441,6 +1470,8 @@ class StepEngine:
                     started_at=now,
                     attempt_deadline=deadline,
                     reservation=reservation.tokens or None,
+                    price=reservation.price,
+                    reservation_usd=reservation.usd,
                 )
             )
             if intent.kind is StepKind.TOOL:
@@ -1460,7 +1491,7 @@ class StepEngine:
         # fire on attempt three, which is a different window wearing the same name.
         hooks.at("after:attempt_commit", attempt_no=attempt_no, **_where(intent))
         self.state.charged.start(
-            intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind)
+            intent.step_index, attempt_no, reservation.tokens or None, str(intent.kind), reservation.usd, reservation.price
         )
         return await self._dispatch(intent, attempt_no, started_seq, deadline, timeout, started_local)
 

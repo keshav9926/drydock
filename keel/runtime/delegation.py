@@ -118,6 +118,7 @@ def validate(
     parent_tools: Any,
     parent_remaining_tokens: int | None,
     parent_depth: int = 0,
+    parent_remaining_usd: float | None = None,
 ) -> None:
     """Every rule §17.2 lists, checked before anything is committed."""
     if not contracts:
@@ -125,7 +126,7 @@ def validate(
     if parent_depth + 1 > MAX_DELEGATION_DEPTH:
         raise ContractInvalid(f"delegation depth {parent_depth + 1} exceeds {MAX_DELEGATION_DEPTH}")
     available = {t.name for t in parent_tools} if parent_tools is not None else set()
-    total_tokens = 0
+    total_tokens, total_usd = 0, 0.0
     for i, c in enumerate(contracts):
         c.schema_json()  # raises for a schema that is neither a model nor a dict
         if parent_tools is not None and not c.allowed_tools <= available:
@@ -149,9 +150,14 @@ def validate(
             if unsafe:
                 raise ContractInvalid(f"contract {i}: retry with assume_failed tools {unsafe} would re-fire")
         total_tokens += int(c.budget_slice.get("max_tokens") or 0)
+        total_usd += float(c.budget_slice.get("max_usd") or 0.0)
     if parent_remaining_tokens is not None and total_tokens > parent_remaining_tokens:
         raise ContractInvalid(
             f"Σ budget_slice.max_tokens {total_tokens} exceeds the parent's remaining {parent_remaining_tokens}"
+        )
+    if parent_remaining_usd is not None and total_usd > parent_remaining_usd:
+        raise ContractInvalid(
+            f"Σ budget_slice.max_usd {total_usd:g} exceeds the parent's remaining {parent_remaining_usd:g}"
         )
 
 
@@ -321,4 +327,6 @@ def usage_of(state: Any) -> dict[str, Any]:
         "tokens_charged": charged.tokens_charged,
         "model_calls": charged.model_calls,
         "tool_calls": charged.tool_calls,
+        "usd_charged": charged.usd_charged,
+        "usd_priced": charged.usd_priced,
     }
