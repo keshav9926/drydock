@@ -487,10 +487,13 @@ async def test_rebind_is_journaled_and_changes_the_binding_for_what_comes_next(w
 
     events = await k.events(handle.run_id)
     [changed] = [e for e in events if e.type == "MODEL_BINDING_CHANGED"]
-    assert changed.body.model_config_ == {"provider": "backup", "model": "m2"}
+    # The price table the run pinned at RUN_CREATED rides along: a rebind changes the binding, never
+    # which table prices it (§16.4).
+    bound = {"provider": "backup", "model": "m2", "pricing_ref": "scripted-2026-09"}
+    assert changed.body.model_config_ == bound
     state = fold(events)
-    assert state.phase == "COMPLETED" and state.model_config == {"provider": "backup", "model": "m2"}
-    assert (await k.journal.run_row(handle.run_id)).model_config == {"provider": "backup", "model": "m2"}
+    assert state.phase == "COMPLETED" and state.model_config == bound
+    assert (await k.journal.run_row(handle.run_id)).model_config == bound
 
     from keel.replay.verify import verify as run_verify
 
