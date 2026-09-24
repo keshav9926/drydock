@@ -53,11 +53,17 @@ def test_one_hook_only_entry_makes_the_whole_spec_hook_mode(tmp_path) -> None:
     ]
 
 
+def test_the_worked_minimum_is_a_proxy_spec() -> None:
+    # §12.7's own minimum — a timeout, then the abandoned attempt's answer arriving late — needs
+    # `tool_duplicate_response`, which only the proxy can do (§11.5), so the whole spec is proxy mode.
+    doc = to_fault_spec(_example({"rule": "timeout", "landmark": "tool:t0", "tool": True, "occurrence": 1},
+                                 {"rule": "duplicate_response", "landmark": "tool:t0", "occurrence": 1}), None)
+    assert doc["mode"] == "proxy"
+    assert [(f["type"], f["trigger"]["boundary"]) for f in doc["faults"]] == [
+        ("tool_timeout", "before:tool_call"), ("tool_duplicate_response", "after:tool_effect")]
+
+
 def test_what_no_mode_can_express_is_refused_by_name(tmp_path) -> None:
-    # §12.7's own minimum needs `tool_duplicate_response`, which spec.py builds in no mode (§11.5).
-    with pytest.raises(spec.CrashproofSpecError, match="tool_duplicate_response"):
-        to_fault_spec(_example({"rule": "timeout", "landmark": "tool:t0", "tool": True, "occurrence": 1},
-                               {"rule": "duplicate_response", "landmark": "tool:t0", "occurrence": 1}), tmp_path)
     # A mid-effect kill has no hook form, so it cannot share a spec with a journal fault.
     with pytest.raises(Inexpressible, match="hook"):
         to_fault_spec(_example(
