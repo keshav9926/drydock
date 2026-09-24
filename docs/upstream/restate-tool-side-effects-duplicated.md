@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| Status | **draft, not filed** |
+| Status | **filed** 2026-09-25 as [restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410), after the checks below. The section under `## Issue body` is what was filed; this section was not. |
 | Where | [restatedev/docs-restate](https://github.com/restatedev/docs-restate/issues), as a docs issue. The same sentence is also on pydantic.dev's Restate page (source in [pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai)). File once, at Restate, and name the second page in the issue. |
 | Kind | *Contradicts* the sentence as written. The likely fix is a qualifier in the docs, not an engine change, so it is filed as a docs issue (the template's *sharpens* route). |
 | Rows | `bench/results/v1_w1_shim`, `v1_w1_proxy`, `v1_w5` at `251e52d` — the release re-run; every row carries that commit and no Restate trial is void. The Restate shard ran under WSL2 from a Linux clone. Two Restate cells — the proxy `kill@after:tool_return` cell and its baseline — also carry the confirmation tier's 300 seeds (§15.3, seeds ≥ 100 000), and the grid prints those two at n = 300 with their n = 30 reading in the page's appendix. Every Restate cell the body cites is a screening cell at n = 30. |
-| Quotes re-verified | 2026-09-18, every quoted doc sentence, verbatim, on the live pages. The pages carry no version. restate-sdk 1.0.5 is still the latest release on PyPI. |
+| Quotes re-verified | 2026-09-25, every quoted doc sentence, verbatim, string-matched against the live pages (HTML and the `.md` renderings). The pages carry no version. restate-sdk 1.0.5 is still the latest release on PyPI; restate-server's latest is 1.7.12 (2026-09-22), which the clean-clone repro below also ran. |
 
 Of the 13 Restate cells that fail S1 in the three row sets above (5 shim, 7 proxy, 1 W5; a 14th, `kill@after:tool_effect+model_reask_alternate@before:model_call` in `bench/results/v1_reask`, is the `after:tool_effect` kill with `model_reask_alternate` added and fails the same way, 30 of 30), the body leans on 4 kill cells and the freeze. The six retry cells are named in the body as *not* counted, with the reason. Two are not cited. The proxy-mode `kill@after:tool_return` is one of the confirmed cells: it applied twice in 97 of 300 and once in 203, with one restart in every trial (`bench/reports/v1_w1_proxy.md`; its screening appendix reads 12 of 30, and the 330 rows hold both tiers). The agreement page (`bench/reports/agreement_v1.md`, shim 30 / proxy 12 over the 30 seeds both instruments ran, marked as not agreeing) reads a kill from outside the process as arriving with latency, often after the parse and sometimes after the run has finished. Its wording names `taskkill`, which is generic prose written for the Windows shards: this arm ran under WSL2, where `crashproof/faults/process.py` sends `SIGKILL` instead, so the latency reading transfers and the utility's name does not. That the 203 are the trials whose completion reached the server before the kill is our inference from the count: no row records where those kills landed, and we have no measurement of the latency on this platform. The proxy-mode `pause_past_ttl@before:tool_call` applied three times in 20 and twice in 10; in proxy mode the worker is frozen *and* its request is parked at the proxy until the thaw (`docs/adapters/keel.md`, "Proxy mode"), so the body quotes the shim cell, where nothing but the worker is stopped.
 
@@ -19,7 +19,7 @@ Template checklist:
 - [x] Doc quote in hand (re-fetched 2026-09-18; see the version note above).
 - [x] Survives *"your adapter is wrong"*: see "Is the adapter missing something?" below.
 - [x] Not the documented semantics restated: the arm is judged against `exactly_once` because that is what the page says.
-- [ ] **Repro run from a clean clone: not done for this draft.** The arm is Linux-only, and the machine was committed to the release benches. Run the command below once on Linux before filing.
+- [x] Repro run from a clean clone, 2026-09-25, WSL2 Ubuntu: `git clone` + `git checkout 251e52d` + `uv sync --extra dev --extra restate` (restate-sdk 1.0.5, pydantic-ai-slim 2.43.0, hypercorn 0.18.0). The command below on restate-server 1.7.10: seed 7 → `issues.create#1` 2 received, 2 applied, S1 FAIL, `bench` and `verify` exit 7. The same cell on restate-server **1.7.12** (the latest release, sha256 checked) with `--seeds 3`: seeds 7, 8, 9 → 2 received, 2 applied each; every row's `config_pin` records 1.7.12. The trial directory holds `world/receipts.jsonl`, `sut/journal.json`, `sut/restate-server.log` and `faults.jsonl`, as the body says.
 - [x] Specific counterexample: `(6b50e0ebfe17bcd187442adebe1a4814d214907c18390b074f011acef12d5b66, seed 7, t-7)` — the same `(spec_hash, seed, trial_id)` at `251e52d`.
 - [x] `verify --recheck`: the release commit (`1199992`) records each of the seven `v1_*` row sets rechecked green from its trial directories, and the confirmation commit (`119d605`) records every confirmation trial re-verifying from its own. Neither was re-run for this draft.
 - [x] Not due a re-run: the `251e52d` rows are the re-run the week-2 status asked for.
@@ -42,7 +42,7 @@ From [pydantic.dev/docs/ai/integrations/durable_execution/restate](https://pydan
 
 > Side effects won't be duplicated on recovery.
 
-Tested against restate-sdk 1.0.5, restate-server 1.7.10 (Linux binary) and pydantic-ai-slim 2.43.0 on Python 3.13, under Linux (WSL2).
+Tested against restate-sdk 1.0.5, restate-server 1.7.10 (Linux binary) and pydantic-ai-slim 2.43.0 on Python 3.13, under Linux (WSL2). The one-trial reproduction below, run from a clean clone, gives the same result on restate-server 1.7.12, the latest release: 2 applied in 3 of 3 seeds.
 
 **What happens.** A Pydantic AI agent wrapped in `RestateAgent` calls one tool. The tool does its work inside `restate_context().run_typed("create_issue", action)`, as both pages show. The action makes one HTTP request to a receiver that cannot deduplicate, like an email or a legacy API. The worker process is `SIGKILL`ed after the receiver applied the request and before the SDK sent the run's result to the server. It is then restarted on the same port. Restate re-invokes it and the action runs a second time. **The receiver applied the request twice in 30 of 30 trials.** Every invocation completed successfully.
 
@@ -103,7 +103,7 @@ uv run crashproof bench --matrix bench/specs/week2_w1_shim.yaml --cells 'restate
 uv run crashproof verify out/repro/restate.pydantic_ai.EXTERNAL.after_tool_effect/t-7 --effects
 ```
 
-The effect ledger should show `issues.create#1` with 2 received and 2 applied. The trial directory holds the receiver's log (`world/receipts.jsonl`), Restate's journal as read from `sys_journal` / `sys_journal_events` (`sut/journal.json`), the server log, and the fault row. Our own trial directories are not in the repository, because they are hundreds of MB per run; the command above regenerates one. Other windows use the same form:
+The effect ledger should show `issues.create#1` with 2 received and 2 applied; both commands exit 7, which is the harness's code for a failed invariant (here S1). The trial directory holds the receiver's log (`world/receipts.jsonl`), Restate's journal as read from `sys_journal` / `sys_journal_events` (`sut/journal.json`), the server log, and the fault row. Our own trial directories are not in the repository, because they are hundreds of MB per run; the command above regenerates one. Other windows use the same form:
 
 - `--matrix bench/specs/week2_w1_shim.yaml --cells 'restate.pydantic_ai.EXTERNAL.pause_past_ttl@before:tool_call'` for the freeze;
 - `--matrix bench/specs/week2_w5.yaml --cells 'restate.pydantic_ai.GATED.kill@after:tool_effect'` for the approval-gated one.
@@ -116,6 +116,7 @@ Four more faults in the rows (six cells across the two modes) also apply twice, 
 
 **Everything needed to disagree.**
 
+- Repository: [keshav9926/drydock](https://github.com/keshav9926/drydock), commit `251e52d` for the runs; the rows are committed at the tag `v1`.
 - Adapter: [`crashproof/adapters/restate.py`](https://github.com/keshav9926/drydock/blob/251e52d/crashproof/adapters/restate.py) (~580 lines), with its write-up in [`docs/adapters/restate.md`](https://github.com/keshav9926/drydock/blob/251e52d/docs/adapters/restate.md). The agent is shared with the DBOS and Temporal arms: [`pydantic_ai_agent.py`](https://github.com/keshav9926/drydock/blob/251e52d/crashproof/adapters/pydantic_ai_agent.py).
 - Spec files: `bench/specs/week2_w1_shim.yaml`, `week2_w1_proxy.yaml` and `week2_w5.yaml`. Every trial cited here is seeded from 7 upward; the confirmation tier's seeds start at 100 000.
 - Rows: `bench/results/v1_w1_shim/results.jsonl`, `v1_w1_proxy/…` and `v1_w5/…`, the release row sets.

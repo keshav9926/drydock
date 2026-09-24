@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| Status | **draft, not filed** |
+| Status | **not filed: already reported** as [restatedev/sdk-python#221](https://github.com/restatedev/sdk-python/issues/221) (2026-07-25, against restate-sdk 1.0.3; open, no comments on 2026-09-25), with the same diagnosis and the same two fixes. Found by the pre-filing duplicate search. |
 | Where | [restatedev/sdk-python](https://github.com/restatedev/sdk-python/issues) |
 | Kind | A packaging bug with a two-line repro. It is not a Crashproof matrix finding: there is no row, no fairness level and no spec, so the template's matrix fields are replaced by a version table. |
-| Verified | 2026-09-18, in throwaway venvs under WSL2 Ubuntu 24.04, Python 3.13, uv (created and deleted by the check). restate-sdk 1.0.5 is still the latest on PyPI. |
+| Verified | 2026-09-18, and again 2026-09-25 in throwaway venvs under WSL2 Ubuntu 24.04, Python 3.13, uv (created and deleted by the check): restate-sdk 1.0.5 (still the latest) with pydantic-ai-slim **2.49.0** (the latest) and with 2.43.0 → the same ImportError from `_toolset.py:14`; with `pydantic-ai-slim[mcp]`, and with the unpinned install on pydantic.dev's page (`pydantic-ai "restate_sdk[serde]"`), it imports. |
 
 **Which project, and why this one.** The import that fails is restate-sdk's own: `restate/ext/pydantic/_toolset.py:14` does `from pydantic_ai.mcp import MCPToolset` at module level. The extra meant to make that module importable declares `pydantic-ai-slim>=2.0,<3` without `[mcp]`. pydantic-ai-slim is behaving as designed: MCP is an optional extra there, and it raises a clear ImportError naming the install that fixes it.
 

@@ -1,14 +1,14 @@
 # Upstream reports
 
 These are drafts of §29.3's *"one issue per finding"*, in the form set by
-[`../upstream-report-template.md`](../upstream-report-template.md). **Nothing here has been filed.**
-Filing is the owner's decision, made after the unchecked items in each draft's pre-filing notes are
-done. Each file's `## Issue body` section is the text a maintainer would read.
+[`../upstream-report-template.md`](../upstream-report-template.md). **One is filed** ([restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410), 2026-09-25,
+after a clean-clone repro on restate-server 1.7.10 and 1.7.12 and a verbatim re-check of every quote); the
+other was already reported upstream ([restatedev/sdk-python#221](https://github.com/restatedev/sdk-python/issues/221)) and is not filed again. Each file's `## Issue body` section is the text a maintainer would read.
 
 | runtime | finding | file | where it would go | status |
 |---|---|---|---|---|
-| Restate | "Tool side effects are not duplicated" does not hold when the process dies after a `ctx.run` action and before its result is journaled. 2 applied in 30 of 30 at every kill-after-effect cell, including behind an approval. A frozen worker gives 2 or 3. It is probably intended at-least-once, so the report is framed as a docs qualifier. | [restate-tool-side-effects-duplicated.md](restate-tool-side-effects-duplicated.md) | restatedev/docs-restate | draft, not filed |
-| restate-sdk | `restate-sdk[pydantic-ai]` cannot import `restate.ext.pydantic`: `pydantic_ai.mcp` is imported unconditionally, and the extra does not install `pydantic-ai-slim[mcp]`. | [restate-sdk-pydantic-extra-imports-mcp.md](restate-sdk-pydantic-extra-imports-mcp.md) | restatedev/sdk-python | draft, not filed |
+| Restate | "Tool side effects are not duplicated" does not hold when the process dies after a `ctx.run` action and before its result is journaled. 2 applied in 30 of 30 at every kill-after-effect cell, including behind an approval. A frozen worker gives 2 or 3. It is probably intended at-least-once, so the report is framed as a docs qualifier. | [restate-tool-side-effects-duplicated.md](restate-tool-side-effects-duplicated.md) | restatedev/docs-restate | **filed**: [#410](https://github.com/restatedev/docs-restate/issues/410) (2026-09-25) |
+| restate-sdk | `restate-sdk[pydantic-ai]` cannot import `restate.ext.pydantic`: `pydantic_ai.mcp` is imported unconditionally, and the extra does not install `pydantic-ai-slim[mcp]`. | [restate-sdk-pydantic-extra-imports-mcp.md](restate-sdk-pydantic-extra-imports-mcp.md) | restatedev/sdk-python | already reported: [sdk-python#221](https://github.com/restatedev/sdk-python/issues/221); not filed again |
 
 ## Considered and not drafted
 

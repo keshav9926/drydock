@@ -187,9 +187,9 @@ resume — fixed (`8d90198`) before the release run.
    but Keel ([v1_w5](../bench/reports/v1_w5.md)). Six of the seven claim at-least-once and are held
    to it; this is the cost of a journal written after the effect, printed.
 2. **Restate against its own claim.** The one arm whose documentation claims more than at-least-once for
-   tool side effects fails S1 in 14 cells, every seed listed. The draft upstream report
+   tool side effects fails S1 in 14 cells, every seed listed. The upstream report
    ([docs/upstream](upstream/README.md)) frames it as a docs qualifier — probably intended
-   at-least-once — and nothing has been filed.
+   at-least-once — and is filed as [restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410).
 3. **W5 behind the gate.** Killed while parked on an approval and then granted, every arm deploys exactly
    once, 30 of 30 (H7). LangGraph pays +1 model call because `interrupt()` re-runs the interrupting node,
    and in the tier-2 form ([v1_w5_pre](../bench/reports/v1_w5_pre.md)) an ungated `notify` before the
@@ -346,9 +346,10 @@ were intact in every baseline trial checked. The append is now one `FILE_APPEND_
 system places at the end, `O_APPEND` on POSIX (`7a22596`, after the release commit); `--resume` re-took
 the dead trial, and no row changes.
 
-**Upstream.** Two draft reports, neither filed ([docs/upstream](upstream/README.md)): Restate's
-side-effect claim, framed as a docs qualifier; and `restate-sdk[pydantic-ai]` failing to import
-`restate.ext.pydantic`. Four candidates considered and not drafted, each failing the
+**Upstream** ([docs/upstream](upstream/README.md)). Restate's side-effect claim, framed as a docs
+qualifier, is filed as [restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410); it reproduces from a clean clone on restate-server 1.7.12 too.
+`restate-sdk[pydantic-ai]` failing to import `restate.ext.pydantic` was already [restatedev/sdk-python#221](https://github.com/restatedev/sdk-python/issues/221), so it is not
+filed again. Four candidates considered and not drafted, each failing the
 [template](upstream-report-template.md): LangGraph's pre-interrupt re-run is documented and prominent;
 its `approval_expiry` is an absent feature, not a contradiction; DBOS's T3 is within its documented
 at-least-once and exploratory under K3; Restate's 4 of 60 was the harness.

@@ -104,8 +104,8 @@ its own instrument is doing, and every cell the release publishes as its matrix 
 one commit with a confirmation tier on the cells a claim depends on (the earlier runs — `matrix_v0`,
 `tier1a`, `tier1p`, `reask_alternate`, the four `week2_*` pages — stay published as what they were)
 ([below](#the-release-matrix-eight-arms-at-251e52d)). The [write-up](docs/writeup.md) is current; the
-[upstream reports](docs/upstream/README.md) are drafts and are not filed — that is the owner's call,
-not the harness's. All eleven kill criteria are read at the release:
+[upstream reports](docs/upstream/README.md): Restate's side-effect sentence is filed as
+[restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410); the restate-sdk packaging bug was already [restatedev/sdk-python#221](https://github.com/restatedev/sdk-python/issues/221). All eleven kill criteria are read at the release:
 [two fired, and a third's remedy is taken anyway](#kill-criteria-at-the-release).
 
 - **Property depth** (§12). `KeelMachine` drives the real worker, engine, inbox, approvals,
