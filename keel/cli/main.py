@@ -255,6 +255,56 @@ def show(
 
 
 @app.command()
+def otel(
+    run_ref: str,
+    app_ref: Annotated[str | None, typer.Option("--app")] = None,
+    dsn: Annotated[str | None, typer.Option("--dsn")] = None,
+    tree: Annotated[bool, typer.Option("--tree", help="the run's children too, under their DELEGATE spans")] = False,
+    out_path: Annotated[str | None, typer.Option("--out", help="write OTLP/JSON here (default: stdout)")] = None,
+    endpoint: Annotated[
+        str | None, typer.Option("--endpoint", help="POST to an OTLP/HTTP traces URL, e.g. …/v1/traces")
+    ] = None,
+    header: Annotated[list[str], typer.Option("--header", help="K=V on the POST, repeatable (auth)")] = None,
+) -> None:
+    """The run as OTel spans (§19.7): a projection of its journal, as OTLP/JSON. Off the write path —
+    re-running it re-derives the same span ids, so an export that failed loses nothing."""
+    from keel.core.versions import KEEL_VERSION
+    from keel.state import spans as otel_spans
+
+    keel = _load_app(app_ref, dsn)
+
+    async def collect(run_id: Any, parent: str | None) -> list[Any]:
+        evs = await keel.events(run_id)
+        found = otel_spans.spans(evs, parent_span_id=parent)
+        if tree:
+            for e in evs:
+                if e.type == "CHILD_SPAWNED":  # a child hangs under its DELEGATE attempt (attempt 1, §17)
+                    found += await collect(e.body.child_run_id, otel_spans.span_id(run_id, e.body.step_index, 1))
+        return found
+
+    async def go() -> None:
+        run_id = await _resolve(keel, run_ref)
+        doc = otel_spans.otlp(await collect(run_id, None), version=KEEL_VERSION)
+        body = json.dumps(doc, sort_keys=True)
+        if endpoint is not None:
+            import urllib.request
+
+            headers = {"Content-Type": "application/json", **dict(h.split("=", 1) for h in (header or []))}
+            request = urllib.request.Request(endpoint, data=body.encode(), headers=headers, method="POST")
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - the operator's URL
+                out.print(f"POST {endpoint}: {response.status}")
+        elif out_path is not None:
+            with open(out_path, "w", encoding="utf8") as f:
+                f.write(body)
+            n = sum(len(s["spans"]) for r in doc["resourceSpans"] for s in r["scopeSpans"])
+            out.print(f"{n} spans -> {out_path}")
+        else:
+            print(body)
+
+    _run(go())
+
+
+@app.command()
 def events(
     run_ref: str,
     app_ref: Annotated[str | None, typer.Option("--app")] = None,

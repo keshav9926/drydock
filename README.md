@@ -1017,7 +1017,7 @@ module of its own:
 | `orchestration/{contracts,children}.py`, registering `StepExecutor(DELEGATE)` | `runtime/delegation.py` (the contract, its validation and schema grading, the `child_result` and `cancel` rows) + `runtime/steps.py` (`_spawn_children`, the drain's child results, fan-out slots) | the same reason as APPROVAL: the spawn is one fenced transaction ending in a park, and a child's result is applied at the parent's drain |
 | `runtime/signals.py` | `runtime/steps.py` (`StepEngine._drain_inbox`) | the drain runs at every step boundary inside the engine's own append transaction and acts on the engine's fold — a cancel acknowledged at step *i*, the decision for the approval that parked — so everything it reads and writes is the engine's |
 | `runtime/reaper.py`'s force-cancel takeover | `runtime/takeover.py` | two callers — the parent's step engine after `cancel_grace`, and the reaper for a stray whose parent is terminal — share one depth-first path, and neither owns it |
-| §25.2 / §25.3 command trees | seven commands differ | declared and not built: `crashproof export`, `keel watch` (cut), `keel fork` (cut from phase 5). Built and in neither tree: `crashproof workloads`, `crashproof agree`, `crashproof placement`, `keel reap`. Those, and every flag-level difference in both directions, are in [`docs/cli-ledger.md`](docs/cli-ledger.md) — a command tree is a contract, and an undocumented gap in one is the same defect as an `N/A` printed as `PASS` |
+| §25.2 / §25.3 command trees | eight commands differ | declared and not built: `crashproof export`, `keel watch` (cut), `keel fork` (cut from phase 5). Built and in neither tree: `crashproof workloads`, `crashproof agree`, `crashproof placement`, `keel reap`, `keel otel` (V2, after the tag). Those, and every flag-level difference in both directions, are in [`docs/cli-ledger.md`](docs/cli-ledger.md) — a command tree is a contract, and an undocumented gap in one is the same defect as an `N/A` printed as `PASS` |
 | §25.2 exit codes | same, now wired, plus one | `chaos`, `inject` and `bench` exit **7** on an invariant FAIL in any scored trial, and `compare --strict` exits **8** when nothing could be claimed. `verify` exits **9** when a row cannot be re-verified, a code §25.1 does not name ([ledger](docs/cli-ledger.md)). A harness whose failure mode is red text in a log nobody reads is not a CI gate |
 
 One platform note: psycopg's async mode cannot run on Windows' default ProactorEventLoop, so every entry
@@ -1080,6 +1080,11 @@ AFTER RESTART split, in the event stream where it already lives).
   the worker is refused and the run handed back with a 30 s backoff. C4 is a property over journals
   the runtime wrote: every projection folds equal over the v1 form and its upcast, and a mutant
   upcaster fails it.
+- The OTel export (§19.7, V2): `keel otel RUN [--tree]` folds a journal into spans — run, one per lease
+  epoch, one per paid attempt, one per wait — with ids derived rather than random, so a re-export is
+  byte-identical, and writes OTLP/JSON to a file or an OTLP/HTTP endpoint. MODEL attempts carry the
+  GenAI attribute names a Langfuse generation is made of; Langfuse documents exactly this ingest
+  (checked against its docs, not a live instance). Off the write path, and not a tail.
 
 **Named, not built:**
 
