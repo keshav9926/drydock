@@ -66,6 +66,10 @@ class StepState:
     next_attempt_at: Any = None
     #: A waiting step's `wake_at`, from the RUN_WAITING that parked it — a SLEEP's timer (§18.4).
     wake_at: Any = None
+    #: The first attempt's `started_at` (store clock): where an IDEMPOTENT key window is measured from.
+    first_started_at: Any = None
+    #: Attempts a successor closed as `attempt_abandoned` — the crash-open half's own count (§9.1).
+    abandoned: int = 0
 
     @property
     def settled(self) -> bool:
@@ -492,6 +496,8 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s = st.steps[b.step_index]
         s.state = RUNNING
         s.attempts = b.attempt_no
+        if s.first_started_at is None:
+            s.first_started_at = b.started_at
         st.charged.start(b.step_index, b.attempt_no, b.reservation, s.kind)
     elif t == "STEP_CHUNK":
         # Observability, and the budget: the one fold that reads a chunk (§10.7). Never the step's
@@ -512,6 +518,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s = st.steps[b.step_index]
         s.state = FAILED
         s.error = b.error
+        s.abandoned += b.error == "attempt_abandoned"
         s.retryable = b.retryable
         s.next_attempt_at = b.next_attempt_at
         s.outcome_seq = ev.seq

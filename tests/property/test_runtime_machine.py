@@ -143,7 +143,7 @@ class KeelMachine(RuleBasedStateMachine):
         return self.sim
 
     @initialize(tools=st.lists(TOOL, min_size=1, max_size=3), script=st.lists(OP, min_size=1, max_size=6),
-                retry=st.sampled_from(("none", "retry")), model_retry=st.sampled_from(("none", "retry")),
+                retry=st.sampled_from(("none", "retry", "window")), model_retry=st.sampled_from(("none", "retry")),
                 segment_steps=st.sampled_from((400, 2)), policy=st.sampled_from(("none", "gate", "deny")))
     def start(self, tools: list[ToolDecl], script: list[dict[str, Any]], retry: str, model_retry: str,
               segment_steps: int, policy: str) -> None:

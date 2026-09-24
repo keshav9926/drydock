@@ -104,6 +104,12 @@ DEFAULT_MODEL_TIMEOUT_S = 60.0
 #: as RUN_WAITING{retry_backoff} and releases the lease, because waiting is zero compute everywhere.
 PARK_BACKOFF_AFTER_S = 1.0
 
+#: §9.1's crash-open half: recovery re-runs an abandoned IDEMPOTENT attempt even under `NO_RETRY`,
+#: because recovery is not retry (§8.3) — so the retry policy cannot bound it, and this does. The
+#: step whose third attempt is found abandoned is not re-sent; it goes to a human like the live half.
+#: Three, §9.1's default `max_attempts` (section-local decision).
+MAX_ABANDONED_ATTEMPTS = 3
+
 # A probe that cannot tell, distinguished from a step whose value happens to be None.
 _UNRESOLVED = object()
 
@@ -251,6 +257,9 @@ class StepEngine:
         #: Where this epoch's re-execution starts: the latest boundary's first step, 0 without one. What
         #: RECOVERY_COMPLETED counts replayed steps from — the segment, not the run (§10.8, §18.8).
         self.replay_from = state.segment.first_step_index if state.segment is not None else 0
+        #: Attempt 1's `started_at` for the steps this epoch started live — the engine's fold is not
+        #: advanced by every append, and a key window is measured from the first STARTED (§9.7).
+        self._first_started: dict[int, datetime] = {}
 
     # --- public entry --------------------------------------------------------
     async def execute(self, intent: StepIntent) -> Any:
@@ -1391,6 +1400,7 @@ class StepEngine:
         # A crash *between* them is unreachable by construction, and that is exactly what the
         # INTENDED/RUNNING split in the recovery table relies on — the two names exist so a spec
         # can say which side of the commit it means, not because there is a gap between them.
+        self._first_started[intent.step_index] = now
         hooks.at("after:intent_commit", **_where(intent))
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         self.state.charged.start(intent.step_index, 1, reservation.tokens or None, str(intent.kind))
@@ -1443,6 +1453,8 @@ class StepEngine:
                 )
             if deadline is not None:
                 await tx.set_run(attempt_deadline=deadline)
+        if attempt_no == 1:  # a recovered INTENT with no STARTED; a live one starts in `_live`
+            self._first_started[intent.step_index] = now
         # A re-attempt writes no INTENT — the step already has one — so only the attempt boundary
         # belongs here. Firing `after:intent_commit` again would let a spec aimed at "the intent"
         # fire on attempt three, which is a different window wearing the same name.
@@ -1554,14 +1566,7 @@ class StepEngine:
         # that finds it retries rather than failing the run (§8.7, §11.5 `provider_outage`).
         policy = self.model_retry if intent.kind in (StepKind.MODEL, StepKind.COMPACT) else self.retry
         retrying = isinstance(outcome, Failed) and outcome.retryable and policy.may_retry(attempt_no)
-        if (
-            isinstance(outcome, Failed) and outcome.unknown and not retrying
-            and intent.effect_class == EffectClass.IDEMPOTENT
-        ):
-            # §9.1 (amended): the key makes a retry safe, and a retry is what turns "maybe applied"
-            # into a known outcome. With none left, a clean FAILED would hide an effect the receiver
-            # may hold, so the step is what it is — unknown — and the run waits for a human.
-            return await self._key_window_expired(intent, attempt_no, started_seq, outcome.error)
+        idempotent = intent.effect_class == EffectClass.IDEMPOTENT
         wait_s = 0.0
         if isinstance(outcome, (Completed, Failed)):
             self._breaker_saw(intent, ok=isinstance(outcome, Completed))
@@ -1570,6 +1575,14 @@ class StepEngine:
                 policy.backoff_s(attempt_no),
                 self._breaker_wait_s(intent),
             )
+        spent = await self._key_window_spent(intent.step_index, after_s=wait_s) if retrying and idempotent else None
+        if spent is not None:
+            retrying = False  # §9.7: the re-send would start outside the receiver's key window
+        if isinstance(outcome, Failed) and outcome.unknown and not retrying and idempotent:
+            # §9.1 (amended): the key makes a retry safe, and a retry is what turns "maybe applied"
+            # into a known outcome. With none left, a clean FAILED would hide an effect the receiver
+            # may hold, so the step is what it is — unknown — and the run waits for a human.
+            return await self._key_window_expired(intent, attempt_no, started_seq, outcome.error, spent)
         next_attempt_at = None
         try:
             hooks.at("before:outcome_commit", attempt_no=attempt_no, **_where(intent))
@@ -1722,6 +1735,19 @@ class StepEngine:
             # runs one attempt and an unmeasured retry policy is a guess (day 4, §27.5). But an
             # attempt a crash abandoned has no outcome to retry from, and refusing to re-run it
             # would fail every run the IDEMPOTENT band exists to measure.
+            #
+            # Not for ever, and not outside the key window (§9.1's crash-open half): the re-send is
+            # bounded by its own count and by `max_elapsed`, and past either the attempt that may
+            # have landed goes to a human exactly as the live half does.
+            if cls == EffectClass.IDEMPOTENT:
+                spent = (
+                    f"attempt {n} is the step's abandoned attempt number {journaled.abandoned + 1}; recovery"
+                    f" re-sends stop at {MAX_ABANDONED_ATTEMPTS}, a count of their own because recovery is not retry"
+                    if journaled.abandoned + 1 >= MAX_ABANDONED_ATTEMPTS
+                    else await self._key_window_spent(intent.step_index)
+                )
+                if spent is not None:
+                    return await self._key_window_expired(intent, n, None, "crash", spent)
             return await self._start_attempt(
                 intent,
                 n + 1,
@@ -1742,10 +1768,30 @@ class StepEngine:
             raise StepFailed(intent.step_index, journaled.error or "failed", retryable=journaled.retryable)
         raise Suspended("unrecoverable_step_state", {"step_index": intent.step_index, "state": state})
 
-    async def _key_window_expired(self, intent: StepIntent, attempt_no: int, started_seq: int, error: str) -> Any:
+    async def _key_window_spent(self, step_index: int, *, after_s: float = 0.0) -> str | None:
+        """Would an IDEMPOTENT re-send starting `after_s` from now fall outside `max_elapsed` (§9.7)?
+        Measured by the store's clock from the step's first STARTED; None while inside, or unbounded."""
+        limit = self.retry.max_elapsed_s
+        journaled = self.state.step(step_index)
+        first = self._first_started.get(step_index) or (journaled.first_started_at if journaled else None)
+        if limit is None or first is None:
+            return None
+        try:
+            async with self.journal.append(self.lease) as tx:  # the fence alone: the store's clock
+                elapsed = (await tx.now() - first).total_seconds() + after_s
+        except Fenced as exc:
+            raise Abandon("fenced at the key-window check") from exc
+        if elapsed < limit:
+            return None
+        return f"the key window is spent: a re-send would start {elapsed:.1f} s after the first STARTED, max_elapsed {limit:g} s"
+
+    async def _key_window_expired(
+        self, intent: StepIntent, attempt_no: int, started_seq: int | None, error: str, reason: str | None = None
+    ) -> Any:
         """An IDEMPOTENT attempt whose outcome is unknown, with no attempt left to resolve it under
-        the same key: AMBIGUOUS, then RESOLVED_UNKNOWN by `key_window_expired`, one transaction —
-        the EXTERNAL `escalate` path, so replay, VERIFY, C3 and the human's decision are one path."""
+        the same key — live, or found open by a successor past the crash-open bounds: AMBIGUOUS, then
+        RESOLVED_UNKNOWN by `key_window_expired`, one transaction — the EXTERNAL `escalate` path, so
+        replay, VERIFY, C3 and the human's decision are one path."""
         async with self.journal.append(self.lease) as tx:
             await tx.append(
                 StepAmbiguous(step_index=intent.step_index, attempt_no=attempt_no, cause=error),
@@ -1757,7 +1803,7 @@ class StepEngine:
                     attempt_no=attempt_no,
                     resolution="RESOLVED_UNKNOWN",
                     method="key_window_expired",
-                    evidence={"reason": "no attempt left to resolve an unknown outcome under the same key"},
+                    evidence={"reason": reason or "no attempt left to resolve an unknown outcome under the same key"},
                 )
             )
             await tx.update_effect(intent.effect_key or "", status="RESOLVED_UNKNOWN", outcome_seq=seq)

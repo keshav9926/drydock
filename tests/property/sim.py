@@ -229,7 +229,12 @@ class _Top:
 
 
 _TOP = _Top()
-POLICIES = {"none": NO_RETRY, "retry": SimRetry(max_attempts=3, base_s=0.5, max_backoff_s=4.0)}
+#: `window` adds §9.7's key window, short enough that a successor (TTL + ε later) always lands past it.
+POLICIES = {
+    "none": NO_RETRY,
+    "retry": SimRetry(max_attempts=3, base_s=0.5, max_backoff_s=4.0),
+    "window": SimRetry(max_attempts=3, base_s=0.5, max_backoff_s=4.0, max_elapsed_s=6.0),
+}
 
 
 # --- the fakes --------------------------------------------------------------------------------

@@ -515,7 +515,11 @@ rather than the rows, so no page under `bench/reports` carries them and CI canno
   and §8.5 prescribed exactly that, so it was a decision, not a slip. The document is amended to extend
   §9.1's own rule ("a clean failure would hide an applied one"): the row reads `AMBIGUOUS` while a retry
   is pending, and with none left the step is `RESOLVED_UNKNOWN{key_window_expired}` and the run
-  SUSPENDED for a human. The release matrix never reaches the path — its aimed faults fire once, and
+  SUSPENDED for a human. Since the release its crash-open half is built too: a successor that finds the
+  step's third abandoned attempt — a count of its own, because recovery re-runs even under `NO_RETRY` —
+  or one whose re-send would start past the policy's `max_elapsed` (§9.7), takes the same path instead
+  of re-sending ([`test_key_window.py`](tests/unit/test_key_window.py); the state machine draws a
+  key-window policy). The release matrix never reaches the path — its aimed faults fire once, and
   the single confirmed trial whose re-attempt went ambiguous a second time ended on the
   `events_resolved_once` index instead ([above](#the-release-matrix-eight-arms-at-251e52d)) — so no
   published row changes. On §30's own text K6 has not fired at the release: its measurement is a
@@ -1053,9 +1057,6 @@ AFTER RESTART split, in the event stream where it already lives).
   parent-cancel already uses, and arrives with the first cell that measures it.
 - `keel signal --compensate STEP` and `Keel.compensate` (§25.2, v1): `--resolve` is built, and a
   compensating action is a second effect with its own class, which nothing here declares yet.
-- The crash-open half of `key_window_expired` (§9.1): an attempt still open at recovery is re-run
-  under the same key without counting against the retry policy, because recovery is not retry (§8.3);
-  bounding it needs its own count, and nothing measures it yet.
 - `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:
   close`, one response per request, and §11.5's own caveat is that the late bytes reach the SUT only
   when the transport outlives the app-level timeout — a cell for a sync-tool variant that does not

@@ -43,6 +43,10 @@ class RetryPolicy:
     base_s: float = DEFAULT_BASE_S
     factor: float = DEFAULT_FACTOR
     max_backoff_s: float | None = None
+    #: The receiver's key window (§9.7, `charge_card`: 1 h). No IDEMPOTENT re-send — a retry or a
+    #: recovery re-run — starts this long after the step's first STARTED, by the store's clock: outside
+    #: the window a receiver may no longer dedup the key, so the step goes to a human instead (§9.1).
+    max_elapsed_s: float | None = None
 
     def may_retry(self, attempt_no: int) -> bool:
         return attempt_no < self.max_attempts
