@@ -30,6 +30,9 @@ class Usage(BaseModel):
     model_config = ConfigDict(frozen=True)
     input_tokens: int = 0
     output_tokens: int = 0
+    #: Prompt tokens served from the provider's cache — billed apart from `input_tokens`, so counted
+    #: apart (STEP_COMPLETED v2, §6.5). A provider with no cache reports 0.
+    cache_read_tokens: int = 0
 
 
 class ModelRequest(BaseModel):

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 class Body(BaseModel):
@@ -326,9 +326,18 @@ class StepCompleted(Body):
     step_index: int
     attempt_no: int
     result: Any = None
+    #: v2 (§6.5): `{input_tokens, cache_read_tokens, output_tokens}` when present. `cache_read_tokens`
+    #: is required here and defaulted only by the v1 upcaster, so a v2 writer that forgets it is refused.
     usage: dict[str, int] | None = None
     provider_meta: dict[str, Any] | None = None
     synthetic: bool = False
+
+    @field_validator("usage")
+    @classmethod
+    def _usage_is_v2(cls, usage: dict[str, int] | None) -> dict[str, int] | None:
+        if usage is not None and "cache_read_tokens" not in usage:
+            raise ValueError("STEP_COMPLETED v2: usage needs cache_read_tokens (a v1 row is upcast at load)")
+        return usage
 
 
 class StepFailed(Body):

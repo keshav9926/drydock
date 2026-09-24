@@ -11,12 +11,15 @@ rejected by the fold and would test nothing.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from journals import CALLS, CLASSES, DEDUP, PAYLOADS, build, run_to_completion
 
 from keel.core.hashing import canonical_json
+from keel.events import Event
+from keel.events.registry import CURRENT, body_from_payload, payload_of
 from keel.journal.blobs import BLOB_THRESHOLD
 from keel.state.fold import RunState, _apply, fold
 
@@ -124,5 +127,39 @@ def test_large_payloads_round_trip_through_the_blob_store(payload: int, dedup: b
         )
         assert intended["body"] == "x" * payload, "the value read back is the value written"
         assert fold(events).steps[1].result["logical_identity"] == "svc.write#1"
+
+    asyncio.run(check())
+
+
+def _as_v1(event: Event) -> Event:
+    """What a v1 writer stored for this event (§6.5): STEP_COMPLETED's usage without cache_read_tokens,
+    at schema_version 1 — then read back through the one load path every stored row takes."""
+    if event.type != "STEP_COMPLETED" or event.env.schema_version == 1:
+        return event
+    payload = payload_of(event.body)
+    if payload.get("usage") is not None:
+        payload["usage"] = {k: v for k, v in payload["usage"].items() if k != "cache_read_tokens"}
+    env = event.env.model_copy(update={"schema_version": 1})
+    return Event(env=env, body=body_from_payload(event.type, 1, payload))
+
+
+@PROP
+@given(effect_class=CLASSES, dedup=DEDUP, calls=CALLS, crash=CRASH)
+def test_c4_every_projection_folds_equal_over_v1_rows_and_their_upcast(
+    effect_class: str, dedup: bool, calls: int, crash: bool
+) -> None:
+    """C4 (§6.5, §12.6): `fold(v1 rows) == fold(upcast(v1 rows))` for every projection — the whole
+    RunState, budget included, compared by value — so a schema change is never a semantic change.
+    The upcast is total on every v1 shape the runtime wrote, idempotent, and never lowers a version."""
+
+    async def check() -> None:
+        events, _ = await _events(effect_class, dedup, calls, crash)
+        v1 = [_as_v1(e) for e in events]
+        assert any(e.type == "STEP_COMPLETED" and e.body.usage for e in v1), "model usage to upcast"
+        assert repr(asdict(fold(v1))) == repr(asdict(fold(events)))
+        for old, new in zip(v1, events, strict=True):
+            assert old.env.schema_version <= CURRENT[old.type] and old.env.schema_version <= new.env.schema_version
+            again = body_from_payload(old.type, old.env.schema_version, payload_of(old.body))
+            assert again == old.body, "upcasting an upcast row changes nothing"
 
     asyncio.run(check())

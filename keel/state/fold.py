@@ -154,10 +154,19 @@ def deadline_of(budget: Mapping[str, Any] | None, created_ts: datetime) -> datet
     return min(found) if found else None
 
 
+def tokens_of(usage: Mapping[str, Any]) -> int:
+    """Every token the provider processed for an attempt, cached prompt tokens included (STEP_COMPLETED
+    v2, §6.5): the reservation counts the whole prompt, so the settlement must too."""
+    return sum(int(usage.get(k, 0)) for k in ("input_tokens", "cache_read_tokens", "output_tokens"))
+
+
 def usd_of(usage: Mapping[str, Any], price: Any) -> float:
     """Tokens at a journaled (input, output) rate in USD per million (§16.4). The runtime prices a
-    reservation with it and the fold prices chunks and settlements, so the two cannot disagree."""
-    return (int(usage.get("input_tokens", 0)) * price[0] + int(usage.get("output_tokens", 0)) * price[1]) / 1_000_000
+    reservation with it and the fold prices chunks and settlements, so the two cannot disagree. Cache
+    reads are charged at the input rate: an upper bound, since a cached token is never billed above an
+    uncached one, and the pinned tables carry no third rate (section-local decision)."""
+    prompt = int(usage.get("input_tokens", 0)) + int(usage.get("cache_read_tokens", 0))
+    return (prompt * price[0] + int(usage.get("output_tokens", 0)) * price[1]) / 1_000_000
 
 
 @dataclass(slots=True)
@@ -211,7 +220,7 @@ class Charged:
         held = self.reserved.get((step_index, attempt_no))
         if held is None:
             return
-        seen = int(usage_cum.get("input_tokens", 0)) + int(usage_cum.get("output_tokens", 0))
+        seen = tokens_of(usage_cum)
         if seen > held:
             self.tokens_charged += seen - held
             self.reserved[(step_index, attempt_no)] = seen
@@ -226,7 +235,7 @@ class Charged:
         if reservation is None or usage is None:
             return
         self.tokens_charged -= reservation
-        self.tokens_charged += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+        self.tokens_charged += tokens_of(usage)
 
     # --- delegation (§17.4): the child's slice is a reservation in the parent's ledger --------
     def reserve_child(self, child_run_id: Any, slice_: dict[str, Any]) -> None:

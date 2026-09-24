@@ -37,6 +37,11 @@ class Fenced(KeelError):
     """The fence UPDATE matched 0 rows. This worker writes nothing more for this run (§2)."""
 
 
+class SchemaTooNew(KeelError):
+    """An event written by a newer Keel than this worker (§6.5). No downcasters: the worker releases the
+    run, with a backoff, for a worker that can read it."""
+
+
 class StoreUnavailable(KeelError):
     """The journal itself could not be reached or written.
 

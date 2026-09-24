@@ -1797,6 +1797,7 @@ Rules that follow from the mechanism:
 - There are no downcasters, and the refusal is a *release*, not a non-acquisition: events load after acquisition, so a worker that meets `schema_version > CURRENT` raises at load, writes `recoveries.outcome = 'RELEASED'` for its epoch (with `started_seq IS NULL` — it journaled nothing) and releases with `runnable_at = now() + backoff` (30 s, section-local decision) rather than `now()`. Without the backoff the same old worker's scheduler loop re-pops the run immediately and spins for the whole deploy window, bumping `lease_epoch` and inserting a `recoveries` row per iteration — which would pollute L2 and the recovery-latency series with events that are not recoveries. A run no deployed worker can serve is a deploy error, visible as repeated zero-append `RELEASED` epochs in `keel show`. Mixed-version workers are therefore safe in one direction only, which is the direction deploys go.
 - C4 (v2) is the test: `fold_v1(rows) == fold_v2(upcast(rows))` for every projection over every archived run. The `cache_read_tokens = 0` choice is what makes the budget fold equal; an upcaster that could not keep a fold equal would be a semantic change and belongs in `program_version`, not `schema_version`.
 - Bodies of `Continue(state)` blobs follow the same contract but are the *program's* responsibility (`model_validator(mode="before")`); a failure there is `RUN_SUSPENDED{reason=state_schema_mismatch}` (§4).
+- **As built** (V2, after the v1 tag): the example above is the real one. `Usage.cache_read_tokens` is the provider's field; STEP_COMPLETED v2 requires it in `usage` by a model validator, and `step_completed_v1_to_v2` defaults it to 0. `CURRENT` is derived — one past each type's newest upcaster — so registering an upcaster is what raises a version, and every writer emits it. An event newer than `CURRENT` raises `SchemaTooNew` at load; the worker releases with `runnable_at = now + SCHEMA_BACKOFF_S` (30 s), `recoveries.outcome = RELEASED` and nothing journaled. `keel events --json` dumps and the journal fixtures load through the same path (`registry.load_event`), so an archived run is upcast and never rewritten. The token fold counts cache reads (the reservation counts the whole prompt, so the settlement must); the USD fold charges them at the input rate — an upper bound, since a cached token is never billed above an uncached one and the pinned tables carry no third rate (section-local decision). C4 is `tests/property/test_fold_props.py`: the whole `RunState`, compared by value, over journals the runtime wrote and their v1 form, and it convicts an upcaster that defaults anything but 0.
 
 ### 6.6 What is deliberately not an event
 
@@ -6542,7 +6543,7 @@ The gate is deliberately harsh: an abstraction built before the thesis is tested
 | Plan | `PLAN_UPDATED` | v1 |
 | Reported, never journaled | `PROMPT_DRIFT` | v1 (VERIFY only) |
 | Envelope fields | `schema_version`, `lease_epoch`, `program_version`, `causation_seq`, `trace_id`, `blob_ids` | MVP |
-| Upcasters | registry + `load()` path | MVP (registry, empty) · V2 (a real v1→v2 upcaster + C4) |
+| Upcasters | registry + `load()` path | MVP (registry, empty) · V2 (a real v1→v2 upcaster + C4) — **built** after the v1 tag: STEP_COMPLETED v2, §6.5 |
 
 ### 27.5 Steps, effect classes, modifiers, resolutions (§9)
 

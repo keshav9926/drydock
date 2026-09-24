@@ -28,7 +28,7 @@ from keel.events import (
     RunSuspended,
 )
 from keel.journal.protocol import JournalBackend, Lease, RunRow
-from keel.core.errors import StoreUnavailable
+from keel.core.errors import SchemaTooNew, StoreUnavailable
 from keel.runtime import hooks, human
 from keel.runtime.ctx import Ctx
 from keel.runtime.breaker import CircuitBreaker
@@ -42,6 +42,8 @@ from keel.state.fold import fold
 
 DEFAULT_LEASE_TTL = 30.0
 HEARTBEAT_DIVISOR = 3  # heartbeat period <= ttl/3 (§8.7)
+#: §6.5: how long a run this worker cannot read waits before any worker claims it again (section-local).
+SCHEMA_BACKOFF_S = 30.0
 
 
 def default_worker_id() -> str:
@@ -154,7 +156,19 @@ class Worker:
             cause = "RESUME" if any(human.lifts_suspension(s) for s in pending) else "WAKE"
         # §7.8 step 2 before step 3: the journal head and the latest boundary are read first, because
         # the first append names the segment re-execution will start from.
-        prior = await journal.read(lease.run_id)
+        try:
+            prior = await journal.read(lease.run_id)
+        except SchemaTooNew:
+            # §6.5: no downcasters, so a run a newer Keel wrote is handed back unread, for a worker
+            # that can read it. A release, not a non-acquisition, and with a backoff: without it this
+            # worker's claim loop re-pops the run and spins for the whole deploy window, each turn a new
+            # epoch and a `recoveries` row that is not a recovery. Nothing is journaled.
+            now = self.clock.now() if self.clock is not None else datetime.now(UTC)
+            await self._release(
+                lease, runnable_at=now + timedelta(seconds=SCHEMA_BACKOFF_S), runnable_reason=lease.cause
+            )
+            await journal.set_recovery(lease.run_id, lease.epoch, outcome="RELEASED")
+            return
         from_segment = next(
             (e.body.segment_no for e in reversed(prior) if e.type == "SEGMENT_STARTED"), 0
         )

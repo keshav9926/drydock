@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from keel.events import Event
+from keel.events.registry import load_event
 from keel.journal.memory import MemoryJournal, memory_run_row
 from keel.replay.verify import VerifyResult, verify
 from keel.state.fold import fold
@@ -48,7 +49,7 @@ def load(path: Path | str) -> Fixture:
     """Read a `keel events --json` dump back into events."""
     path = Path(path)
     raw = json.loads(path.read_text(encoding="utf8"))
-    events = [Event.model_validate(e) for e in raw]
+    events = [load_event(e) for e in raw]  # the stored-row load path: an archived v1 run is upcast (§6.5)
     if not events:
         raise ValueError(f"{path}: a fixture with no events proves nothing")
     state = fold(events)

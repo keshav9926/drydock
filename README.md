@@ -1075,6 +1075,11 @@ AFTER RESTART split, in the event stream where it already lives).
   §11.5's physical caveat — and the cell is Keel-only (`bench/specs/dup_response.yaml`). The one-seed
   smoke: EXTERNAL probes its way to one application, IDEMPOTENT retries under its key (2 received,
   1 applied), one completion each, S1–S5 and C1 PASS.
+- V2's first schema change (§6.5): STEP_COMPLETED v2 carries `cache_read_tokens`, and v1 rows are
+  upcast at load — the fixtures in `tests/journals/` included — never rewritten. An event newer than
+  the worker is refused and the run handed back with a 30 s backoff. C4 is a property over journals
+  the runtime wrote: every projection folds equal over the v1 form and its upcast, and a mutant
+  upcaster fails it.
 
 **Named, not built:**
 
