@@ -102,6 +102,7 @@ class ProxyInjector(Injector):
             timeout    forward, then never answer
             dropped    close the socket with nothing written
             malformed  answer 200 with a body that is not JSON
+            duplicate  hold the answer past the timeout; write it late, after the retry's
         """
         if entry.delay_ms:
             await asyncio.sleep(entry.delay_ms / 1000.0)
@@ -134,4 +135,6 @@ class ProxyInjector(Injector):
             return "dropped"
         if kind == "tool_malformed":
             return "malformed"
+        if kind == "tool_duplicate_response":
+            return "duplicate"
         raise NotImplementedError(f"fault type {kind!r} is not a proxy fault")  # refused at load

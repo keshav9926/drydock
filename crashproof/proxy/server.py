@@ -39,6 +39,10 @@ _PASSTHROUGH = ("/oracle", "/control", "/health")
 #: promises. A client that parses leniently and journals it as a result has produced a phantom
 #: completion (S3); a client that treats it as unknown has done the right thing (§11.5).
 _NOT_JSON = b"<html>502 upstream said something</html>"
+#: How long `tool_duplicate_response` holds the first answer when no retry comes: past a tool timeout
+#: of a second (the workloads' `tool_timeout_s`), inside the harness client's 5 s socket timeout, so
+#: the late bytes can still reach a thread that is blocked reading them (§11.5's physical caveat).
+DUPLICATE_HOLD_MS = 3000
 
 
 class Proxy:
@@ -61,6 +65,8 @@ class Proxy:
         self.port = port
         self._server: asyncio.Server | None = None
         self._closing = asyncio.Event()
+        #: landmark → answers written for it; what a held duplicate waits to see move
+        self._answered: dict[str, int] = {}
         injector.closing = self._closing  # a parked freeze is released by the same stop
 
     async def start(self) -> int:
@@ -128,9 +134,13 @@ class Proxy:
         if action == "timeout" or never_answer:
             await self._hold(reader)
             return
+        if action == "duplicate":
+            await self._late(writer, landmark, status, payload, entry.params.get("hold_ms", DUPLICATE_HOLD_MS))
+            return
         if action == "500":
             status, payload = 500, {"error": "tool_500", "applied": True}
         await self._reply(writer, status, payload, raw=_NOT_JSON if action == "malformed" else None)
+        self._answered[landmark] = self._answered.get(landmark, 0) + 1
 
         # after:tool_return — flushed. The kill lands before the SUT parses the bytes, which is
         # the precision this mode loses against the shim's `call_soon`; the table says so.
@@ -152,6 +162,21 @@ class Proxy:
     ) -> None:
         writer.write(response_bytes(status, payload, raw=raw))
         await writer.drain()
+
+    async def _late(self, writer: asyncio.StreamWriter, landmark: str, status: int, payload: Any, hold_ms: float) -> None:
+        """`tool_duplicate_response`: the World applied this request and answered; the SUT hears nothing
+        until its own timeout has abandoned the attempt and its retry has been answered — or `hold_ms`,
+        when no retry comes (an EXTERNAL timeout is AMBIGUOUS, not retried) — and then gets this answer
+        too, late, on the socket it asked on. A runtime that journals it has two completions for one
+        step (S5), or double-counts the effect."""
+        seen = self._answered.get(landmark, 0)
+        deadline = asyncio.get_running_loop().time() + float(hold_ms) / 1000.0
+        while asyncio.get_running_loop().time() < deadline and self._answered.get(landmark, 0) == seen:
+            if self._closing.is_set():
+                return
+            await asyncio.sleep(0.01)
+        with contextlib.suppress(ConnectionError, BrokenPipeError, OSError):
+            await self._reply(writer, status, payload)
 
     async def _hold(self, reader: asyncio.StreamReader) -> None:
         """Never answer. The handler ends when the SUT gives up and closes its side — its own

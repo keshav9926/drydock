@@ -1069,13 +1069,15 @@ AFTER RESTART split, in the event stream where it already lives).
   `keel signal RUN --compensate STEP` / `Keel.compensate` starts a compensation run instead of
   injecting a step the program never issued ([cli-ledger](docs/cli-ledger.md)). Only an effect known
   to have landed can be compensated, and Keel never calls a hook by itself.
+- `tool_duplicate_response` (§11.5, §27.7, proxy only): the World applies R1, and the proxy holds its
+  answer past the tool's timeout and writes it late on R1's socket once the retry has been answered.
+  Every Keel tool in the harness is a blocking call on a thread, so the late bytes do reach SUT code —
+  §11.5's physical caveat — and the cell is Keel-only (`bench/specs/dup_response.yaml`). The one-seed
+  smoke: EXTERNAL probes its way to one application, IDEMPOTENT retries under its key (2 received,
+  1 applied), one completion each, S1–S5 and C1 PASS.
 
 **Named, not built:**
 
-- `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:
-  close`, one response per request, and §11.5's own caveat is that the late bytes reach the SUT only
-  when the transport outlives the app-level timeout — a cell for a sync-tool variant that does not
-  exist yet.
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
 - W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
   effect-table bridge and a DBOS arm to be a comparison.

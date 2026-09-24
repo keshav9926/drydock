@@ -1,0 +1,27 @@
+# The one proxy fault §27.7 names that no published matrix carried: `tool_duplicate_response` (§11.5).
+# The World applies R1 and answers; the proxy holds that answer past the tool's timeout and writes it
+# late, on R1's own socket, once the retry R2 has been answered (IDEMPOTENT: TOOL_RETRY re-sends under
+# the same key) or after `hold_ms` when no retry comes (EXTERNAL: a timeout is AMBIGUOUS and probed,
+# never re-sent). Keel only: its harness tools are blocking calls on a thread (`World.acall`), so the late
+# bytes do reach SUT code — §11.5's physical caveat — and the claim is that they never become a second
+# completion (S5) or a second effect (S1).
+workload: tool_chain_1_effect
+mode: proxy
+seeds: {count: 30, base: 7}
+max_recoveries: 3
+timeout: 60
+t_recover_s: 20
+verifier: [S1, S2, S3, S4, S5, S6, L1, L2, C1]
+
+variants:
+  - {id: EXTERNAL, endpoint_dedup: false, resolution: probe}
+  - {id: IDEMPOTENT, endpoint_dedup: true}
+
+triggers:
+  - tool_duplicate_response@after:tool_effect
+
+adapters:
+  - name: keel
+    key_source: framework             # effect_key
+    configs:
+      - {id: default}

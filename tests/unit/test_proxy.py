@@ -176,6 +176,56 @@ async def test_a_timeout_forwards_and_never_answers(make) -> None:
     assert (await asyncio.to_thread(patient.call, "issues.create", {"title": "again", "body": "b"}))["id"]
 
 
+async def test_a_duplicate_answers_the_abandoned_request_after_its_retry(make) -> None:
+    """§11.5 `tool_duplicate_response`: R1 applied and answered by the World, held; the SUT's own timeout
+    abandons it and its retry R2 is answered normally; then R1's answer arrives too, late, on R1's socket —
+    to a thread still blocked reading it, which is where a runtime could journal a second completion."""
+    import concurrent.futures
+    import time
+
+    rig = await make(_spec("tool_duplicate_response", hold_ms=5000))
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    loop = asyncio.get_running_loop()
+    stamps: dict[str, float] = {}
+
+    def call(name: str) -> Any:
+        out = rig.client.call("issues.create", ISSUE)
+        stamps[name] = time.monotonic()
+        return out
+
+    first = loop.run_in_executor(pool, call, "r1")
+    await asyncio.sleep(0.4)  # the app-level timeout: the attempt is abandoned, the thread is not
+    assert not first.done(), "held past the timeout"
+    second = await loop.run_in_executor(pool, call, "r2")
+    late = await asyncio.wait_for(first, 5.0)
+    assert late["id"] and second["id"] and stamps["r2"] <= stamps["r1"], "R1's answer comes after R2's"
+    assert rig.applied() == {"issues.create#1": 2}, "the retry of a non-dedup create applies again, as it would"
+    [row] = rig.trial.faults()
+    assert (row.type, row.boundary) == ("tool_duplicate_response", "after:tool_effect")
+    pool.shutdown()
+
+
+async def test_a_duplicate_with_no_retry_is_released_after_the_hold(make) -> None:
+    """An EXTERNAL timeout is AMBIGUOUS and is not retried, so nothing comes to wait for: the answer is
+    released when the hold runs out, still inside the client's socket timeout."""
+    import time
+
+    rig = await make(_spec("tool_duplicate_response", hold_ms=300))
+    t0 = time.monotonic()
+    assert (await rig.call())["id"]
+    assert time.monotonic() - t0 >= 0.3
+    assert rig.applied() == {"issues.create#1": 1}
+
+
+def test_a_duplicate_is_a_proxy_fault_after_the_effect() -> None:
+    with pytest.raises(CrashproofSpecError):
+        _spec("tool_duplicate_response", "before:tool_call")
+    with pytest.raises(CrashproofSpecError):
+        from_doc({"name": "s", "workload": "tool_chain_1_effect", "mode": "shim", "max_recoveries": 3, "faults": [
+            {"id": "f1", "type": "tool_duplicate_response",
+             "trigger": {"boundary": "after:tool_effect", "landmark": "tool:create_issue"}}]})
+
+
 async def test_a_delay_is_only_latency(make) -> None:
     rig = await make(_spec("tool_delay", delay_ms=150))
     assert (await rig.call())["id"]

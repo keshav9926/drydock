@@ -84,7 +84,8 @@ RESTART_CAUSING = frozenset(
 #: Types the supervisor must not treat as a restart request: the worker is still alive.
 NON_FATAL = frozenset(
     {
-        "tool_timeout", "tool_500", "tool_delay", "model_timeout", "model_500", "provider_outage",
+        "tool_timeout", "tool_500", "tool_delay", "tool_duplicate_response", "model_timeout", "model_500",
+        "provider_outage",
         "model_reask_alternate", "approval_delay", "approval_expiry", "model_stream_truncate",
     }
 )
@@ -113,10 +114,12 @@ HOOK_FAULT_TYPES = frozenset({"journal_unavailable", "blob_write_fail"})
 #: What the proxy can do to a request: what a network can. Not forward it, forward it and never
 #: answer, answer late, answer 5xx, answer garbage, close the socket — plus the OS signals the
 #: supervisor sends on its behalf. No model faults: model traffic does not cross it (§11.2).
-#: `tool_duplicate_response` is absent on purpose: HTTP/1.1 with `Connection: close` delivers one
-#: response per request, and the spec's own physical caveat (§11.5) says the late bytes reach the
-#: SUT only when the transport outlives the app-level timeout — a cell for a sync-tool variant
-#: that does not exist yet.
+#: `tool_duplicate_response` holds the first answer past the tool's timeout and writes it late, on
+#: its own socket, once the retry has been answered — HTTP/1.1 with `Connection: close` has one
+#: response per request, so "twice" means the abandoned attempt's answer arriving after the current
+#: one's. §11.5's physical caveat decides what it measures: the late bytes reach SUT code only when
+#: the transport outlives the app-level timeout — a thread-executed blocking call, as every Keel
+#: tool in the harness is (`World.acall`) — so it is scored where that holds.
 PROXY_FAULT_TYPES = frozenset(
     {
         "kill",
@@ -126,6 +129,7 @@ PROXY_FAULT_TYPES = frozenset(
         "tool_delay",
         "tool_dropped_response",
         "tool_malformed",
+        "tool_duplicate_response",
         "approval_delay",
         "approval_expiry",
         "kill_while_waiting",
@@ -176,6 +180,8 @@ FAULT_BOUNDARIES = {
     # wearing a different name, and the cell would measure a different thing (§11.5).
     "tool_dropped_response": {"after:tool_effect"},
     "tool_malformed": {"after:tool_effect"},
+    # Applied, answered, and the answer delivered late — after the timeout has abandoned its attempt.
+    "tool_duplicate_response": {"after:tool_effect"},
 }
 
 
