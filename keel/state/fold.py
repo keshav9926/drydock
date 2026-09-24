@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+
+from pydantic import AwareDatetime, TypeAdapter
 
 from keel.core.hashing import projection_hash as _hash
 from keel.events import Event
@@ -132,6 +135,22 @@ class ChildState:
     @property
     def terminal(self) -> bool:
         return self.state in ("COMPLETED", "FAILED", "CANCELLED")
+
+
+_DATETIME, _DURATION = TypeAdapter(AwareDatetime), TypeAdapter(timedelta)
+
+
+def deadline_of(budget: Mapping[str, Any] | None, created_ts: datetime) -> datetime | None:
+    """§16.4: `max_wall_clock` is not accumulated from step durations; it becomes an absolute deadline
+    once, at RUN_CREATED — the event's own timestamp, the store's clock — and from then on is the same
+    object as `deadline_at`. Derived here rather than written back, so every fold agrees on it."""
+    budget = budget or {}
+    found = []
+    if budget.get("deadline_at") is not None:
+        found.append(_DATETIME.validate_python(budget["deadline_at"]))
+    if budget.get("max_wall_clock") is not None:
+        found.append(created_ts + _DURATION.validate_python(budget["max_wall_clock"]))
+    return min(found) if found else None
 
 
 def usd_of(usage: Mapping[str, Any], price: Any) -> float:
@@ -270,6 +289,9 @@ class RunState:
     recovery_cause: dict[int, str] = field(default_factory=dict)
     recovery_open: bool = False
     budget: Mapping[str, Any] = field(default_factory=dict)
+    #: `Budget.deadline_at`, with `max_wall_clock` converted once at RUN_CREATED by the store's clock
+    #: (§16.4) — the earlier of the two. None: no deadline.
+    deadline_at: Any = None
     #: The current model binding — RUN_CREATED's, then each MODEL_BINDING_CHANGED (§16.7).
     model_config: dict[str, Any] = field(default_factory=dict)
     charged: Charged = field(default_factory=Charged)
@@ -393,6 +415,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         st.args = b.args
         st.context = _context.initial(b.args)
         st.budget = b.budget
+        st.deadline_at = deadline_of(b.budget, ev.ts)
         st.model_config = dict(b.model_config_)
         st.phase = "CREATED"
     elif t == "RECOVERY_STARTED":
@@ -476,6 +499,7 @@ def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, delib
         s = st.steps.get(b.step_index)
         if s is not None:
             s.state = CANCELLED
+            s.error = b.reason or s.error
             s.outcome_seq = ev.seq
             s.outcome_epoch = ev.lease_epoch
     elif t == "CHILD_SPAWNED":

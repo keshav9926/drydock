@@ -208,6 +208,9 @@ class StepCancelled(Body):
     step_index: int
     attempt_no: int | None = None
     forced_by: str | None = None
+    #: Why, when it was not a cancel: `DeadlineExceeded` for a wait woken past the run's deadline
+    #: (§16.4), which replays as that failure rather than as `Cancelled`.
+    reason: str | None = None
 
 
 # --- delegation (§4.11, §7.6, §17) ------------------------------------------------

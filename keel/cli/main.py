@@ -199,6 +199,8 @@ def show(
             f"{of('max_model_calls')} · tool calls {c['tool_calls']}{of('max_tool_calls')} · "
             f"usd {c['usd']:.6f}{of('max_usd')} ({view.pricing_ref or 'no price table'})"
         )
+        if view.deadline_at is not None:
+            out.print(f"deadline_at: {view.deadline_at.isoformat()}")
         if not c["usd_priced"]:
             # §16.4: loudly, rather than a guessed number inside an S9 claim.
             out.print(

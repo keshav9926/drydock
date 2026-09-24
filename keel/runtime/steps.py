@@ -17,7 +17,16 @@ from typing import Any
 from uuid import UUID
 
 from keel.core.clock import SystemClock
-from keel.core.errors import Cancelled, ContractInvalid, Fenced, KeelError, StepFailed, Rejected, UnknownOutcome
+from keel.core.errors import (
+    Cancelled,
+    ContractInvalid,
+    DeadlineExceeded,
+    Fenced,
+    KeelError,
+    Rejected,
+    StepFailed,
+    UnknownOutcome,
+)
 from keel.core.errors import StoreUnavailable, StreamTruncated
 from keel.core.hashing import canonical_json
 from keel.core.errors import ApprovalBindingError, NondeterminismDetected, WakeRaced
@@ -91,6 +100,7 @@ from keel.state.fold import (
     ChildState,
     RunState,
     SegmentState,
+    deadline_of,
     fold,
 )
 
@@ -110,6 +120,10 @@ PARK_BACKOFF_AFTER_S = 1.0
 #: step whose third attempt is found abandoned is not re-sent; it goes to a human like the live half.
 #: Three, §9.1's default `max_attempts` (section-local decision).
 MAX_ABANDONED_ATTEMPTS = 3
+
+#: The error a deadline leaves on the step and the run (§16.4): STEP_FAILED at a refused STARTED,
+#: STEP_CANCELLED's reason on a woken wait, RUN_FAILED either way.
+DEADLINE = "DeadlineExceeded"
 
 # A probe that cannot tell, distinguished from a step whose value happens to be None.
 _UNRESOLVED = object()
@@ -487,9 +501,11 @@ class StepEngine:
             await self._drain_inbox(intent.step_index, waiting=journaled, force=self._paused)
             journaled = self.state.step(intent.step_index) or journaled
             if journaled.settled:
-                if journaled.state == CANCELLED:
+                if journaled.state == CANCELLED and journaled.error != DEADLINE:
                     raise Cancelled(f"cancelled at step {intent.step_index}")
-                return _value_of(journaled)
+                return _value_of(journaled)  # a deadline's STEP_CANCELLED raises StepFailed{DeadlineExceeded}
+            if journaled.kind != "DELEGATE":
+                await self._close_at_deadline(intent, journaled)  # §16.4; a delegation cancels its subtree first
             if journaled.kind == "DELEGATE":
                 parked = await self._wait_children(intent, journaled)
             elif journaled.kind == "SLEEP":
@@ -594,22 +610,26 @@ class StepEngine:
         op, diff = intent.args["op"], intent.args["diff"]
         after = _plan.apply(self.state.plan, op, diff)
         hooks.at("before:intent_commit", **_where(intent))
-        async with self.journal.append(self.lease) as tx:
-            now = await tx.now()
-            intent_seq = await tx.append(_intended(intent))
-            started = await tx.append(
-                StepAttemptStarted(
-                    step_index=intent.step_index, attempt_no=1, lease_epoch=self.lease.epoch, started_at=now
-                ),
-                causation_seq=intent_seq,
-            )
-            updated = await tx.append(
-                PlanUpdated(op=op, diff=diff, step_index=intent.step_index), causation_seq=started
-            )
-            await tx.append(
-                StepCompleted(step_index=intent.step_index, attempt_no=1, result=_plan.plan_hash(after)),
-                causation_seq=updated,
-            )
+        try:
+            async with self.journal.append(self.lease) as tx:
+                now = await tx.now()
+                self._admit_deadline(now)
+                intent_seq = await tx.append(_intended(intent))
+                started = await tx.append(
+                    StepAttemptStarted(
+                        step_index=intent.step_index, attempt_no=1, lease_epoch=self.lease.epoch, started_at=now
+                    ),
+                    causation_seq=intent_seq,
+                )
+                updated = await tx.append(
+                    PlanUpdated(op=op, diff=diff, step_index=intent.step_index), causation_seq=started
+                )
+                await tx.append(
+                    StepCompleted(step_index=intent.step_index, attempt_no=1, result=_plan.plan_hash(after)),
+                    causation_seq=updated,
+                )
+        except DeadlineExceeded as exc:
+            await self._refuse(intent, exc)
         hooks.at("after:intent_commit", **_where(intent))
         hooks.at("after:attempt_commit", attempt_no=1, **_where(intent))
         # The engine's fold, advanced in place: the next PLAN step applies to this one's result.
@@ -633,11 +653,13 @@ class StepEngine:
         INTENT + STARTED + RUN_WAITING + release, together (§18.4)."""
         try:
             async with self.journal.append(self.lease) as tx:
-                now = await tx.now() if wake_in is not None or intent is not None else None
+                timed = wake_in is not None or intent is not None or self.state.deadline_at is not None
+                now = await tx.now() if timed else None
                 if wake_in is not None:
                     wake_at = now + timedelta(seconds=wake_in)
                 causation = None
                 if intent is not None:
+                    self._admit_deadline(now)  # a new wait writes a STARTED: the same admission
                     causation = await tx.append(_intended(intent))
                     await tx.append(
                         StepAttemptStarted(
@@ -648,11 +670,13 @@ class StepEngine:
                 await tx.append(
                     RunWaiting(reason=reason, wake_at=wake_at, step_index=step_index), causation_seq=causation
                 )
-                await tx.release_park(phase=phase, wake_at=wake_at)
+                await tx.release_park(phase=phase, wake_at=self._capped(wake_at, now))
         except WakeRaced:
             await self._refold()
             self._wake_pending = True
             return False
+        except DeadlineExceeded as exc:
+            await self._refuse(intent, exc)
         self.state.wake_at = wake_at
         return True
 
@@ -797,6 +821,50 @@ class StepEngine:
             outcome="LIVE",
         )
 
+    # --- deadlines (§16.4) -------------------------------------------------------
+    def _admit_deadline(self, now: datetime) -> None:
+        """The STARTED transaction's `WHERE now() < deadline_at`: raised inside it, so the attempt is
+        rolled back with everything it opened, and the caller commits the refusal instead."""
+        if self._past_deadline(now):
+            raise DeadlineExceeded(DEADLINE)  # the error a parent's CHILD_FAILED and a program match on
+
+    def _past_deadline(self, now: datetime) -> bool:
+        return self.state.deadline_at is not None and now >= self.state.deadline_at
+
+    async def _deadline_passed(self) -> bool:
+        if self.state.deadline_at is None:
+            return False
+        async with self.journal.append(self.lease) as tx:  # the fence alone: the store's clock
+            return self._past_deadline(await tx.now())
+
+    def _capped(self, wake_at: Any, now: datetime | None) -> Any:
+        """`runs.wake_at = least(wake_at, deadline_at)` for a waiting run (§16.4) — the runs row only;
+        RUN_WAITING keeps the step's own `wake_at`, or a sleep would complete at the deadline instead
+        of failing. Once the deadline has passed the park is the deadline's own consequence (a
+        subtree's cancel grace) and is not capped, or it would wake in the past for ever."""
+        deadline = self.state.deadline_at
+        if deadline is None or now is None or now >= deadline:
+            return wake_at
+        return deadline if wake_at is None else min(wake_at, deadline)
+
+    async def _close_at_deadline(self, intent: StepIntent, journaled: Any) -> None:
+        """A run woken past its deadline while waiting: STEP_CANCELLED for the open waiting step, then
+        RUN_FAILED{DeadlineExceeded} from the worker (§16.4). Returns if the deadline has not passed.
+        Delegation is not here: its subtree is cancelled first, by `_wait_children` (§17.7)."""
+        if self.state.deadline_at is None:
+            return
+        async with self.journal.append(self.lease) as tx:
+            now = await tx.now()
+            if not self._past_deadline(now):
+                return
+            seq = await tx.append(
+                StepCancelled(step_index=intent.step_index, attempt_no=journaled.attempts or 1, reason=DEADLINE)
+            )
+            await tx.set_run(phase="RUNNING", wake_at=None)
+        step = self.state.step(intent.step_index) or journaled
+        step.state, step.error, step.outcome_seq, step.outcome_epoch = CANCELLED, DEADLINE, seq, self.lease.epoch
+        raise StepFailed(intent.step_index, DEADLINE, retryable=False)
+
     async def _reserve(self, intent: StepIntent) -> Reservation:
         """What this attempt could cost, computed before the barrier so a refusal costs nothing."""
         if intent.kind is StepKind.TOOL:
@@ -811,15 +879,18 @@ class StepEngine:
         )
         return reserve_model(await self.provider.count_tokens(req), req.max_tokens, price)
 
-    async def _refuse(self, intent: StepIntent, exc: Exception, *, first: bool = True) -> None:
+    async def _refuse(self, intent: StepIntent, exc: Exception, *, first: bool = True, close: Any = None) -> None:
         """A pre-dispatch refusal: attempt_no 0, never retryable, no attempt and so no bill.
 
         The step's INTENT commits with the refusal when this is the step's first pass, so the
         journal folds — a STEP_FAILED with no STEP_INTENDED before it is a step the projection
-        cannot place. A re-attempt already has its intent and appends only the refusal.
+        cannot place. A re-attempt already has its intent and appends only the refusal, after the
+        closure of an abandoned attempt when there is one (`close`, §8.3).
         """
         async with self.journal.append(self.lease) as tx:
             intent_seq = await tx.append(_intended(intent)) if first else None
+            if close is not None:
+                await tx.append(close)
             await tx.append(
                 StepFailedEvent(
                     step_index=intent.step_index, attempt_no=0, error=str(exc), retryable=False
@@ -850,6 +921,7 @@ class StepEngine:
             try:
                 async with self.journal.append(self.lease) as tx:
                     now = await tx.now()
+                    self._admit_deadline(now)
                     # `0` is a deadline that is already due, not the absence of one.
                     expires_at = now + timedelta(seconds=float(expires_in)) if expires_in is not None else None
                     intent_seq = await tx.append(_intended(intent))
@@ -876,11 +948,13 @@ class StepEngine:
                         RunWaiting(reason="approval", wake_at=expires_at, step_index=intent.step_index),
                         causation_seq=intent_seq,
                     )
-                    await tx.release_park(phase="WAITING_APPROVAL", wake_at=expires_at)
+                    await tx.release_park(phase="WAITING_APPROVAL", wake_at=self._capped(expires_at, now))
                 break
             except WakeRaced:
                 await self._refold()
                 await self._drain_inbox(intent.step_index, force=True)
+            except DeadlineExceeded as exc:
+                await self._refuse(intent, exc)
         # After the commit, as on every other live path: a fault at `after:intent_commit` means
         # the intent is durable, and one fired inside the transaction would have rolled it back.
         hooks.at("after:intent_commit", **_where(intent))
@@ -978,6 +1052,13 @@ class StepEngine:
             )
             for c in contracts:
                 self._child_version(c.program)  # an unknown child program is a contract error
+            if self.state.deadline_at is not None and any(c.deadline_s is not None for c in contracts):
+                async with self.journal.append(self.lease) as tx:  # the fence alone: the store's clock
+                    now = await tx.now()
+                late = [i for i, c in enumerate(contracts)
+                        if c.deadline_s is not None and now + timedelta(seconds=c.deadline_s) > self.state.deadline_at]
+                if late:
+                    raise ContractInvalid(f"contract {late[0]}: deadline_s ends after the parent's deadline_at (§17.2)")
         except ContractInvalid as exc:
             await self._refuse(intent, exc)
         hooks.at("before:intent_commit", **_where(intent))
@@ -986,6 +1067,7 @@ class StepEngine:
             try:
                 async with self.journal.append(self.lease) as tx:
                     now = await tx.now()
+                    self._admit_deadline(now)
                     intent_seq = await tx.append(_intended(intent))
                     await tx.append(
                         StepAttemptStarted(
@@ -1003,8 +1085,10 @@ class StepEngine:
                         RunWaiting(reason="children", wake_at=None, step_index=intent.step_index),
                         causation_seq=intent_seq,
                     )
-                    await tx.release_park(phase="WAITING_CHILDREN", wake_at=None)
+                    await tx.release_park(phase="WAITING_CHILDREN", wake_at=self._capped(None, now))
                 break
+            except DeadlineExceeded as exc:
+                await self._refuse(intent, exc)
             except WakeRaced:
                 # Nothing of the spawn committed — no child exists — but `_spawn_one` advanced the
                 # in-memory fold. Re-read it, drain what raced, and spawn again.
@@ -1025,6 +1109,17 @@ class StepEngine:
         journaled = contract.as_journaled()
         version = self._child_version(contract.program)
         slice_ = dict(contract.budget_slice)
+        # §16.4: `child.deadline_at = least(contract deadline, parent.deadline_at)`, on the child's own
+        # budget. The parent's ledger reserves the slice as the contract states it.
+        birth = dict(slice_)
+        now = await tx.now()
+        found = [d for d in (
+            deadline_of(slice_, now),
+            now + timedelta(seconds=contract.deadline_s) if contract.deadline_s is not None else None,
+            self.state.deadline_at,
+        ) if d is not None]
+        if found:
+            birth["deadline_at"] = min(found).isoformat()
         seq = await tx.append(
             ChildSpawned(
                 step_index=step_index,
@@ -1052,7 +1147,7 @@ class StepEngine:
                 phase="CREATED",
                 trace_id=self.lease.trace_id,
                 args=args,
-                budget=slice_,
+                budget=birth,
                 model_config=dict(self.model_config),
                 parent_run_id=self.lease.run_id,
             ),
@@ -1060,7 +1155,7 @@ class StepEngine:
                 program=contract.program,
                 program_version=version,
                 args=args,
-                budget=slice_,
+                budget=birth,
                 model_config=dict(self.model_config),
                 parent_run_id=self.lease.run_id,
                 delegation_id=did,
@@ -1153,6 +1248,7 @@ class StepEngine:
                 and not self._fatal(child.step_index)
                 and child.retry_no < int(contract.get("max_retries") or 0)
                 and self._admit_slice(child.budget_reserved)
+                and not self._past_deadline(await tx.now())
             )
             applied = "retry" if can_retry else ("escalate" if policy == "retry" else policy)
             out_seq = await tx.append(
@@ -1216,6 +1312,8 @@ class StepEngine:
         contracts = self._contracts_of(step_index)
         if contracts is None or self.state.cancel_acknowledged_at == step_index or self._fatal(step_index):
             return
+        if self._past_deadline(await tx.now()):
+            return  # §16.4: nothing new is started past the deadline
         spawned = {c.child_ordinal for c in self.state.children_of(step_index)}
         in_flight = sum(1 for c in self.state.children_of(step_index) if not c.terminal)
         for ordinal in range(len(contracts)):
@@ -1239,9 +1337,10 @@ class StepEngine:
         latest = self._latest_children(step_index)
         if not latest or not all(c.terminal for c in latest):
             return None
+        late = self._past_deadline(await tx.now())
         if (
             contracts is not None and len(latest) < len(contracts)
-            and self.state.cancel_acknowledged_at != step_index and not self._fatal(step_index)
+            and self.state.cancel_acknowledged_at != step_index and not self._fatal(step_index) and not late
         ):
             return None  # ordinals still waiting for a slot
         if self.state.cancel_acknowledged_at == step_index:
@@ -1258,6 +1357,11 @@ class StepEngine:
                 StepFailedEvent(step_index=step_index, attempt_no=1, error=error, retryable=False)
             )
             step.state, step.error, step.retryable = FAILED, error, False
+        elif late:
+            # §16.4: the subtree is terminal and the deadline has passed — the waiting step closes
+            # cancelled, and the worker's RUN_FAILED{DeadlineExceeded} follows (S8: children first).
+            seq = await tx.append(StepCancelled(step_index=step_index, attempt_no=1, reason=DEADLINE))
+            step.state, step.error = CANCELLED, DEADLINE
         else:
             result = [_child_result(c) for c in latest]
             seq = await tx.append(StepCompleted(step_index=step_index, attempt_no=1, result=result))
@@ -1278,6 +1382,12 @@ class StepEngine:
         """
         i = intent.step_index
         stopping = self.state.cancel_acknowledged_at == i or self._fatal(i)
+        if not stopping and await self._deadline_passed():
+            # §16.4/§17.7: a parent woken past its deadline cancels its subtree first, then fails.
+            # Keyed on the step's intent, so a later epoch's re-insert is the same row.
+            async with self.journal.append(self.lease) as tx:
+                await self._cancel_open_children(tx, i, causation_seq=journaled.intent_seq, reason="deadline")
+            stopping = True
         if stopping:
             forced = False
             for c in [c for c in self.state.children_of(i) if not c.terminal]:
@@ -1381,48 +1491,52 @@ class StepEngine:
         except BudgetExceeded as exc:
             await self._refuse(intent, exc)
         hooks.at("before:intent_commit", **_where(intent))
-        async with self.journal.append(self.lease) as tx:
-            intent_seq = await tx.append(_intended(intent))
-            now = await tx.now()
-            started_local = self._worker_now()
-            deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
-            if intent.kind is StepKind.TOOL:
-                await tx.write_effect(
-                    EffectRow(
-                        effect_key=intent.effect_key or "",
-                        run_id=self.lease.run_id,
-                        run_root_id=self.run_root_id,
-                        step_index=intent.step_index,
-                        tool=intent.name,
-                        effect_class=str(eff_class),
-                        status="INTENDED",
-                        intent_seq=intent_seq,
-                        modifiers=tuple(str(m) for m in intent.modifiers),
+        try:
+            async with self.journal.append(self.lease) as tx:
+                intent_seq = await tx.append(_intended(intent))
+                now = await tx.now()
+                self._admit_deadline(now)
+                started_local = self._worker_now()
+                deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
+                if intent.kind is StepKind.TOOL:
+                    await tx.write_effect(
+                        EffectRow(
+                            effect_key=intent.effect_key or "",
+                            run_id=self.lease.run_id,
+                            run_root_id=self.run_root_id,
+                            step_index=intent.step_index,
+                            tool=intent.name,
+                            effect_class=str(eff_class),
+                            status="INTENDED",
+                            intent_seq=intent_seq,
+                            modifiers=tuple(str(m) for m in intent.modifiers),
+                        )
                     )
+                started_seq = await tx.append(
+                    StepAttemptStarted(
+                        step_index=intent.step_index,
+                        attempt_no=1,
+                        lease_epoch=self.lease.epoch,
+                        started_at=now,
+                        attempt_deadline=deadline,
+                        reservation=reservation.tokens or None,
+                        price=reservation.price,
+                        reservation_usd=reservation.usd,
+                    ),
+                    causation_seq=intent_seq,
                 )
-            started_seq = await tx.append(
-                StepAttemptStarted(
-                    step_index=intent.step_index,
-                    attempt_no=1,
-                    lease_epoch=self.lease.epoch,
-                    started_at=now,
-                    attempt_deadline=deadline,
-                    reservation=reservation.tokens or None,
-                    price=reservation.price,
-                    reservation_usd=reservation.usd,
-                ),
-                causation_seq=intent_seq,
-            )
-            if intent.kind is StepKind.TOOL:
-                await tx.update_effect(
-                    intent.effect_key or "",
-                    status="STARTED",
-                    started_seq=started_seq,
-                    attempt_no=1,
-                    attempt_deadline=deadline,
-                )
-            if deadline is not None:
-                await tx.set_run(attempt_deadline=deadline)
+                if intent.kind is StepKind.TOOL:
+                    await tx.update_effect(
+                        intent.effect_key or "",
+                        status="STARTED",
+                        started_seq=started_seq,
+                        attempt_no=1,
+                        attempt_deadline=deadline,
+                    )
+                if deadline is not None:
+                    await tx.set_run(attempt_deadline=deadline)
+        except DeadlineExceeded as exc:
+            await self._refuse(intent, exc)
         # INTENT and the first STARTED share one transaction, so both boundaries close together.
         # A crash *between* them is unreachable by construction, and that is exactly what the
         # INTENDED/RUNNING split in the recovery table relies on — the two names exist so a spec
@@ -1454,36 +1568,41 @@ class StepEngine:
         try:
             admit(self.state.budget, self.state.charged, reservation)
         except BudgetExceeded as exc:
-            await self._refuse(intent, exc, first=False)
+            # With the abandoned attempt's closure: without it attempt n would stay open for ever.
+            await self._refuse(intent, exc, first=False, close=close)
         hooks.at("before:attempt_commit", attempt_no=attempt_no, **_where(intent))
-        async with self.journal.append(self.lease) as tx:
-            if close is not None:
-                await tx.append(close)
-            now = await tx.now()
-            started_local = self._worker_now()
-            deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
-            started_seq = await tx.append(
-                StepAttemptStarted(
-                    step_index=intent.step_index,
-                    attempt_no=attempt_no,
-                    lease_epoch=self.lease.epoch,
-                    started_at=now,
-                    attempt_deadline=deadline,
-                    reservation=reservation.tokens or None,
-                    price=reservation.price,
-                    reservation_usd=reservation.usd,
+        try:
+            async with self.journal.append(self.lease) as tx:
+                if close is not None:
+                    await tx.append(close)
+                now = await tx.now()
+                self._admit_deadline(now)
+                started_local = self._worker_now()
+                deadline = now + timedelta(seconds=timeout) if eff_class and eff_class != EffectClass.PURE else None
+                started_seq = await tx.append(
+                    StepAttemptStarted(
+                        step_index=intent.step_index,
+                        attempt_no=attempt_no,
+                        lease_epoch=self.lease.epoch,
+                        started_at=now,
+                        attempt_deadline=deadline,
+                        reservation=reservation.tokens or None,
+                        price=reservation.price,
+                        reservation_usd=reservation.usd,
+                    )
                 )
-            )
-            if intent.kind is StepKind.TOOL:
-                await tx.update_effect(
-                    intent.effect_key or "",
-                    status="STARTED",
-                    started_seq=started_seq,
-                    attempt_no=attempt_no,
-                    attempt_deadline=deadline,
-                )
-            if deadline is not None:
-                await tx.set_run(attempt_deadline=deadline)
+                if intent.kind is StepKind.TOOL:
+                    await tx.update_effect(
+                        intent.effect_key or "",
+                        status="STARTED",
+                        started_seq=started_seq,
+                        attempt_no=attempt_no,
+                        attempt_deadline=deadline,
+                    )
+                if deadline is not None:
+                    await tx.set_run(attempt_deadline=deadline)
+        except DeadlineExceeded as exc:
+            await self._refuse(intent, exc, first=False, close=close)
         if attempt_no == 1:  # a recovered INTENT with no STARTED; a live one starts in `_live`
             self._first_started[intent.step_index] = now
         # A re-attempt writes no INTENT — the step already has one — so only the attempt boundary
@@ -1697,6 +1816,8 @@ class StepEngine:
             await self._drain_inbox(intent.step_index, force=self._paused)
             async with self.journal.append(self.lease) as tx:  # the fence alone: a heartbeat
                 now = await tx.now()
+            if self._past_deadline(now):
+                await self._refuse(intent, DeadlineExceeded(DEADLINE), first=False)
             wake_at = max(due, now + timedelta(seconds=self._breaker_wait_s(intent)))
             if now >= wake_at:
                 return await self._start_attempt(intent, attempt_no + 1)

@@ -43,7 +43,7 @@ from crashproof.faults import spec as fault_spec
 from crashproof.verifier import invariants
 from crashproof.world import oracle
 from crashproof.world.services import Endpoint, World
-from keel import Continue, Keel
+from keel import Budget, Continue, Keel
 from keel.client import program
 from keel.core import aio
 from keel.core.clock import FakeClock
@@ -399,6 +399,7 @@ class Sim:
         model_retry: str = "none",
         segment_steps: int = 400,
         policy: str = "none",
+        wall_clock: float | None = None,
     ) -> None:
         self.decls = {t.name: t for t in tools}
         self.script = script
@@ -452,7 +453,9 @@ class Sim:
         #: What the provider produced per run, streamed or not, landed to anyone (S9).
         self.billed: Counter[Any] = Counter()
         hooks.install(self._hook)
-        handle = self.loop.run_until_complete(self.keel.start(sim_agent, {"script": script}))
+        # §16.4: a wall-clock budget, so a deadline can land on a wait, a backoff, a subtree or a crash.
+        budget = Budget(max_wall_clock=timedelta(seconds=wall_clock)) if wall_clock is not None else None
+        handle = self.loop.run_until_complete(self.keel.start(sim_agent, {"script": script}, budget=budget))
         self.root = handle.run_id
 
     # --- plug-ins the runtime takes ---------------------------------------------------------

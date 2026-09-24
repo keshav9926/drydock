@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -33,6 +33,10 @@ class Budget(BaseModel):
     max_usd: float | None = None
     max_model_calls: int | None = None
     max_tool_calls: int | None = None
+    #: Wall clock from RUN_CREATED, parked time included — a run waiting three days on an approval
+    #: burns none of the other dimensions and all of this one (§16.4). Converted to an absolute
+    #: deadline once, by the store's clock; the earlier of it and `deadline_at` is the run's deadline.
+    max_wall_clock: timedelta | None = None
     deadline_at: datetime | None = None
     on_exceed: str = "fail"
 

@@ -60,6 +60,8 @@ class RunView:
     budget: dict[str, Any] = field(default_factory=dict)
     charged: dict[str, Any] = field(default_factory=dict)
     pricing_ref: str | None = None
+    #: The run's deadline: `deadline_at`, or RUN_CREATED + `max_wall_clock`, whichever is earlier.
+    deadline_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -131,6 +133,7 @@ def run_view(row: RunRow, state: RunState, now: datetime, effects: list[EffectRo
             "usd_priced": state.charged.usd_priced,
         },
         pricing_ref=(row.model_config or {}).get("pricing_ref"),
+        deadline_at=state.deadline_at,
     )
 
 

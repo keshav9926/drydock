@@ -1047,15 +1047,25 @@ page alone gives outreach a link), the `Sandbox` git snapshot/restore (first in 
 per-epoch checkout stays) and `keel watch` (`keel events --follow` shows the same BEFORE CRASH /
 AFTER RESTART split, in the event stream where it already lives).
 
+**Built since the `v1` tag** (none of it changes a published row — the release matrix ran at
+`251e52d`):
+
+- The crash-open half of `key_window_expired` (§9.1) and `RetryPolicy.max_elapsed_s` (§9.7) —
+  [above](#kill-criteria-at-the-release), under K6.
+- `max_usd` (§16.4): reserve-then-settle in dollars at the rate each MODEL attempt journals from a
+  price table pinned at RUN_CREATED (`keel/providers/pricing.py`); an unpriced binding is a gap
+  `keel show` prints, not a guess. The one table holds a fixture rate for the scripted provider —
+  no real provider ships with Keel yet.
+- Deadlines (§16.4, §17.7): `Budget.deadline_at` and `max_wall_clock` (converted once at
+  RUN_CREATED, by the store's clock) refuse a STARTED past the deadline, cap every park's `wake_at`,
+  and close a wait woken past it as `STEP_CANCELLED{DeadlineExceeded}` → RUN_FAILED — a subtree
+  cancelled and forced first. A contract's `deadline_s` becomes the child's `deadline_at =
+  least(contract, parent)`, and one ending after the parent's is refused. The state machine draws a
+  wall-clock budget; one 396-example run reached all three paths (42 refusals, 11 woken waits, 52
+  deadline failures). SUSPENDED and PAUSED runs are not woken by a deadline: both wait on a person.
+
 **Named, not built:**
 
-- `max_wall_clock` and `Budget.deadline_at` (phase 4): they need a deadline every waiting kind respects.
-  `max_usd` is built since the release, over a pinned price table (`keel/providers/pricing.py`) that
-  holds one fixture rate for the scripted provider — no real provider ships with Keel yet.
-- A delegation's `deadline_s` is journaled in the contract and not enforced by the parent: a child
-  that never reaches terminal leaves its parent in `WAITING_CHILDREN`, charged at the child's full
-  slice, until someone cancels it. The timer → cancel → takeover path that closes it is the one
-  parent-cancel already uses, and arrives with the first cell that measures it.
 - `keel signal --compensate STEP` and `Keel.compensate` (§25.2, v1): `--resolve` is built, and a
   compensating action is a second effect with its own class, which nothing here declares yet.
 - `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:

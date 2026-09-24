@@ -144,12 +144,13 @@ class KeelMachine(RuleBasedStateMachine):
 
     @initialize(tools=st.lists(TOOL, min_size=1, max_size=3), script=st.lists(OP, min_size=1, max_size=6),
                 retry=st.sampled_from(("none", "retry", "window")), model_retry=st.sampled_from(("none", "retry")),
-                segment_steps=st.sampled_from((400, 2)), policy=st.sampled_from(("none", "gate", "deny")))
+                segment_steps=st.sampled_from((400, 2)), policy=st.sampled_from(("none", "gate", "deny")),
+                wall_clock=st.sampled_from((None, 45.0)))
     def start(self, tools: list[ToolDecl], script: list[dict[str, Any]], retry: str, model_retry: str,
-              segment_steps: int, policy: str) -> None:
+              segment_steps: int, policy: str, wall_clock: float | None) -> None:
         tools = [replace(t, name=f"t{i}") for i, t in enumerate(tools)]
         self.sim = Sim(tools, resolve(tools, script, policy), retry=retry, model_retry=model_retry,
-                       segment_steps=segment_steps, policy=policy)
+                       segment_steps=segment_steps, policy=policy, wall_clock=wall_clock)
 
     # --- the workload progressing ---------------------------------------------------------------
     @precondition(lambda self: any(h.worker.state == "live" for h in self.sim.completable()))
