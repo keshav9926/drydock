@@ -163,10 +163,7 @@ class Worker:
             # that can read it. A release, not a non-acquisition, and with a backoff: without it this
             # worker's claim loop re-pops the run and spins for the whole deploy window, each turn a new
             # epoch and a `recoveries` row that is not a recovery. Nothing is journaled.
-            now = self.clock.now() if self.clock is not None else datetime.now(UTC)
-            await self._release(
-                lease, runnable_at=now + timedelta(seconds=SCHEMA_BACKOFF_S), runnable_reason=lease.cause
-            )
+            await self._release(lease, runnable_in=SCHEMA_BACKOFF_S, runnable_reason=lease.cause)
             await journal.set_recovery(lease.run_id, lease.epoch, outcome="RELEASED")
             return
         from_segment = next(

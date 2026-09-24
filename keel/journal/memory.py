@@ -410,13 +410,19 @@ class MemoryJournal:
         wake_at: datetime | None = None,
         phase: str | None = None,
         runnable_reason: str | None = None,
+        runnable_in: float | None = None,
     ) -> None:
         async with self._lock:
             run = self._runs.get(lease.run_id)
             if run is None or run.lease_epoch != lease.epoch or run.lease_expires_at is None:
                 return
+            now = self.clock.now()
             run.lease_expires_at = None
-            run.runnable_at = runnable_at
+            # Postgres' statement, mirrored: capped at the store's clock, a delay measured by it.
+            run.runnable_at = (
+                now + timedelta(seconds=runnable_in) if runnable_in is not None
+                else min(runnable_at, now) if runnable_at is not None else None
+            )
             run.runnable_reason = runnable_reason
             run.wake_at = wake_at
             if phase:

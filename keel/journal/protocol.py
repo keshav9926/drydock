@@ -327,7 +327,11 @@ class JournalBackend(Protocol):
         wake_at: datetime | None = None,
         phase: str | None = None,
         runnable_reason: str | None = None,
-    ) -> None: ...
+        runnable_in: float | None = None,
+    ) -> None:
+        """`runnable_at` is capped at the store's `now()` — the claim compares it with the store's clock,
+        so a worker clock running ahead cannot park a run by accident. A deliberate delay is
+        `runnable_in` seconds, measured by the store: `now() + interval` (§6.5's schema backoff)."""
 
     async def read(self, run_id: RunId, *, from_seq: int = 0) -> list[Event]: ...
 

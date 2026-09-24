@@ -565,16 +565,20 @@ class PostgresJournal:
         wake_at: datetime | None = None,
         phase: str | None = None,
         runnable_reason: str | None = None,
+        runnable_in: float | None = None,
     ) -> None:
         pool = await self._ready()
         async with pool.connection() as conn:
             await conn.execute(
-                # Capped at the store's clock for the same reason as `_insert_run`.
-                "UPDATE runs SET lease_expires_at = NULL, runnable_at = LEAST(%s::timestamptz, now()), wake_at = %s,"
+                # Capped at the store's clock for the same reason as `_insert_run`; a deliberate delay
+                # is the store's own `now() + interval`, never a worker's timestamp.
+                "UPDATE runs SET lease_expires_at = NULL,"
+                " runnable_at = CASE WHEN %s::float8 IS NOT NULL THEN now() + make_interval(secs => %s::float8)"
+                "                    ELSE LEAST(%s::timestamptz, now()) END, wake_at = %s,"
                 " phase = coalesce(%s, phase), runnable_reason = %s,"
                 " attempt_deadline = NULL, updated_at = now()"
                 " WHERE run_id = %s AND lease_epoch = %s AND lease_expires_at IS NOT NULL",
-                (runnable_at, wake_at, phase, runnable_reason, lease.run_id, lease.epoch),
+                (runnable_in, runnable_in, runnable_at, wake_at, phase, runnable_reason, lease.run_id, lease.epoch),
             )
             await conn.execute(
                 "UPDATE recoveries SET released_at = now() WHERE run_id = %s AND lease_epoch = %s",
