@@ -29,6 +29,16 @@ class StepKind(StrEnum):
     PLAN = "PLAN"
 
 
+#: `create_issue.compensate` is the TOOL step that runs `create_issue`'s compensate hook (§9.5).
+COMPENSATE = ".compensate"
+
+
+def capability(name: str) -> str:
+    """The capability a tool call needs: a compensating action needs its own tool's, so an undo is
+    allowed exactly where the effect it undoes was."""
+    return name.removesuffix(COMPENSATE)
+
+
 class EffectClass(StrEnum):
     """Exactly one per tool, mutually exclusive; the class alone decides retry, replay and
     recovery of the effect (§3)."""

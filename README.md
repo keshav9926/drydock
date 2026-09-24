@@ -1063,11 +1063,15 @@ AFTER RESTART split, in the event stream where it already lives).
   least(contract, parent)`, and one ending after the parent's is refused. The state machine draws a
   wall-clock budget; one 396-example run reached all three paths (42 refusals, 11 woken waits, 52
   deadline failures). SUSPENDED and PAUSED runs are not woken by a deadline: both wait on a person.
+- The compensate hook (§9.5), manual only: `@tool.compensate_hook` declares the undo and its own
+  effect class (EXTERNAL + `escalate` by default — an undo is a second effect); `ctx.compensate(i)`
+  runs it as a TOOL step of its own, `<tool>.compensate`, with its own key; an operator's
+  `keel signal RUN --compensate STEP` / `Keel.compensate` starts a compensation run instead of
+  injecting a step the program never issued ([cli-ledger](docs/cli-ledger.md)). Only an effect known
+  to have landed can be compensated, and Keel never calls a hook by itself.
 
 **Named, not built:**
 
-- `keel signal --compensate STEP` and `Keel.compensate` (§25.2, v1): `--resolve` is built, and a
-  compensating action is a second effect with its own class, which nothing here declares yet.
 - `tool_duplicate_response` (§27.7: week 2, proxy only). The proxy speaks HTTP/1.1 with `Connection:
   close`, one response per request, and §11.5's own caveat is that the late bytes reach the SUT only
   when the transport outlives the app-level timeout — a cell for a sync-tool variant that does not

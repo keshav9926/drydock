@@ -2571,6 +2571,8 @@ Secrets contract (binding): credentials are never step arguments, never inputs t
 
 `compensate` is a hook Keel exposes, not a saga engine: it runs only when the program calls `ctx.compensate(step_index)` or an operator runs `keel signal --compensate`, and it is journaled as a fresh TOOL step of its own with its own key.
 
+**As built** (section-local decisions, made when the hook was built after the v1 tag). The step is named `<tool>.compensate`, a tool the registry derives from the declaring one: its timeout and secrets, and its **own** effect class — EXTERNAL with `escalate` unless the author declares otherwise with `compensate_hook(effect=, idempotency=)`, because an undo is a second effect and an undeclared one gets the default an undeclared receiver gets. Its args are the committed effect's facts — `of_step`, `of_effect_key`, `args`, `result` — read from the journal, so the step's identity names what it undoes and a replay issues the same one. The hook is `async (effect_key, args, result[, tctx])`: the undone effect's key, args and result, and optionally the compensating step's own `ToolCtx`, whose `effect_key` is the one to present to the receiver. Only an effect known to have landed — COMPLETED, or RESOLVED_COMPLETED by a probe or a human — can be compensated; anything else is `ContractInvalid`. It is allowed wherever its tool is (`capability()`). The operator's path is a **compensation run** of the built-in program `keel.compensate`, not a signal into the run: a step that run's program never issued would make its journal unreplayable, and a terminal run has no holder left to drain one. `Keel.compensate` therefore returns the run's handle, not a `SignalId`.
+
 ### 9.6 Effect keys: derivation and stability
 
 ```

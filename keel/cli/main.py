@@ -24,7 +24,7 @@ from rich.table import Table
 
 from keel.client import Budget, Keel
 from keel.core import aio
-from keel.core.errors import KeelError
+from keel.core.errors import ContractInvalid, KeelError, UnknownTool
 from keel.events.schema import TERMINAL_TYPES
 from keel.state.fold import fold
 
@@ -570,6 +570,9 @@ def signal(
     ] = None,
     evidence: Annotated[str, typer.Option("--evidence", help="what the human saw; journaled")] = "",
     result: Annotated[str | None, typer.Option("--result", help="JSON the step returns (completed)")] = None,
+    compensate: Annotated[
+        int | None, typer.Option("--compensate", help="STEP: run its tool's compensate hook, manually")
+    ] = None,
     client_key: Annotated[str | None, typer.Option("--client-key")] = None,
     app_ref: Annotated[str | None, typer.Option("--app")] = None,
     dsn: Annotated[str | None, typer.Option("--dsn")] = None,
@@ -578,8 +581,24 @@ def signal(
 
     `--resolve STEP=completed|failed` is the human decision for a RESOLVED_UNKNOWN step: one
     `custom{kind: resolve_step}` row, which also lifts the suspension — no `keel resume` after it
-    (§7.2.1). `STEP=cancelled` is the ordinary cancel, closing that step with STEP_CANCELLED."""
+    (§7.2.1). `STEP=cancelled` is the ordinary cancel, closing that step with STEP_CANCELLED.
+
+    `--compensate STEP` undoes a committed effect with its tool's compensate hook (§9.5): a compensation
+    run of its own — the hook is never called by itself, and never inside the run whose effect it undoes."""
     keel = _load_app(app_ref, dsn)
+    if compensate is not None:
+
+        async def undo() -> None:
+            run_id = await _resolve(keel, run_ref)
+            try:
+                handle = await keel.compensate(run_id, compensate)
+            except (ContractInvalid, UnknownTool) as exc:
+                err.print(f"[red]not compensated: {exc}[/]")
+                raise typer.Exit(EXIT_ERROR) from exc
+            out.print(f"compensation of step {compensate} of {run_id}: run {handle.run_id}")
+
+        _run(undo())
+        return
     if resolve is None:
         _run(_send(keel, run_ref, type_, json.loads(payload), client_key))
         return

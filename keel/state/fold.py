@@ -14,6 +14,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, TypeAdapter
 
+from keel.core.errors import ContractInvalid
 from keel.core.hashing import projection_hash as _hash
 from keel.events import Event
 from keel.state import context as _context
@@ -403,6 +404,25 @@ def fold(events: list[Event]) -> RunState:
         _apply(st, ev)
         st.last_seq = ev.seq
     return st
+
+
+def committed_effect(events: list[Event], step_index: int) -> dict[str, Any]:
+    """What a compensating action undoes (§9.5): the TOOL effect at `step_index`, from the journal alone —
+    its tool, key, args and result. Only an effect known to have landed (COMPLETED, or RESOLVED_COMPLETED
+    by a probe or a human) can be compensated: undoing one that may never have happened is a new effect
+    with nothing to undo."""
+    step = fold(events).steps.get(step_index)
+    intended = next((e.body for e in events if e.type == "STEP_INTENDED" and e.body.step_index == step_index), None)
+    if step is None or intended is None or step.kind != "TOOL" or step.state not in (COMPLETED, RESOLVED_COMPLETED):
+        found = "nothing" if step is None else f"{step.kind} {step.name} {step.state}"
+        raise ContractInvalid(f"step {step_index} is not a committed TOOL effect ({found}); nothing to compensate")
+    return {
+        "tool": step.name,
+        "of_step": step_index,
+        "of_effect_key": step.effect_key,
+        "args": dict(intended.args or {}),
+        "result": step.result,
+    }
 
 
 def _apply(st: RunState, ev: Event) -> None:  # noqa: C901 - one dispatch, deliberately flat

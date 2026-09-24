@@ -13,13 +13,14 @@ from pydantic import BaseModel
 from keel.core.clock import Clock, SystemClock
 from keel.core.errors import KeelError
 from keel.core.ids import RunId, new_run_id
+from keel.core.protocols import COMPENSATE
 from keel.core.versions import KEEL_VERSION, code_hash, program_version
 from keel.effects.registry import ToolRegistry, ToolSpec  # registers StepExecutor(TOOL) (§23.2)
 from keel.events import Event, RunCreated
 from keel.journal.memory import MemoryJournal
 from keel.journal.protocol import JournalBackend, RunRow
 from keel.providers import pricing
-from keel.state.fold import fold
+from keel.state.fold import committed_effect, fold
 from keel.state.views import RunSummary, RunView, run_summary, run_view
 
 PROGRAMS: dict[str, "Program"] = {}
@@ -76,6 +77,14 @@ def program(
         return p
 
     return wrap
+
+
+@program(name="keel.compensate", version="1.0")
+async def compensation(ctx: Any, args: dict[str, Any]) -> Any:
+    """The operator half of the compensate hook (§9.5, §25.2): one TOOL step, `<tool>.compensate`, undoing
+    another run's committed effect — its facts are this run's args, so the step is replayable from them."""
+    facts = {k: args[k] for k in ("of_run", "of_step", "of_effect_key", "args", "result")}
+    return await ctx.tool(args["tool"] + COMPENSATE, **facts)
 
 
 @dataclass(slots=True)
@@ -138,6 +147,7 @@ class Keel:
         #: §20.5: `LocalSandbox(root)` gives LOCAL_FS tools a per-epoch workspace; None, no workspace.
         self.sandbox = sandbox
         self.programs: dict[str, Program] = {p.name: p for p in programs} or dict(PROGRAMS)
+        self.programs.setdefault(compensation.name, compensation)  # any worker can run an operator's undo
 
     # --- registration --------------------------------------------------------
     def register(self, p: Program) -> Program:
@@ -285,6 +295,16 @@ class Keel:
         return await self.signal(
             run_id, "reject", {"by": by, "reason": reason, "approval_id": str(approval_id)}, client_key=client_key
         )
+
+    async def compensate(self, run_id: RunId, step_index: int) -> RunHandle:
+        """An operator's compensation of a committed effect (§9.5; `keel signal RUN --compensate STEP`): a
+        compensation run whose one step is `<tool>.compensate`, with its own key. A run, not a signal into
+        `run_id` — a step that run's program never issued would make its journal unreplayable, and a
+        terminal run has no holder left to drain a signal. Refused (`ContractInvalid`) unless the step is
+        a committed TOOL effect; `UnknownTool` unless its tool declares a compensate hook."""
+        facts = committed_effect(await self.events(run_id), step_index)
+        self.tools.get(facts["tool"] + COMPENSATE)
+        return await self.start(compensation, {"of_run": str(run_id), **facts})
 
     async def rebind(self, run_id: RunId, model_config: dict[str, Any], *, client_key: str | None = None) -> bool:
         """Journaled as MODEL_BINDING_CHANGED at the drain; affects live MODEL steps only (§16.7)."""

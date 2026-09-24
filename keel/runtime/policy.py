@@ -30,7 +30,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from keel.core.protocols import EffectClass, StepIntent
+from keel.core.protocols import EffectClass, StepIntent, capability
 from keel.state import drift
 from keel.state.fold import RunState, _apply, fold
 
@@ -60,7 +60,7 @@ class StaticPolicy:
         self.stale_plan_after = stale_plan_after
 
     async def pre_step(self, intent: StepIntent, run: RunState) -> Verdict:
-        if self.allowed_tools is not None and intent.name not in self.allowed_tools:
+        if self.allowed_tools is not None and capability(intent.name) not in self.allowed_tools:
             return "deny"
         if intent.name in self.require_approval:
             return "require_approval"

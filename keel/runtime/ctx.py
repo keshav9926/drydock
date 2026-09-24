@@ -17,7 +17,7 @@ from keel.core.errors import ConcurrentStepError, UnknownTool
 from keel.core.hashing import args_hash as _args_hash
 from keel.core.hashing import effect_key as _effect_key
 from keel.core.hashing import request_hash as _request_hash
-from keel.core.protocols import Modifier, StepIntent, StepKind
+from keel.core.protocols import COMPENSATE, Modifier, StepIntent, StepKind, capability
 from keel.providers.protocol import Message, ModelRequest, ModelResponse
 from keel.runtime.delegation import ChildResult, Delegation, canonical
 from keel.runtime.policy import JournalView
@@ -25,6 +25,7 @@ from keel.runtime.segments import FORCED_SEGMENT_STEPS
 from keel.runtime.steps import StepEngine, _waits
 from keel.state import context as _context
 from keel.state import plan as _plan
+from keel.state.fold import committed_effect
 
 #: What a COMPACT step asks the model (§16.2). A constant, so a compaction's request — and its
 #: `request_hash` — is a function of the context alone, and VERIFY reports PromptDrift if it moves.
@@ -328,6 +329,14 @@ class Ctx:
             raise
         return [ChildResult.model_validate(r) for r in await self._run(intent)]
 
+    async def compensate(self, step_index: int) -> Any:
+        """Manual only (§9.5, §34): undo the committed effect at `step_index` with its tool's compensate
+        hook — a TOOL step of its own, `<tool>.compensate`, with its own key and its own effect class,
+        whose args are what it undoes. Keel never calls a hook by itself; this and `Keel.compensate` are
+        the only two ways in. The facts come from the journal, so a replay issues the same step."""
+        facts = committed_effect(await self._engine.journal.read(self.run_id), step_index)
+        return await self.tool(facts.pop("tool") + COMPENSATE, **facts)
+
     async def tool(self, name: str, /, **args: Any) -> Any:
         """TOOL step; identity = (TOOL, name, canonical-args hash).
 
@@ -387,7 +396,7 @@ class Ctx:
             return ("require_approval" if gate else "allow"), None
         if not self._engine.allow_live:
             return "allow", None
-        if self.allowed_tools is not None and name not in self.allowed_tools:
+        if self.allowed_tools is not None and capability(name) not in self.allowed_tools:
             return "deny", f"PolicyDenied: {name!r} is not in this run's allowed_tools"
         if self.policy is None:
             return "allow", None
