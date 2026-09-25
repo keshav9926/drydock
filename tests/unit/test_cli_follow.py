@@ -93,3 +93,22 @@ def test_a_terminal_phase_is_the_set_the_follower_stops_on(phase: str) -> None:
     from keel.events.schema import TERMINAL_TYPES
 
     assert f"RUN_{phase}" in TERMINAL_TYPES
+
+
+async def test_follow_as_jsonl_is_one_whole_document_a_line(capsys: pytest.CaptureFixture[str]) -> None:
+    """§25.1: `--json --follow` is JSONL, and machine output never goes through Rich, whose markup
+    would eat a `[...]` inside a string and whose wrapping would split a long one across lines."""
+    import json
+
+    class _Json(_Event):
+        def __init__(self, seq: int, kind: str) -> None:
+            super().__init__(seq, kind)
+            self.env = {"seq": seq, "type": kind}
+            self.body = {"detail": "[bold]kept[/bold] [y] " + "word " * 40}
+
+    journal = _Journal([_Json(16, "STEP_AMBIGUOUS"), _Json(17, "RUN_COMPLETED")])
+    keel = type("K", (), {"journal": journal})()
+    await cli._follow(keel, "run", from_seq=15, jsonl=True)
+    lines = capsys.readouterr().out.splitlines()
+    assert [json.loads(line)["env"]["seq"] for line in lines] == [16, 17]
+    assert json.loads(lines[0])["body"]["detail"] == "[bold]kept[/bold] [y] " + "word " * 40

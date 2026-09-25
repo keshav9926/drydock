@@ -83,7 +83,10 @@ async def _resolve(keel: Keel, run_ref: str) -> Any:
     return run_id
 
 
-def _dump(obj: Any) -> str:
+def _dump(obj: Any, *, indent: int | None = 2) -> str:
+    """Machine output, printed with `print` and never through Rich: its markup would eat a `[...]`
+    inside a string and its wrapping would break a long one across lines."""
+
     def enc(o: Any) -> Any:
         if dataclasses.is_dataclass(o) and not isinstance(o, type):
             return dataclasses.asdict(o)
@@ -91,7 +94,7 @@ def _dump(obj: Any) -> str:
             return o.model_dump(mode="json")
         return str(o)
 
-    return json.dumps(obj, indent=2, default=enc)
+    return json.dumps(obj, indent=indent, default=enc)
 
 
 # --- run ---------------------------------------------------------------------
@@ -121,13 +124,13 @@ def run(
             result = await handle.wait(timeout=300)
             _emit_result(handle.run_id, result.phase, json_out)
             return
-        out.print(str(handle.run_id)) if not json_out else out.print(_dump({"run_id": str(handle.run_id)}))
+        out.print(str(handle.run_id)) if not json_out else print(_dump({"run_id": str(handle.run_id)}))
 
     _run(go())
 
 
 def _emit_result(run_id: Any, phase: str, json_out: bool) -> None:
-    out.print(_dump({"run_id": str(run_id), "phase": phase}) if json_out else f"{run_id}  {phase}")
+    print(_dump({"run_id": str(run_id), "phase": phase}) if json_out else f"{run_id}  {phase}")
     if phase == "FAILED":
         raise typer.Exit(EXIT_FAILED)
     if phase in _NEEDS_HUMAN:
@@ -148,7 +151,7 @@ def runs(
     async def go() -> None:
         rows = await keel.runs(phase=phase, limit=limit)
         if json_out:
-            out.print(_dump(rows))
+            print(_dump(rows))
             return
         table = Table(box=None)
         for col in ("run", "program", "phase", "control", "epoch", "created"):
@@ -182,7 +185,7 @@ def show(
         view = await keel.get(run_id)
         recoveries = await keel.journal.recoveries(run_id)
         if json_out:
-            out.print(_dump({"view": view, "recoveries": recoveries}))
+            print(_dump({"view": view, "recoveries": recoveries}))
             return
         out.print(
             f"run [bold]{view.run_id}[/]  {view.program} {view.program_version}\n"
@@ -321,11 +324,18 @@ def events(
         run_id = await _resolve(keel, run_ref)
         evs = await keel.events(run_id, from_seq=from_seq)
         state = fold(await keel.events(run_id))
-        if json_out:
-            out.print(_dump([{"env": e.env, "body": e.body} for e in evs]))
-            return
         against = state.latest_epoch if epoch in (None, "all") else int(epoch)
         shown = evs if epoch in (None, "all") else [e for e in evs if e.lease_epoch == against]
+        if json_out and not follow:
+            print(_dump([{"env": e.env, "body": e.body} for e in shown]))
+            return
+        if json_out:
+            # §25.1: JSONL under --follow — one event a line, what is there and then what commits.
+            for e in shown:
+                print(_dump({"env": e.env, "body": e.body}, indent=None))
+            if state.phase not in ("COMPLETED", "FAILED", "CANCELLED"):
+                await _follow(keel, run_id, from_seq=evs[-1].seq if evs else from_seq, jsonl=True)
+            return
         out.print(
             f"run [bold]{run_id}[/]  {state.program} {state.program_version}  "
             f"phase={state.phase}  epochs={len(state.epochs)}"
@@ -355,7 +365,7 @@ def events(
     _run(go())
 
 
-async def _follow(keel: Any, run_id: Any, *, from_seq: int) -> None:
+async def _follow(keel: Any, run_id: Any, *, from_seq: int, jsonl: bool = False) -> None:
     """`--follow`: the journal as it is written, until the run reaches a terminal state.
 
     This is §28.7's stated substitute for the `keel watch` TUI, and it is a substitute rather than
@@ -367,16 +377,21 @@ async def _follow(keel: Any, run_id: Any, *, from_seq: int) -> None:
     The poll is the journal's (1 s; LISTEN/NOTIFY is v1), so a follower never sees an event the
     store has not committed.
     """
-    out.print("[dim]— following; ctrl-c to stop —[/]")
+    if not jsonl:
+        out.print("[dim]— following; ctrl-c to stop —[/]")
     with contextlib.suppress(KeyboardInterrupt, asyncio.CancelledError):
         async for e in keel.journal.tail(run_id, from_seq=from_seq):
-            si = e.step_index
-            out.print(
-                f"{e.seq:>4} {e.lease_epoch:>3}  {e.type:<24}"
-                f" {'-' if si is None else si:>3}  {_detail(e)}"
-            )
+            if jsonl:
+                print(_dump({"env": e.env, "body": e.body}, indent=None), flush=True)
+            else:
+                si = e.step_index
+                out.print(
+                    f"{e.seq:>4} {e.lease_epoch:>3}  {e.type:<24}"
+                    f" {'-' if si is None else si:>3}  {_detail(e)}"
+                )
             if e.type in TERMINAL_TYPES:
-                out.print(f"[dim]— {e.type}; nothing further will be appended —[/]")
+                if not jsonl:
+                    out.print(f"[dim]— {e.type}; nothing further will be appended —[/]")
                 return
 
 
@@ -434,7 +449,7 @@ def steps(
     async def go() -> None:
         view = await keel.get(await _resolve(keel, run_ref))
         if json_out:
-            out.print(_dump(view.steps))
+            print(_dump(view.steps))
             return
         table = Table(box=None)
         for col in ("i", "kind", "name", "state", "att", "class", "effect_key", "origin"):
@@ -464,7 +479,7 @@ def effects(
         if ambiguous:
             rows = [r for r in rows if r.status in ("AMBIGUOUS", "RESOLVED_UNKNOWN")]
         if json_out:
-            out.print(_dump(rows))
+            print(_dump(rows))
             return
         table = Table(box=None)
         for col in ("step", "tool", "class", "status", "resolution", "external_ref", "effect_key"):
@@ -495,7 +510,7 @@ def state(
         if at is not None:
             evs = [e for e in evs if e.seq <= at]
         st = fold(evs)
-        out.print(_dump({
+        print(_dump({
             "phase": st.phase,
             "last_seq": st.last_seq,
             "projection_hash": st.projection_hash(),
@@ -738,7 +753,7 @@ def replay(
             requested_by="cli",
         )
         if json_out:
-            out.print(_dump(result.as_dict()))
+            print(_dump(result.as_dict()))
         else:
             colour = "green" if result.ok else "red"
             out.print(f"[{colour}]{result.status}[/]  run {run_id}  replayed {result.replayed_steps} steps")
@@ -789,7 +804,7 @@ def diff(
         a, b = fold(await keel.events(a_id)), fold(await keel.events(b_id))
         rows = diff_projections(a, b)
         if json_out:
-            out.print(_dump({"a": str(a_id), "b": str(b_id), "same": not rows, "diff": rows}))
+            print(_dump({"a": str(a_id), "b": str(b_id), "same": not rows, "diff": rows}))
             return
         ha, hb = logical_projection_hash(a), logical_projection_hash(b)
         out.print(f"A {a_id}  {ha[:16]}")
@@ -873,7 +888,7 @@ def reap(
 
     async def go() -> None:
         orphaned = await keel.journal.reap()
-        out.print(_dump([str(r) for r in orphaned]))
+        print(_dump([str(r) for r in orphaned]))
 
     _run(go())
 

@@ -4,19 +4,19 @@
       "endpoint": "kv.search",
       "effect_key": null,
       "logical_identity": "kv.search#1",
-      "ts": 1789263200.6617298
+      "ts": 1790336480.8055236
     },
     {
       "endpoint": "issues.create",
       "effect_key": null,
       "logical_identity": "issues.create#1",
-      "ts": 1789263200.891802
+      "ts": 1790336481.0462387
     },
     {
       "endpoint": "issues.create",
       "effect_key": null,
       "logical_identity": "issues.create#1",
-      "ts": 1789263203.1394768
+      "ts": 1790336484.087663
     }
   ],
   "world_applied": {
@@ -45,9 +45,9 @@
       "landmark": "tool:create_issue",
       "occurrence": 1,
       "params": {},
-      "trigger_observed_at": 1789263200.8991418,
-      "trigger_observed_mono_ns": 334728179626600,
-      "sut_pid": 11396,
+      "trigger_observed_at": 1790336481.0549827,
+      "trigger_observed_mono_ns": 196618719344000,
+      "sut_pid": 7816,
       "sut_ref": {},
       "executed": true
     }
@@ -57,5 +57,51 @@
   "timed_out": false,
   "reached_terminal": true,
   "replay": null,
-  "sut_effects": null
+  "sut_effects": null,
+  "gated_tools": {},
+  "sut_checkpoints": [
+    {
+      "checkpoint_id": "1f1b8d60-7079-6ec0-bfff-9dbffdb38302",
+      "ts": "2026-09-25T11:41:20.564782+00:00",
+      "step": -1,
+      "source": "input"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-7092-696f-8000-80438bc58f2f",
+      "ts": "2026-09-25T11:41:20.574878+00:00",
+      "step": 0,
+      "source": "loop"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-7231-6aa1-8001-c3dafe887ed9",
+      "ts": "2026-09-25T11:41:20.744888+00:00",
+      "step": 1,
+      "source": "loop"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-72f4-65a5-8002-9b5d89e4e393",
+      "ts": "2026-09-25T11:41:20.824638+00:00",
+      "step": 2,
+      "source": "loop"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-7434-65c7-8003-1952e65fb9ad",
+      "ts": "2026-09-25T11:41:20.955713+00:00",
+      "step": 3,
+      "source": "loop"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-9236-618a-8004-05ecac6a68a6",
+      "ts": "2026-09-25T11:41:24.102150+00:00",
+      "step": 4,
+      "source": "loop"
+    },
+    {
+      "checkpoint_id": "1f1b8d60-93be-6791-8005-744b77713fa5",
+      "ts": "2026-09-25T11:41:24.262868+00:00",
+      "step": 5,
+      "source": "loop"
+    }
+  ],
+  "sut_commits": null
 }

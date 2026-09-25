@@ -124,7 +124,7 @@ def world(
 
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(go())
-    out.print(json.dumps({"applied": w.applied_counts(), "receipts": w.receipt_counts()}))
+    print(json.dumps({"applied": w.applied_counts(), "receipts": w.receipt_counts()}))
 
 
 @app.command()
@@ -352,7 +352,7 @@ def report(
     target.write_text(page, encoding="utf8")
     err.print(f"wrote {target}  ({len(rows)} trials)")
     if mdd:
-        out.print(MDD_TABLES)
+        print(MDD_TABLES)
 
 
 @app.command()
@@ -642,7 +642,7 @@ def compare(
     result = run_compare(a_rows, b_rows, a_name=a, b_name=b, seed=seed)
     page = render(result, sources=[(results.as_posix(), a_rows + b_rows)])
     if out_path is None:
-        out.print(page)
+        print(page)
     else:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(page, encoding="utf8")
@@ -765,7 +765,7 @@ def agree(
         sources=list(by_dir.items()),
     )
     if out_path is None:
-        out.print(page)
+        print(page)
     else:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(page, encoding="utf8")

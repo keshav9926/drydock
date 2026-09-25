@@ -15,7 +15,7 @@ BEFORE CRASH
 [7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
 [8]  World receipt issues.create#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
 [9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
-     at the cut: journal not placeable: no sut_ref (the journal's clock is not the trigger's) · World's last receipt issues.create#1
+     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt issues.create#1
 
 ────────────────────────────────────────────────────────────────────────
 AFTER RESTART
@@ -35,7 +35,7 @@ AFTER RESTART
 THE POINT
 ────────────────────────────────────────────────────────────────────────
 [18] World: receipts(issues.create#1)=1  applied=1   ·  duplicate_effects=0  duplicate_receipts=0
-     verifier: S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ C1✓        (· = N/A, with the missing input named in the row)
+     verifier: S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ S6· S7· S8· C1✓ C2·        (· = N/A: an input the verdict needs is missing; `crashproof verify` names it)
 [19] replay --verify: 5 steps reproduced  · projection hash match
 [20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
 

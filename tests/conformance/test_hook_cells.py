@@ -150,9 +150,12 @@ HEARTBEAT_HOLD_MS = 600.0
 NOT_APPLICABLE: dict[tuple[str, str], str] = {
     ("before:attempt_commit", "crash"):
         "fires only for attempt >= 2; `tool_chain_1_effect` has no retryable first attempt and "
-        "`NO_RETRY` is the default policy, so the boundary is unreachable in this workload",
+        "`NO_RETRY` is the default policy, so the boundary is unreachable in this workload. "
+        "`KeelMachine` reaches it: its tools retry, its kills sample every boundary and its journal "
+        "faults every one beside a journal write, this one included, and S4/S10 are checked per "
+        "attempt after every rule",
     ("before:attempt_commit", "journal_error"):
-        "same: the boundary is unreachable in this workload",
+        "same: the boundary is unreachable in this workload, and `KeelMachine` reaches it",
     ("after:effect_exec", "raise"):
         "an ordinary exception here is indistinguishable from the tool's own, so the engine "
         "records STEP_FAILED and closes the very window the boundary exists to open. A fault that "
@@ -201,7 +204,12 @@ FAULTS: dict[str, tuple[str, ...]] = {
 #: nothing — the same "never omitted from the grid" rule the matrix follows (§15.11 rule 3).
 #: S9 is N/A outside the stream cells: the verifier has no budget form yet, so it is judged in its
 #: sim form (§12.4) where a chunk can move a charge, and nowhere it would be a free pass.
-JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "S9", "L1", "C1", "C2")
+#: S10 likewise, in its sim form — no receipt for a STARTED the journal refused — judged only where a
+#: `journal_error` refuses one (`STARTED_BOUNDARIES`) and N/A wherever no STARTED was refused.
+JUDGED = ("S1", "S3", "S4", "S5", "S7", "S8", "S9", "S10", "L1", "C1", "C2")
+#: The write-path boundaries whose transaction carries a STARTED: attempt 1's shares the intent's
+#: (the write-ahead barrier), attempt n's is its own.
+STARTED_BOUNDARIES = ("before:intent_commit", "before:attempt_commit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +406,12 @@ async def run_cell(cell: Cell) -> Result:
         )
         result.verdicts = {n: v for n, v in verdicts.as_dict().items() if n in JUDGED}
         result.details = {n: f.detail for n, f in verdicts.findings.items() if n in JUDGED}
+        # S10 (§12.4, sim form): the refused worker has stopped, so a receipt for the step under test
+        # here is an effect whose STARTED never became durable.
+        if result.fired and cell.fault == "journal_error" and cell.boundary in STARTED_BOUNDARIES:
+            world_then = result.window.split("/")[1]
+            result.verdicts["S10"] = "PASS" if world_then == "untouched" else "FAIL"
+            result.details["S10"] = f"World {world_then} when the worker whose STARTED was refused stopped"
         return result
     finally:
         demo.WORLD_URL = previous_url
@@ -1085,6 +1099,9 @@ def render() -> str:
         "C2 is N/A wherever the workload never crosses a continuation boundary. S9 is judged in its",
         "sim form (§12.4: Σ charged ≥ Σ provider-billed, abandoned attempts included) on the stream",
         "cells only — the one boundary where a chunk can move a charge — and is N/A elsewhere.",
+        "S10 is judged in its sim form (no receipt for a STARTED the journal refused) where a",
+        "`journal_error` refuses one: at `before:intent_commit`, whose transaction carries attempt 1's",
+        "STARTED. `before:attempt_commit` carries attempt n's and is unreachable in this workload.",
         "",
     ]
     return "\n".join(lines)

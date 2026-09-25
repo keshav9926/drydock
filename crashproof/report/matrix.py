@@ -29,7 +29,9 @@ from crashproof.verifier.invariants import (
     APPROVAL_INVARIANTS,
     CANCEL_INVARIANTS,
     CONSISTENCY_INVARIANTS,
+    DELEGATION_INVARIANTS,
     MVP_INVARIANTS,
+    SEGMENT_INVARIANTS,
 )
 
 #: §15.3's tier rule. Rows carry no `tier` field (§15.11 rule 1 lists one), so the seed decides:
@@ -133,7 +135,8 @@ def _summarise(cell_id: str, rows: list[dict[str, Any]]) -> CellSummary:
         return s
 
     # --- safety: a single violation is a FAIL, and it names itself -----------
-    for name in (*MVP_INVARIANTS, *CANCEL_INVARIANTS, *APPROVAL_INVARIANTS, *CONSISTENCY_INVARIANTS):
+    for name in (*MVP_INVARIANTS, *CANCEL_INVARIANTS, *APPROVAL_INVARIANTS, *DELEGATION_INVARIANTS,
+                 *CONSISTENCY_INVARIANTS, *SEGMENT_INVARIANTS):
         seen = [r["verdicts"].get(name, "N/A") for r in valid]
         if all(v == "N/A" for v in seen):
             s.verdicts[name] = "N/A"

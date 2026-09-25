@@ -25,19 +25,20 @@
     "lease_ttl_s": 2.0,
     "tool_timeout_s": 1.0,
     "heartbeat_s": 0.6666666666666666,
-    "retry": "max_attempts=3, backoff=exponential+jitter",
+    "retry": "tools max_attempts=3 base=1s cap=30s; model max_attempts=5 base=2s cap=60s; x2 full jitter; a wait of 1 s or more parks with the lease released (\u00a78)",
     "worker_count": 1,
     "pause_ms": 3000.0,
     "claim_poll_s": 0.2,
     "reaper_period_s": 0.2,
     "extra": {
       "model_timeout_s": 2.0,
-      "world_client_timeout_s": 5.0
+      "world_client_timeout_s": 5.0,
+      "breaker": "n_open=5, cooldown_s=30"
     }
   },
-  "started_at": 1789263133.4882543,
-  "ended_at": 1789263138.4525585,
-  "wall_ms": 4292.180776596069,
+  "started_at": 1790336433.9016225,
+  "ended_at": 1790336439.694643,
+  "wall_ms": 4590.986728668213,
   "status": "COMPLETED",
   "result": {
     "answer": "Created issue 6d9c0ecf83bb"
@@ -50,14 +51,18 @@
     "S5": "PASS",
     "L1": "PASS",
     "L2": "PASS",
-    "C1": "PASS"
+    "S6": "N/A",
+    "S7": "N/A",
+    "S8": "N/A",
+    "C1": "PASS",
+    "C2": "N/A"
   },
   "counterexamples": [],
   "metrics": {
     "recovery_rate": 1,
-    "recovery_detect_ms": 2388.4379999999996,
-    "recovery_latency_ms": 2420.684814453125,
-    "time_to_first_live_step_ms": 2398.3371257781982,
+    "recovery_detect_ms": 2203.22,
+    "recovery_latency_ms": 2193.8862800598145,
+    "time_to_first_live_step_ms": 2144.137144088745,
     "logical_correctness": 1,
     "duplicate_effects": 0,
     "duplicate_receipts": 0,
@@ -69,7 +74,10 @@
     "wall_clock_overhead_ms": null,
     "void_rate": 0,
     "replay_divergence": null,
-    "restart_latency_ms": 22.347688674926758,
+    "restart_latency_ms": 49.749135971069336,
+    "approval_binding_violations": null,
+    "wait_durability": null,
+    "cancel_latency_ms": null,
     "raw": {
       "world_applied": {
         "issues.create#1": 1
@@ -92,7 +100,7 @@
       "model_calls": 3,
       "tokens": 280,
       "storage_bytes": 352256,
-      "wall_ms": 4292.180776596069,
+      "wall_ms": 4590.986728668213,
       "faults_fired": 1,
       "world_probes": 1
     }
@@ -107,10 +115,14 @@
       "landmark": "tool:create_issue",
       "occurrence": 1,
       "params": {},
-      "trigger_observed_at": 1789263135.3606167,
-      "trigger_observed_mono_ns": 334662641100700,
-      "sut_pid": 3548,
-      "sut_ref": {},
+      "trigger_observed_at": 1790336436.6803894,
+      "trigger_observed_mono_ns": 196574344751000,
+      "sut_pid": 24984,
+      "sut_ref": {
+        "run_id": "01a0d85e-0366-7fcf-81f7-fb527bce493c",
+        "step_index": 3,
+        "attempt_no": 1
+      },
       "executed": true
     }
   ],
@@ -119,7 +131,7 @@
       "recovery_index": 1,
       "lease_epoch": 1,
       "cause": "START",
-      "acquired_at": "2026-09-13T01:32:15.093288+00:00",
+      "acquired_at": "2026-09-25T11:40:36.313783+00:00",
       "outcome": "CRASHED",
       "replayed_steps": 0
     },
@@ -127,7 +139,7 @@
       "recovery_index": 2,
       "lease_epoch": 2,
       "cause": "ORPHANED",
-      "acquired_at": "2026-09-13T01:32:17.689166+00:00",
+      "acquired_at": "2026-09-25T11:40:38.796814+00:00",
       "outcome": "TERMINAL",
       "replayed_steps": 4
     }
@@ -135,5 +147,5 @@
   "restarts": 1,
   "valid": true,
   "stale": false,
-  "keel_commit": "a212a20"
+  "keel_commit": "5f551c3-dirty"
 }

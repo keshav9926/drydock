@@ -223,7 +223,7 @@ class AppendTx(Protocol):
         In *this* transaction, with the event that records what was done about it. That co-commit
         is the whole guarantee of the inbox: a signal cannot be applied without being consumed, and
         cannot be consumed without the journal saying so. It is the same same-database-transaction
-        argument that gives TRANSACTIONAL tools theirs (§5.6).
+        argument §5.6 makes for TRANSACTIONAL tools, a class specified and not built.
         """
         ...
 

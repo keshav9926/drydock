@@ -1,6 +1,6 @@
 # Upstream reports
 
-These are drafts of §29.3's *"one issue per finding"*, in the form set by
+These are §29.3's *"one issue per finding"* reports, in the form set by
 [`../upstream-report-template.md`](../upstream-report-template.md). **One is filed** ([restatedev/docs-restate#410](https://github.com/restatedev/docs-restate/issues/410), 2026-09-25,
 after a clean-clone repro on restate-server 1.7.10 and 1.7.12 and a verbatim re-check of every quote); the
 other was already reported upstream ([restatedev/sdk-python#221](https://github.com/restatedev/sdk-python/issues/221)) and is not filed again. Each file's `## Issue body` section is the text a maintainer would read.

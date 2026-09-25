@@ -319,7 +319,7 @@ class World:
         return {"id": ident, "external_ref": label, "logical_identity": label}
 
     def _read(self, ep: Endpoint, args: Mapping[str, Any]) -> dict[str, Any]:
-        # ponytail: `kv` is search-only. W4 (week 2) is what earns get/put.
+        # ponytail: `kv` serves search and W7's fetch only; get/put were W4's, and W4 is cut (§29.1).
         if ep.op == "search":
             q = str(args.get("q", ""))
             return {"hits": [f"{q} #{i}" for i in (1, 2, 3)], "logical_identity": self._label(ep, args)}

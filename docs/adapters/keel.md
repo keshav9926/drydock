@@ -20,9 +20,10 @@ Workload binding: [`keel/agents/demo.py`](../../keel/agents/demo.py).
 | Durable unit | one step: `STEP_INTENDED` → `STEP_ATTEMPT_STARTED` → outcome |
 
 The EXTERNAL claim is the one worth reading twice. A fence protects journal appends; it cannot
-reach a third party. So the only classes that may claim more than at-least-once are the ones where
-the **receiver** is doing the work — which is why IDEMPOTENT is `effectively_once` and EXTERNAL is
-not, and why an EXTERNAL duplicate in the matrix is a printed cost rather than a failure.
+reach a third party. So beyond PURE, which has no effect to repeat, the only class that may claim more
+than at-least-once is the one where the **receiver** is doing the work — which is why IDEMPOTENT is
+`effectively_once` and EXTERNAL is not, and why an EXTERNAL duplicate in the matrix is a printed cost
+rather than a failure.
 
 ## `key_source` formula
 
@@ -33,14 +34,18 @@ effect_key = sha256(run_root_id ‖ 0x1f ‖ step_index ‖ 0x1f ‖ tool_name �
 
 Every term is there for a property the fairness level depends on (§13.6, F1):
 
-- **`run_root_id`** — the run's root, not the run. A fork gets a new root, so a forked run's effects
-  are new logical effects and cannot dedup against the base run's.
+- **`run_root_id`** — the run's root, not the run. A fork would get a new root, so a forked run's
+  effects would be new logical effects that cannot dedup against the base run's (FORK itself is cut;
+  the key is shaped for it).
 - **`step_index`** — never repeats within a run root, so two calls to the same tool with the same
   arguments are two logical effects rather than one.
 - **`tool_name`** and **`canonical_args`** — the identity of the call. `canonical_args` is total and
-  process-independent by construction: sorted keys, no whitespace, bytes as base64, and `set`/
-  `frozenset` fields *refused at registration* because their iteration order follows per-process
-  hash randomisation, which would make two workers hash the same call differently.
+  process-independent: sorted keys, no whitespace, UUIDs and datetimes as strings, bytes as base64,
+  and a `set` or `frozenset` anywhere in the arguments — bare or inside a model — *refused*, because
+  its iteration order follows per-process hash randomisation, which would make two workers hash the
+  same call differently. §9.1 refuses those at registration; Keel's tool arguments are a keyword
+  dict with no declared type to inspect there, so the refusal comes at the call, before anything is
+  journaled (`tests/property/test_key_props.py`).
 
 It is a pure function of identifiers Keel itself persists and restores, which is what `framework`
 means. It is stable across attempts and across recoveries — the same crashed step, re-attempted by
@@ -61,8 +66,8 @@ two bands comparable rather than two different programs.
 ## What a restart does
 
 1. The reaper marks the run ORPHANED when `now() > lease_expires_at`, *and additionally*
-   `now() > attempt_deadline` when a non-PURE attempt is open. One conditional `UPDATE` with a
-   correlated subquery; no successor-side wait.
+   `now() > attempt_deadline` when a non-PURE attempt is open. One conditional `UPDATE` on `runs`,
+   whose `attempt_deadline` column the STARTED transaction set; no successor-side wait.
 2. A worker claims it with `SELECT … FOR UPDATE SKIP LOCKED` and a conditional
    `UPDATE … lease_epoch = lease_epoch + 1`. The returned epoch is the fence: every subsequent
    append begins by re-checking it, so the previous worker — alive or not — cannot write again.
@@ -209,9 +214,10 @@ having: a kill at chunk 7 leaves **no** chunk for the dead attempt —
 seven pieces are ~2 tokens, below the 256-token batch, and the 500 ms timer had not run out — so
 STARTED alone is what the successor disposes of, which the recovery table says is the same thing; and
 the armed cells re-ask m1 only where m1 had no journaled outcome (killed before or after its model call
-returned), where they fetch `ci/test_retry.log.1` — the M1 positive control of §13.7 H10, identical for
-every arm by construction. Killed after m1 was journaled, Keel never asks it again and the alternate is
-never served.
+returned), where they fetch `ci/test_retry.log.1` — §13.7 H10's M1 positive control, on this arm: the
+alternate is served wherever no answer was persisted, which shows the cell is armed. H10 asks for it on
+every arm, and W7 runs on Keel alone, so the write-up records that control as untested. Killed after m1
+was journaled, Keel never asks it again and the alternate is never served.
 
 The release rows carry no budget or STEP_CHUNK field, and the token column they *do* carry measures
 something else: `metrics.raw.tokens` is the shim's own count of every prompt the SUT sent, billed at

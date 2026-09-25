@@ -7,16 +7,27 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | (location, fault) | `keel.default` |
 |---|---|
 |  | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
-| `tool_duplicate_response@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 1.0s · +calls 0 · diverged 0/30 |
+| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1✓ C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
+| `tool_duplicate_response@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1✓ C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 1.0s · +calls 0 · diverged 0/30 |
 
 ## IDEMPOTENT  ·  key_source=framework
 
 | (location, fault) | `keel.default` |
 |---|---|
 |  | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
-| `tool_duplicate_response@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1✓<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.6s · +calls 0 · diverged 0/30 |
+| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1✓ C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 |
+| `tool_duplicate_response@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1✓ C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.6s · +calls 0 · diverged 0/30 |
+
+## Reading a cell
+
+`✓` holds in every scored trial of the cell; `✗` fails in at least one, and each failing trial is under Counterexamples; `·` is N/A — an input the verdict needs is missing, which is never a pass.
+
+| `·` | N/A when |
+|---|---|
+| S6 | nothing was cancelled in this trial **or** the runtime exposes no cancel-acknowledgement ordering |
+| S7 | this workload gates nothing **or** the runtime exposes no journal with APPROVAL_REQUESTED/DECIDED to bind an applied effect to |
+| S8 | this workload delegates nothing **or** the runtime exposes no journal **or** needs the children's journals; the collector supplies the parent's only |
+| C2 | no continuation boundary in this run **or** the runtime exposes no journal |
 
 ## Counterexamples
 

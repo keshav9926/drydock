@@ -17,7 +17,7 @@ import pytest
 from keel import Keel
 from keel.client import program
 from keel.core.clock import FakeClock
-from keel.core.errors import ContractViolation
+from keel.core.errors import ContractViolation, ToolRegistrationError
 from keel.core.protocols import EffectClass, Modifier, ProbeResult
 from keel.effects.registry import tool
 from keel.journal.memory import MemoryJournal
@@ -253,6 +253,17 @@ def test_the_composition_rules_refuse_streams_on_transactional_and_partial_ok_of
         tool(effect=EffectClass.TRANSACTIONAL, modifiers=(Modifier.STREAMS,))(fn)
     with pytest.raises(ContractViolation):
         tool(effect=EffectClass.IDEMPOTENT, modifiers=(Modifier.STREAMS,), partial_ok=True)(fn)
+
+
+def test_transactional_is_refused_rather_than_silently_weakened() -> None:
+    """TRANSACTIONAL needs `tctx.db` and the effect-table bridge, which are cut with W4: a tool that
+    declared it would recover like PURE. Registration refuses it, naming what is missing."""
+
+    async def fn(args: Any, tctx: Any) -> None:
+        return None
+
+    with pytest.raises(ToolRegistrationError, match="TRANSACTIONAL is not built"):
+        tool(effect=EffectClass.TRANSACTIONAL)(fn)
 
 
 async def test_replay_treats_started_with_chunks_exactly_as_started_alone() -> None:

@@ -19,8 +19,10 @@ import os
 import string
 import uuid
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import BaseModel
 
 from keel.core.hashing import args_hash, canonical_args, effect_key
 
@@ -96,3 +98,20 @@ def test_rotating_a_credential_cannot_change_a_key(run_root, step, args, secret)
             os.environ.pop("KEEL_PROP_SECRET", None)
         else:
             os.environ["KEEL_PROP_SECRET"] = old
+
+
+def test_a_set_is_refused_rather_than_hashed_in_process_order() -> None:
+    """§9.1: a set iterates in per-process hash order, so two workers would hash the same call
+    differently and every recovery of it would suspend. Refused, bare or inside a model."""
+
+    class Tagged(BaseModel):
+        tags: set[str]
+
+    for args in ({"tags": {"a", "b"}}, {"ids": frozenset({1, 2})}, {"m": Tagged(tags={"a", "b"})}):
+        with pytest.raises(TypeError, match="sorted list"):
+            effect_key(uuid.uuid4(), 0, "charge", args)
+    assert canonical_args({"tags": ["a", "b"]}) == '{"tags":["a","b"]}'
+
+
+def test_bytes_are_base64_rather_than_unencodable() -> None:
+    assert canonical_args({"body": b"\xff\x00"}) == '{"body":"/wA="}'

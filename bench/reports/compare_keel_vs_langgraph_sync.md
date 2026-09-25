@@ -198,3 +198,33 @@ Pairing helps only when the arms actually disagree on some seeds: two runtimes t
 **Paired continuous, standardised** (`δ / σ_d`): `MDD = (1.96 + 0.84) / √n` — **0.51** at n = 30,
 **0.28** at n = 100, **0.16** at n = 300. The report multiplies by each cell's observed `σ_d` and
 prints the result in ms or tokens.
+
+
+### "You only ran this thirty times" (§15.9)
+
+**1. For safety rows the objection points the wrong way.** Thirty passing trials are not a claim of
+safety, and this report never makes that claim. One *failing* trial is a proof of a bug with a
+reproducible `(spec_hash, seed)`; thirty of them would add nothing. Jepsen finds consensus bugs in a
+handful of runs because the faults are aimed at the mechanism rather than sampled from production,
+and every trial here is aimed at a named window — `after:tool_effect` with the response held — that
+a random production crash would reach rarely.
+
+**2. For estimate rows the printed interval is the answer.** `28/30 [0.79, 0.98]` says exactly what
+thirty trials can and cannot exclude, and the MDD table above says what gap would have been visible
+at all. Neither is hidden behind a flag.
+
+**3. This page is the screening tier only.** Every cell here is at n ≤ 30. §15.3's confirmation
+tier — every non-unanimous cell and every cell under a claimed difference re-run at n = 300 on fresh
+seeds, together with the arm it is compared against — has not been run for these rows, so no
+difference on this page is confirmed.
+
+**4. The variance being sampled is the right one.** Schedules are seeded and shared between arms, so
+the residual variance is the SUT's own internal timing — which is precisely the quantity a
+durability claim is about. Thirty samples of "does the reaper beat the zombie" are thirty draws from
+the distribution a user would experience.
+
+**5. Everything is reproducible.** Every row carries `(spec_hash, seed, keel_commit)` and its
+`config_pin`, framework versions included. `keel_commit` pins the adapters as well as Keel, because
+they live in the same repository, and it is marked `-dirty` when the tree had uncommitted changes.
+`crashproof verify <dir>/results.jsonl --recheck` re-runs the verifier over each trial's own facts
+and fails if a verdict moved or a row cannot be re-verified. Disagreement is settled by running it.

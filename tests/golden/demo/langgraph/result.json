@@ -30,9 +30,9 @@
       "step_timeout": "none documented"
     }
   },
-  "started_at": 1789263197.6981802,
-  "ended_at": 1789263203.8760626,
-  "wall_ms": 5389.856815338135,
+  "started_at": 1790336473.5808098,
+  "ended_at": 1790336485.0068023,
+  "wall_ms": 9807.806015014648,
   "status": "COMPLETED",
   "result": {
     "answer": "Created issue 6d9c0ecf83bb"
@@ -45,14 +45,18 @@
     "S5": "N/A",
     "L1": "PASS",
     "L2": "PASS",
-    "C1": "N/A"
+    "S6": "N/A",
+    "S7": "N/A",
+    "S8": "N/A",
+    "C1": "N/A",
+    "C2": "N/A"
   },
   "counterexamples": [],
   "metrics": {
     "recovery_rate": 1,
     "recovery_detect_ms": null,
-    "recovery_latency_ms": 2240.334987640381,
-    "time_to_first_live_step_ms": 2155.5988788604736,
+    "recovery_latency_ms": 3032.6802730560303,
+    "time_to_first_live_step_ms": 2962.135076522827,
     "logical_correctness": 0,
     "duplicate_effects": 1,
     "duplicate_receipts": 1,
@@ -64,7 +68,10 @@
     "wall_clock_overhead_ms": null,
     "void_rate": 0,
     "replay_divergence": null,
-    "restart_latency_ms": 84.73610877990723,
+    "restart_latency_ms": 70.54519653320312,
+    "approval_binding_violations": null,
+    "wait_durability": null,
+    "cancel_latency_ms": null,
     "raw": {
       "world_applied": {
         "issues.create#1": 2
@@ -85,7 +92,7 @@
       "model_calls": 3,
       "tokens": 163,
       "storage_bytes": null,
-      "wall_ms": 5389.856815338135,
+      "wall_ms": 9807.806015014648,
       "faults_fired": 1,
       "world_probes": 0
     }
@@ -100,9 +107,9 @@
       "landmark": "tool:create_issue",
       "occurrence": 1,
       "params": {},
-      "trigger_observed_at": 1789263200.8991418,
-      "trigger_observed_mono_ns": 334728179626600,
-      "sut_pid": 11396,
+      "trigger_observed_at": 1790336481.0549827,
+      "trigger_observed_mono_ns": 196618719344000,
+      "sut_pid": 7816,
       "sut_ref": {},
       "executed": true
     }
@@ -111,5 +118,5 @@
   "restarts": 1,
   "valid": true,
   "stale": false,
-  "keel_commit": "a212a20"
+  "keel_commit": "5f551c3-dirty"
 }

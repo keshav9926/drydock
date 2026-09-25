@@ -1,0 +1,500 @@
+{"seed": 0, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.35, "kill_at_ms": 18.63, "outcome": "answered"}
+{"seed": 1, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.43, "kill_at_ms": 4.2, "outcome": "answered"}
+{"seed": 2, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 42.92, "kill_at_ms": 123.09, "outcome": "answered"}
+{"seed": 3, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 28.12, "kill_at_ms": 20.08, "outcome": "answered"}
+{"seed": 4, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 33.47, "kill_at_ms": 23.7, "outcome": "answered"}
+{"seed": 5, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.06, "kill_at_ms": 16.94, "outcome": "answered"}
+{"seed": 6, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 29.9, "kill_at_ms": 71.16, "outcome": "answered"}
+{"seed": 7, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 27.18, "kill_at_ms": 26.41, "outcome": "answered"}
+{"seed": 8, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.39, "kill_at_ms": 5.03, "outcome": "answered"}
+{"seed": 9, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.09, "kill_at_ms": 14.01, "outcome": "answered"}
+{"seed": 10, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.9, "kill_at_ms": 52.97, "outcome": "answered"}
+{"seed": 11, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.88, "kill_at_ms": 9.34, "outcome": "answered"}
+{"seed": 12, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.61, "kill_at_ms": 10.83, "outcome": "answered"}
+{"seed": 13, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.46, "kill_at_ms": 6.57, "outcome": "answered"}
+{"seed": 14, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 60.32, "kill_at_ms": 19.33, "outcome": "answered"}
+{"seed": 15, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 32.05, "kill_at_ms": 92.8, "outcome": "answered"}
+{"seed": 16, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.47, "kill_at_ms": 8.1, "outcome": "answered"}
+{"seed": 17, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.21, "kill_at_ms": 47.31, "outcome": "answered"}
+{"seed": 18, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.82, "kill_at_ms": 4.8, "outcome": "answered"}
+{"seed": 19, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.68, "kill_at_ms": 21.7, "outcome": "answered"}
+{"seed": 20, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 54.01, "kill_at_ms": 146.73, "outcome": "answered"}
+{"seed": 21, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 39.09, "kill_at_ms": 19.34, "outcome": "answered"}
+{"seed": 22, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 36.77, "kill_at_ms": 105.71, "outcome": "answered"}
+{"seed": 23, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 55.43, "kill_at_ms": 153.78, "outcome": "answered"}
+{"seed": 24, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 35.76, "kill_at_ms": 76.43, "outcome": "answered"}
+{"seed": 25, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 29.35, "kill_at_ms": 33.19, "outcome": "answered"}
+{"seed": 26, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.89, "kill_at_ms": 17.68, "outcome": "answered"}
+{"seed": 27, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.72, "kill_at_ms": 15.02, "outcome": "answered"}
+{"seed": 28, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.95, "kill_at_ms": 2.7, "outcome": "answered"}
+{"seed": 29, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 73.27, "kill_at_ms": 120.48, "outcome": "answered"}
+{"seed": 30, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 33.32, "kill_at_ms": 53.89, "outcome": "answered"}
+{"seed": 31, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.71, "kill_at_ms": 0.28, "outcome": "answered"}
+{"seed": 32, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.41, "kill_at_ms": 1.72, "outcome": "answered"}
+{"seed": 33, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 16.62, "kill_at_ms": 28.44, "outcome": "answered"}
+{"seed": 34, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.72, "kill_at_ms": 12.25, "outcome": "answered"}
+{"seed": 35, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 85.9, "kill_at_ms": 141.41, "outcome": "answered"}
+{"seed": 36, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.51, "kill_at_ms": 8.39, "outcome": "answered"}
+{"seed": 37, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.43, "kill_at_ms": 17.24, "outcome": "answered"}
+{"seed": 38, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 29.53, "kill_at_ms": 56.65, "outcome": "answered"}
+{"seed": 39, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.08, "kill_at_ms": 5.72, "outcome": "answered"}
+{"seed": 40, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 28.53, "kill_at_ms": 39.26, "outcome": "answered"}
+{"seed": 41, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 27.5, "kill_at_ms": 31.44, "outcome": "answered"}
+{"seed": 42, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 11.98, "kill_at_ms": 22.97, "outcome": "answered"}
+{"seed": 43, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 16.33, "kill_at_ms": 1.89, "outcome": "answered"}
+{"seed": 44, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 28.67, "kill_at_ms": 35.14, "outcome": "answered"}
+{"seed": 45, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 19.53, "kill_at_ms": 15.93, "outcome": "answered"}
+{"seed": 46, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.07, "kill_at_ms": 21.5, "outcome": "answered"}
+{"seed": 47, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.71, "kill_at_ms": 32.41, "outcome": "answered"}
+{"seed": 48, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.67, "kill_at_ms": 12.61, "outcome": "answered"}
+{"seed": 49, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 38.43, "kill_at_ms": 7.71, "outcome": "answered"}
+{"seed": 50, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 32.54, "kill_at_ms": 48.56, "outcome": "answered"}
+{"seed": 51, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.56, "kill_at_ms": 5.52, "outcome": "answered"}
+{"seed": 52, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 39.33, "kill_at_ms": 115.45, "outcome": "answered"}
+{"seed": 53, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.21, "kill_at_ms": 13.35, "outcome": "answered"}
+{"seed": 54, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 42.06, "kill_at_ms": 115.28, "outcome": "answered"}
+{"seed": 55, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.23, "kill_at_ms": 1.96, "outcome": "answered"}
+{"seed": 56, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 28.9, "kill_at_ms": 83.74, "outcome": "answered"}
+{"seed": 57, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 36.55, "kill_at_ms": 4.67, "outcome": "answered"}
+{"seed": 58, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.19, "kill_at_ms": 14.26, "outcome": "answered"}
+{"seed": 59, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 17.34, "kill_at_ms": 11.66, "outcome": "answered"}
+{"seed": 60, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.63, "kill_at_ms": 8.89, "outcome": "answered"}
+{"seed": 61, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.48, "kill_at_ms": 11.1, "outcome": "answered"}
+{"seed": 62, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.58, "kill_at_ms": 26.66, "outcome": "answered"}
+{"seed": 63, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.4, "kill_at_ms": 9.88, "outcome": "answered"}
+{"seed": 64, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 31.07, "kill_at_ms": 44.38, "outcome": "answered"}
+{"seed": 65, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 33.34, "kill_at_ms": 41.48, "outcome": "answered"}
+{"seed": 66, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.88, "kill_at_ms": 1.67, "outcome": "answered"}
+{"seed": 67, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 21.89, "kill_at_ms": 4.91, "outcome": "answered"}
+{"seed": 68, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.88, "kill_at_ms": 21.98, "outcome": "answered"}
+{"seed": 69, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.19, "kill_at_ms": 14.76, "outcome": "answered"}
+{"seed": 70, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.56, "kill_at_ms": 20.64, "outcome": "answered"}
+{"seed": 71, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 12.25, "kill_at_ms": 11.9, "outcome": "answered"}
+{"seed": 72, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.94, "kill_at_ms": 1.53, "outcome": "answered"}
+{"seed": 73, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.37, "kill_at_ms": 7.87, "outcome": "answered"}
+{"seed": 74, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.44, "kill_at_ms": 26.93, "outcome": "answered"}
+{"seed": 75, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.49, "kill_at_ms": 14.18, "outcome": "answered"}
+{"seed": 76, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.89, "kill_at_ms": 10.99, "outcome": "answered"}
+{"seed": 77, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 50.5, "kill_at_ms": 121.06, "outcome": "answered"}
+{"seed": 78, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 79.43, "kill_at_ms": 194.09, "outcome": "answered"}
+{"seed": 79, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.31, "kill_at_ms": 2.75, "outcome": "answered"}
+{"seed": 80, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.62, "kill_at_ms": 5.39, "outcome": "answered"}
+{"seed": 81, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.74, "kill_at_ms": 10.23, "outcome": "answered"}
+{"seed": 82, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.5, "kill_at_ms": 3.26, "outcome": "answered"}
+{"seed": 83, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 25.74, "kill_at_ms": 38.32, "outcome": "answered"}
+{"seed": 84, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.03, "kill_at_ms": 17.63, "outcome": "answered"}
+{"seed": 85, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.41, "kill_at_ms": 5.03, "outcome": "answered"}
+{"seed": 86, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.53, "kill_at_ms": 22.64, "outcome": "answered"}
+{"seed": 87, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 26.32, "kill_at_ms": 11.53, "outcome": "answered"}
+{"seed": 88, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.92, "kill_at_ms": 9.44, "outcome": "answered"}
+{"seed": 89, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.72, "kill_at_ms": 7.47, "outcome": "answered"}
+{"seed": 90, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 44.11, "kill_at_ms": 26.95, "outcome": "answered"}
+{"seed": 91, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.4, "kill_at_ms": 2.1, "outcome": "answered"}
+{"seed": 92, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.83, "kill_at_ms": 8.62, "outcome": "answered"}
+{"seed": 93, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.56, "kill_at_ms": 26.15, "outcome": "answered"}
+{"seed": 94, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 42.14, "kill_at_ms": 69.12, "outcome": "answered"}
+{"seed": 95, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 12.56, "kill_at_ms": 28.65, "outcome": "answered"}
+{"seed": 96, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.38, "kill_at_ms": 10.43, "outcome": "answered"}
+{"seed": 97, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 42.34, "kill_at_ms": 24.71, "outcome": "answered"}
+{"seed": 98, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 37.92, "kill_at_ms": 40.54, "outcome": "answered"}
+{"seed": 99, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.95, "kill_at_ms": 37.51, "outcome": "answered"}
+{"seed": 100, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.65, "kill_at_ms": 3.34, "outcome": "answered"}
+{"seed": 101, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 31.61, "kill_at_ms": 55.1, "outcome": "answered"}
+{"seed": 102, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 32.06, "kill_at_ms": 14.25, "outcome": "answered"}
+{"seed": 103, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 47.02, "kill_at_ms": 138.11, "outcome": "answered"}
+{"seed": 104, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.18, "kill_at_ms": 20.67, "outcome": "answered"}
+{"seed": 105, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 13.41, "kill_at_ms": 35.32, "outcome": "answered"}
+{"seed": 106, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 28.4, "kill_at_ms": 60.54, "outcome": "answered"}
+{"seed": 107, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 39.39, "kill_at_ms": 29.13, "outcome": "answered"}
+{"seed": 108, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 65.7, "kill_at_ms": 25.73, "outcome": "answered"}
+{"seed": 109, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 37.64, "kill_at_ms": 31.57, "outcome": "answered"}
+{"seed": 110, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.6, "kill_at_ms": 18.49, "outcome": "answered"}
+{"seed": 111, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.06, "kill_at_ms": 17.51, "outcome": "answered"}
+{"seed": 112, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.65, "kill_at_ms": 11.05, "outcome": "answered"}
+{"seed": 113, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.93, "kill_at_ms": 0.73, "outcome": "answered"}
+{"seed": 114, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.75, "kill_at_ms": 5.6, "outcome": "answered"}
+{"seed": 115, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.71, "kill_at_ms": 20.73, "outcome": "answered"}
+{"seed": 116, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.77, "kill_at_ms": 21.61, "outcome": "answered"}
+{"seed": 117, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.73, "kill_at_ms": 7.01, "outcome": "answered"}
+{"seed": 118, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 16.56, "kill_at_ms": 35.31, "outcome": "answered"}
+{"seed": 119, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.29, "kill_at_ms": 23.04, "outcome": "answered"}
+{"seed": 120, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.01, "kill_at_ms": 12.38, "outcome": "answered"}
+{"seed": 121, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.01, "kill_at_ms": 2.36, "outcome": "answered"}
+{"seed": 122, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.04, "kill_at_ms": 10.78, "outcome": "answered"}
+{"seed": 123, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.35, "kill_at_ms": 1.15, "outcome": "answered"}
+{"seed": 124, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 75.64, "kill_at_ms": 218.01, "outcome": "answered"}
+{"seed": 125, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 20.68, "kill_at_ms": 55.83, "outcome": "answered"}
+{"seed": 126, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 18.84, "kill_at_ms": 32.35, "outcome": "answered"}
+{"seed": 127, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.03, "kill_at_ms": 0.94, "outcome": "answered"}
+{"seed": 128, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 24.1, "kill_at_ms": 67.96, "outcome": "answered"}
+{"seed": 129, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.92, "kill_at_ms": 13.92, "outcome": "answered"}
+{"seed": 130, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.27, "kill_at_ms": 9.77, "outcome": "answered"}
+{"seed": 131, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 10.83, "kill_at_ms": 10.25, "outcome": "answered"}
+{"seed": 132, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 32.52, "kill_at_ms": 40.24, "outcome": "answered"}
+{"seed": 133, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.14, "kill_at_ms": 10.57, "outcome": "answered"}
+{"seed": 134, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.2, "kill_at_ms": 11.91, "outcome": "answered"}
+{"seed": 135, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.87, "kill_at_ms": 15.82, "outcome": "answered"}
+{"seed": 136, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 42.49, "kill_at_ms": 73.38, "outcome": "answered"}
+{"seed": 137, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 15.96, "kill_at_ms": 3.46, "outcome": "answered"}
+{"seed": 138, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.5, "kill_at_ms": 4.93, "outcome": "answered"}
+{"seed": 139, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 110.54, "kill_at_ms": 0.5, "outcome": "answered"}
+{"seed": 140, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 51.49, "kill_at_ms": 119.2, "outcome": "answered"}
+{"seed": 141, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 33.81, "kill_at_ms": 52.47, "outcome": "answered"}
+{"seed": 142, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 47.64, "kill_at_ms": 83.27, "outcome": "answered"}
+{"seed": 143, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.31, "kill_at_ms": 22.6, "outcome": "answered"}
+{"seed": 144, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.93, "kill_at_ms": 10.66, "outcome": "answered"}
+{"seed": 145, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 31.73, "kill_at_ms": 82.86, "outcome": "answered"}
+{"seed": 146, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 31.91, "kill_at_ms": 12.76, "outcome": "answered"}
+{"seed": 147, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 9.19, "kill_at_ms": 16.69, "outcome": "answered"}
+{"seed": 148, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.98, "kill_at_ms": 8.45, "outcome": "answered"}
+{"seed": 149, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.62, "kill_at_ms": 1.62, "outcome": "answered"}
+{"seed": 150, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.35, "kill_at_ms": 15.68, "outcome": "answered"}
+{"seed": 151, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.22, "kill_at_ms": 15.3, "outcome": "answered"}
+{"seed": 152, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.6, "kill_at_ms": 19.36, "outcome": "answered"}
+{"seed": 153, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.66, "kill_at_ms": 19.84, "outcome": "answered"}
+{"seed": 154, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 25.64, "kill_at_ms": 15.62, "outcome": "answered"}
+{"seed": 155, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.1, "kill_at_ms": 10.64, "outcome": "answered"}
+{"seed": 156, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.5, "kill_at_ms": 10.97, "outcome": "answered"}
+{"seed": 157, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.81, "kill_at_ms": 12.49, "outcome": "answered"}
+{"seed": 158, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.92, "kill_at_ms": 14.21, "outcome": "answered"}
+{"seed": 159, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.21, "kill_at_ms": 7.35, "outcome": "answered"}
+{"seed": 160, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.87, "kill_at_ms": 2.53, "outcome": "answered"}
+{"seed": 161, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.84, "kill_at_ms": 10.63, "outcome": "answered"}
+{"seed": 162, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.38, "kill_at_ms": 1.19, "outcome": "answered"}
+{"seed": 163, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 21.58, "kill_at_ms": 35.05, "outcome": "answered"}
+{"seed": 164, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.36, "kill_at_ms": 2.1, "outcome": "answered"}
+{"seed": 165, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.96, "kill_at_ms": 0.35, "outcome": "answered"}
+{"seed": 166, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.82, "kill_at_ms": 3.66, "outcome": "answered"}
+{"seed": 167, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.05, "kill_at_ms": 4.84, "outcome": "answered"}
+{"seed": 168, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.38, "kill_at_ms": 16.52, "outcome": "answered"}
+{"seed": 169, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.09, "kill_at_ms": 23.07, "outcome": "answered"}
+{"seed": 170, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.71, "kill_at_ms": 15.85, "outcome": "answered"}
+{"seed": 171, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.12, "kill_at_ms": 16.69, "outcome": "answered"}
+{"seed": 172, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.67, "kill_at_ms": 8.11, "outcome": "answered"}
+{"seed": 173, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.64, "kill_at_ms": 6.45, "outcome": "answered"}
+{"seed": 174, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.14, "kill_at_ms": 17.21, "outcome": "answered"}
+{"seed": 175, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.89, "kill_at_ms": 9.17, "outcome": "answered"}
+{"seed": 176, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.89, "kill_at_ms": 0.61, "outcome": "answered"}
+{"seed": 177, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.54, "kill_at_ms": 21.89, "outcome": "answered"}
+{"seed": 178, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.8, "kill_at_ms": 22.2, "outcome": "answered"}
+{"seed": 179, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.36, "kill_at_ms": 17.2, "outcome": "answered"}
+{"seed": 180, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.58, "kill_at_ms": 2.85, "outcome": "answered"}
+{"seed": 181, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.6, "kill_at_ms": 13.24, "outcome": "answered"}
+{"seed": 182, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.63, "kill_at_ms": 10.35, "outcome": "answered"}
+{"seed": 183, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.0, "kill_at_ms": 2.27, "outcome": "answered"}
+{"seed": 184, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.88, "kill_at_ms": 5.69, "outcome": "answered"}
+{"seed": 185, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.61, "kill_at_ms": 17.86, "outcome": "answered"}
+{"seed": 186, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.43, "kill_at_ms": 7.63, "outcome": "answered"}
+{"seed": 187, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.57, "kill_at_ms": 6.92, "outcome": "answered"}
+{"seed": 188, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.44, "kill_at_ms": 17.61, "outcome": "answered"}
+{"seed": 189, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.72, "kill_at_ms": 9.75, "outcome": "answered"}
+{"seed": 190, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.55, "kill_at_ms": 1.69, "outcome": "answered"}
+{"seed": 191, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.5, "kill_at_ms": 17.09, "outcome": "answered"}
+{"seed": 192, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.82, "kill_at_ms": 7.64, "outcome": "answered"}
+{"seed": 193, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.59, "kill_at_ms": 12.79, "outcome": "answered"}
+{"seed": 194, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.46, "kill_at_ms": 15.79, "outcome": "answered"}
+{"seed": 195, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.4, "kill_at_ms": 9.64, "outcome": "answered"}
+{"seed": 196, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.86, "kill_at_ms": 13.37, "outcome": "answered"}
+{"seed": 197, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.15, "kill_at_ms": 11.58, "outcome": "answered"}
+{"seed": 198, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.8, "kill_at_ms": 1.08, "outcome": "answered"}
+{"seed": 199, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.37, "kill_at_ms": 6.58, "outcome": "answered"}
+{"seed": 200, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.89, "kill_at_ms": 0.94, "outcome": "answered"}
+{"seed": 201, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.05, "kill_at_ms": 6.05, "outcome": "answered"}
+{"seed": 202, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.59, "kill_at_ms": 15.1, "outcome": "answered"}
+{"seed": 203, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.99, "kill_at_ms": 1.63, "outcome": "answered"}
+{"seed": 204, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.12, "kill_at_ms": 8.48, "outcome": "answered"}
+{"seed": 205, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.76, "kill_at_ms": 8.81, "outcome": "answered"}
+{"seed": 206, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.89, "kill_at_ms": 0.18, "outcome": "answered"}
+{"seed": 207, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.13, "kill_at_ms": 10.83, "outcome": "answered"}
+{"seed": 208, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.34, "kill_at_ms": 6.15, "outcome": "answered"}
+{"seed": 209, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.95, "kill_at_ms": 11.62, "outcome": "answered"}
+{"seed": 210, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 30.65, "kill_at_ms": 35.38, "outcome": "answered"}
+{"seed": 211, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.52, "kill_at_ms": 9.36, "outcome": "answered"}
+{"seed": 212, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.23, "kill_at_ms": 7.41, "outcome": "answered"}
+{"seed": 213, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.94, "kill_at_ms": 3.62, "outcome": "answered"}
+{"seed": 214, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.94, "kill_at_ms": 12.31, "outcome": "answered"}
+{"seed": 215, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.08, "kill_at_ms": 0.94, "outcome": "answered"}
+{"seed": 216, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.07, "kill_at_ms": 18.21, "outcome": "answered"}
+{"seed": 217, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.73, "kill_at_ms": 19.39, "outcome": "answered"}
+{"seed": 218, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.53, "kill_at_ms": 6.78, "outcome": "answered"}
+{"seed": 219, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.01, "kill_at_ms": 14.68, "outcome": "answered"}
+{"seed": 220, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.15, "kill_at_ms": 13.8, "outcome": "answered"}
+{"seed": 221, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.46, "kill_at_ms": 6.23, "outcome": "answered"}
+{"seed": 222, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 17.23, "kill_at_ms": 40.26, "outcome": "answered"}
+{"seed": 223, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 21.51, "kill_at_ms": 21.43, "outcome": "answered"}
+{"seed": 224, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.35, "kill_at_ms": 1.41, "outcome": "answered"}
+{"seed": 225, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.26, "kill_at_ms": 13.14, "outcome": "answered"}
+{"seed": 226, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.82, "kill_at_ms": 11.36, "outcome": "answered"}
+{"seed": 227, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.47, "kill_at_ms": 7.75, "outcome": "answered"}
+{"seed": 228, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.92, "kill_at_ms": 16.34, "outcome": "answered"}
+{"seed": 229, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.95, "kill_at_ms": 11.03, "outcome": "answered"}
+{"seed": 230, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.24, "kill_at_ms": 17.42, "outcome": "answered"}
+{"seed": 231, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.02, "kill_at_ms": 15.43, "outcome": "answered"}
+{"seed": 232, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.71, "kill_at_ms": 6.5, "outcome": "answered"}
+{"seed": 233, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.78, "kill_at_ms": 11.84, "outcome": "answered"}
+{"seed": 234, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.46, "kill_at_ms": 6.62, "outcome": "answered"}
+{"seed": 235, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.02, "kill_at_ms": 7.3, "outcome": "answered"}
+{"seed": 236, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.75, "kill_at_ms": 13.63, "outcome": "answered"}
+{"seed": 237, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.83, "kill_at_ms": 10.89, "outcome": "answered"}
+{"seed": 238, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 13.51, "kill_at_ms": 32.25, "outcome": "answered"}
+{"seed": 239, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.1, "kill_at_ms": 2.53, "outcome": "answered"}
+{"seed": 240, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.54, "kill_at_ms": 16.95, "outcome": "answered"}
+{"seed": 241, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.77, "kill_at_ms": 13.99, "outcome": "answered"}
+{"seed": 242, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 8.22, "kill_at_ms": 8.27, "outcome": "answered"}
+{"seed": 243, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.32, "kill_at_ms": 21.47, "outcome": "answered"}
+{"seed": 244, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.64, "kill_at_ms": 18.84, "outcome": "answered"}
+{"seed": 245, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.07, "kill_at_ms": 2.29, "outcome": "answered"}
+{"seed": 246, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.0, "kill_at_ms": 19.47, "outcome": "answered"}
+{"seed": 247, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.5, "kill_at_ms": 10.31, "outcome": "answered"}
+{"seed": 248, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.8, "kill_at_ms": 17.07, "outcome": "answered"}
+{"seed": 249, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 5.69, "kill_at_ms": 4.62, "outcome": "answered"}
+{"seed": 250, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.81, "kill_at_ms": 7.92, "outcome": "answered"}
+{"seed": 251, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.93, "kill_at_ms": 10.58, "outcome": "answered"}
+{"seed": 252, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.46, "kill_at_ms": 15.05, "outcome": "answered"}
+{"seed": 253, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.69, "kill_at_ms": 10.8, "outcome": "answered"}
+{"seed": 254, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.37, "kill_at_ms": 7.16, "outcome": "answered"}
+{"seed": 255, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.41, "kill_at_ms": 1.23, "outcome": "answered"}
+{"seed": 256, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.98, "kill_at_ms": 10.23, "outcome": "answered"}
+{"seed": 257, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.22, "kill_at_ms": 5.92, "outcome": "answered"}
+{"seed": 258, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.45, "kill_at_ms": 12.64, "outcome": "answered"}
+{"seed": 259, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.62, "kill_at_ms": 0.79, "outcome": "answered"}
+{"seed": 260, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.57, "kill_at_ms": 4.15, "outcome": "answered"}
+{"seed": 261, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.36, "kill_at_ms": 9.57, "outcome": "answered"}
+{"seed": 262, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.13, "kill_at_ms": 6.7, "outcome": "answered"}
+{"seed": 263, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.66, "kill_at_ms": 14.82, "outcome": "answered"}
+{"seed": 264, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.56, "kill_at_ms": 14.1, "outcome": "answered"}
+{"seed": 265, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.31, "kill_at_ms": 15.31, "outcome": "answered"}
+{"seed": 266, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.14, "kill_at_ms": 20.69, "outcome": "answered"}
+{"seed": 267, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.37, "kill_at_ms": 3.78, "outcome": "answered"}
+{"seed": 268, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.68, "kill_at_ms": 15.13, "outcome": "answered"}
+{"seed": 269, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.12, "kill_at_ms": 0.85, "outcome": "answered"}
+{"seed": 270, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.5, "kill_at_ms": 19.05, "outcome": "answered"}
+{"seed": 271, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.51, "kill_at_ms": 9.45, "outcome": "answered"}
+{"seed": 272, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.49, "kill_at_ms": 19.07, "outcome": "answered"}
+{"seed": 273, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.02, "kill_at_ms": 3.47, "outcome": "answered"}
+{"seed": 274, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.43, "kill_at_ms": 3.22, "outcome": "answered"}
+{"seed": 275, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.11, "kill_at_ms": 16.21, "outcome": "answered"}
+{"seed": 276, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.61, "kill_at_ms": 7.4, "outcome": "answered"}
+{"seed": 277, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.11, "kill_at_ms": 16.54, "outcome": "answered"}
+{"seed": 278, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.06, "kill_at_ms": 16.47, "outcome": "answered"}
+{"seed": 279, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.61, "kill_at_ms": 8.14, "outcome": "answered"}
+{"seed": 280, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.44, "kill_at_ms": 5.98, "outcome": "answered"}
+{"seed": 281, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.09, "kill_at_ms": 0.36, "outcome": "answered"}
+{"seed": 282, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.51, "kill_at_ms": 13.12, "outcome": "answered"}
+{"seed": 283, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.25, "kill_at_ms": 15.77, "outcome": "answered"}
+{"seed": 284, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.98, "kill_at_ms": 0.79, "outcome": "answered"}
+{"seed": 285, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.29, "kill_at_ms": 12.71, "outcome": "answered"}
+{"seed": 286, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.99, "kill_at_ms": 10.32, "outcome": "answered"}
+{"seed": 287, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.07, "kill_at_ms": 11.79, "outcome": "answered"}
+{"seed": 288, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.58, "kill_at_ms": 18.44, "outcome": "answered"}
+{"seed": 289, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.28, "kill_at_ms": 18.55, "outcome": "answered"}
+{"seed": 290, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.5, "kill_at_ms": 10.59, "outcome": "answered"}
+{"seed": 291, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.52, "kill_at_ms": 12.88, "outcome": "answered"}
+{"seed": 292, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.62, "kill_at_ms": 15.24, "outcome": "answered"}
+{"seed": 293, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.8, "kill_at_ms": 9.74, "outcome": "answered"}
+{"seed": 294, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.18, "kill_at_ms": 3.79, "outcome": "answered"}
+{"seed": 295, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.83, "kill_at_ms": 17.66, "outcome": "answered"}
+{"seed": 296, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.72, "kill_at_ms": 1.47, "outcome": "answered"}
+{"seed": 297, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.38, "kill_at_ms": 11.64, "outcome": "answered"}
+{"seed": 298, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 6.46, "kill_at_ms": 3.99, "outcome": "answered"}
+{"seed": 299, "band": "natural", "answered": true, "receipt": true, "rtt_ms": 7.06, "kill_at_ms": 7.71, "outcome": "answered"}
+{"seed": 0, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.57, "kill_at_ms": 1223.59, "outcome": "in window"}
+{"seed": 1, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.8, "kill_at_ms": 366.14, "outcome": "in window"}
+{"seed": 2, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.23, "kill_at_ms": 1351.36, "outcome": "in window"}
+{"seed": 3, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.43, "kill_at_ms": 493.77, "outcome": "in window"}
+{"seed": 4, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.72, "kill_at_ms": 489.62, "outcome": "in window"}
+{"seed": 5, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.13, "kill_at_ms": 952.04, "outcome": "in window"}
+{"seed": 6, "band": "held", "answered": false, "receipt": true, "rtt_ms": 17.19, "kill_at_ms": 1160.6, "outcome": "in window"}
+{"seed": 7, "band": "held", "answered": false, "receipt": true, "rtt_ms": 7.98, "kill_at_ms": 592.59, "outcome": "in window"}
+{"seed": 8, "band": "held", "answered": false, "receipt": true, "rtt_ms": 6.73, "kill_at_ms": 475.41, "outcome": "in window"}
+{"seed": 9, "band": "held", "answered": false, "receipt": true, "rtt_ms": 21.97, "kill_at_ms": 766.6, "outcome": "in window"}
+{"seed": 10, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.8, "kill_at_ms": 894.08, "outcome": "in window"}
+{"seed": 11, "band": "held", "answered": false, "receipt": true, "rtt_ms": 10.84, "kill_at_ms": 748.28, "outcome": "in window"}
+{"seed": 12, "band": "held", "answered": false, "receipt": true, "rtt_ms": 26.69, "kill_at_ms": 782.83, "outcome": "in window"}
+{"seed": 13, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.49, "kill_at_ms": 519.06, "outcome": "in window"}
+{"seed": 14, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.48, "kill_at_ms": 335.43, "outcome": "in window"}
+{"seed": 15, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.6, "kill_at_ms": 1363.09, "outcome": "in window"}
+{"seed": 16, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.68, "kill_at_ms": 641.67, "outcome": "in window"}
+{"seed": 17, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.87, "kill_at_ms": 836.81, "outcome": "in window"}
+{"seed": 18, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.07, "kill_at_ms": 424.55, "outcome": "in window"}
+{"seed": 19, "band": "held", "answered": false, "receipt": true, "rtt_ms": 10.39, "kill_at_ms": 1017.74, "outcome": "in window"}
+{"seed": 20, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.14, "kill_at_ms": 1294.34, "outcome": "in window"}
+{"seed": 21, "band": "held", "answered": false, "receipt": true, "rtt_ms": 18.71, "kill_at_ms": 407.29, "outcome": "in window"}
+{"seed": 22, "band": "held", "answered": false, "receipt": true, "rtt_ms": 34.53, "kill_at_ms": 1367.12, "outcome": "in window"}
+{"seed": 23, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.01, "kill_at_ms": 1319.84, "outcome": "in window"}
+{"seed": 24, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.08, "kill_at_ms": 1062.35, "outcome": "in window"}
+{"seed": 25, "band": "held", "answered": false, "receipt": true, "rtt_ms": 19.16, "kill_at_ms": 661.93, "outcome": "in window"}
+{"seed": 26, "band": "held", "answered": false, "receipt": true, "rtt_ms": 21.23, "kill_at_ms": 1107.36, "outcome": "in window"}
+{"seed": 27, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.06, "kill_at_ms": 986.22, "outcome": "in window"}
+{"seed": 28, "band": "held", "answered": false, "receipt": true, "rtt_ms": 18.7, "kill_at_ms": 344.9, "outcome": "in window"}
+{"seed": 29, "band": "held", "answered": false, "receipt": true, "rtt_ms": 22.49, "kill_at_ms": 868.99, "outcome": "in window"}
+{"seed": 30, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.69, "kill_at_ms": 857.25, "outcome": "in window"}
+{"seed": 31, "band": "held", "answered": false, "receipt": true, "rtt_ms": 38.52, "kill_at_ms": 233.99, "outcome": "in window"}
+{"seed": 32, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.31, "kill_at_ms": 299.56, "outcome": "in window"}
+{"seed": 33, "band": "held", "answered": false, "receipt": true, "rtt_ms": 11.31, "kill_at_ms": 890.05, "outcome": "in window"}
+{"seed": 34, "band": "held", "answered": false, "receipt": true, "rtt_ms": 10.11, "kill_at_ms": 839.78, "outcome": "in window"}
+{"seed": 35, "band": "held", "answered": false, "receipt": true, "rtt_ms": 10.18, "kill_at_ms": 863.52, "outcome": "in window"}
+{"seed": 36, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.14, "kill_at_ms": 598.51, "outcome": "in window"}
+{"seed": 37, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.28, "kill_at_ms": 1024.55, "outcome": "in window"}
+{"seed": 38, "band": "held", "answered": false, "receipt": true, "rtt_ms": 23.58, "kill_at_ms": 979.16, "outcome": "in window"}
+{"seed": 39, "band": "held", "answered": false, "receipt": true, "rtt_ms": 21.37, "kill_at_ms": 462.51, "outcome": "in window"}
+{"seed": 40, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.31, "kill_at_ms": 757.99, "outcome": "in window"}
+{"seed": 41, "band": "held", "answered": false, "receipt": true, "rtt_ms": 18.19, "kill_at_ms": 666.32, "outcome": "in window"}
+{"seed": 42, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.3, "kill_at_ms": 973.46, "outcome": "in window"}
+{"seed": 43, "band": "held", "answered": false, "receipt": true, "rtt_ms": 19.44, "kill_at_ms": 255.98, "outcome": "in window"}
+{"seed": 44, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.81, "kill_at_ms": 696.65, "outcome": "in window"}
+{"seed": 45, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.81, "kill_at_ms": 533.15, "outcome": "in window"}
+{"seed": 46, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.34, "kill_at_ms": 1276.09, "outcome": "in window"}
+{"seed": 47, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.36, "kill_at_ms": 628.9, "outcome": "in window"}
+{"seed": 48, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.83, "kill_at_ms": 862.7, "outcome": "in window"}
+{"seed": 49, "band": "held", "answered": false, "receipt": true, "rtt_ms": 17.87, "kill_at_ms": 289.2, "outcome": "in window"}
+{"seed": 50, "band": "held", "answered": false, "receipt": true, "rtt_ms": 19.79, "kill_at_ms": 806.94, "outcome": "in window"}
+{"seed": 51, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.82, "kill_at_ms": 500.63, "outcome": "in window"}
+{"seed": 52, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.55, "kill_at_ms": 1381.3, "outcome": "in window"}
+{"seed": 53, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.21, "kill_at_ms": 947.17, "outcome": "in window"}
+{"seed": 54, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.22, "kill_at_ms": 1306.48, "outcome": "in window"}
+{"seed": 55, "band": "held", "answered": false, "receipt": true, "rtt_ms": 20.61, "kill_at_ms": 318.71, "outcome": "in window"}
+{"seed": 56, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.58, "kill_at_ms": 1366.39, "outcome": "in window"}
+{"seed": 57, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.94, "kill_at_ms": 255.55, "outcome": "in window"}
+{"seed": 58, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.57, "kill_at_ms": 904.2, "outcome": "in window"}
+{"seed": 59, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.46, "kill_at_ms": 473.25, "outcome": "in window"}
+{"seed": 60, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.38, "kill_at_ms": 576.06, "outcome": "in window"}
+{"seed": 61, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.74, "kill_at_ms": 799.76, "outcome": "in window"}
+{"seed": 62, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.54, "kill_at_ms": 1317.86, "outcome": "in window"}
+{"seed": 63, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.46, "kill_at_ms": 741.4, "outcome": "in window"}
+{"seed": 64, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.48, "kill_at_ms": 775.63, "outcome": "in window"}
+{"seed": 65, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.18, "kill_at_ms": 702.29, "outcome": "in window"}
+{"seed": 66, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.53, "kill_at_ms": 291.24, "outcome": "in window"}
+{"seed": 67, "band": "held", "answered": false, "receipt": true, "rtt_ms": 24.69, "kill_at_ms": 302.1, "outcome": "in window"}
+{"seed": 68, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.75, "kill_at_ms": 1094.38, "outcome": "in window"}
+{"seed": 69, "band": "held", "answered": false, "receipt": true, "rtt_ms": 33.42, "kill_at_ms": 1037.8, "outcome": "in window"}
+{"seed": 70, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.13, "kill_at_ms": 1297.79, "outcome": "in window"}
+{"seed": 71, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.55, "kill_at_ms": 592.78, "outcome": "in window"}
+{"seed": 72, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.14, "kill_at_ms": 292.18, "outcome": "in window"}
+{"seed": 73, "band": "held", "answered": false, "receipt": true, "rtt_ms": 13.85, "kill_at_ms": 542.7, "outcome": "in window"}
+{"seed": 74, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.15, "kill_at_ms": 1237.75, "outcome": "in window"}
+{"seed": 75, "band": "held", "answered": false, "receipt": true, "rtt_ms": 18.15, "kill_at_ms": 750.09, "outcome": "in window"}
+{"seed": 76, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.79, "kill_at_ms": 653.06, "outcome": "in window"}
+{"seed": 77, "band": "held", "answered": false, "receipt": true, "rtt_ms": 23.18, "kill_at_ms": 1170.53, "outcome": "in window"}
+{"seed": 78, "band": "held", "answered": false, "receipt": true, "rtt_ms": 7.14, "kill_at_ms": 1180.94, "outcome": "in window"}
+{"seed": 79, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.69, "kill_at_ms": 379.25, "outcome": "in window"}
+{"seed": 80, "band": "held", "answered": false, "receipt": true, "rtt_ms": 19.79, "kill_at_ms": 535.68, "outcome": "in window"}
+{"seed": 81, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.76, "kill_at_ms": 814.51, "outcome": "in window"}
+{"seed": 82, "band": "held", "answered": false, "receipt": true, "rtt_ms": 7.48, "kill_at_ms": 377.4, "outcome": "in window"}
+{"seed": 83, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.66, "kill_at_ms": 802.72, "outcome": "in window"}
+{"seed": 84, "band": "held", "answered": false, "receipt": true, "rtt_ms": 31.85, "kill_at_ms": 1093.76, "outcome": "in window"}
+{"seed": 85, "band": "held", "answered": false, "receipt": true, "rtt_ms": 17.33, "kill_at_ms": 448.17, "outcome": "in window"}
+{"seed": 86, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.68, "kill_at_ms": 1158.17, "outcome": "in window"}
+{"seed": 87, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.93, "kill_at_ms": 379.61, "outcome": "in window"}
+{"seed": 88, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.45, "kill_at_ms": 684.71, "outcome": "in window"}
+{"seed": 89, "band": "held", "answered": false, "receipt": true, "rtt_ms": 14.37, "kill_at_ms": 304.49, "outcome": "in window"}
+{"seed": 90, "band": "held", "answered": false, "receipt": true, "rtt_ms": 12.79, "kill_at_ms": 450.8, "outcome": "in window"}
+{"seed": 91, "band": "held", "answered": false, "receipt": true, "rtt_ms": 16.77, "kill_at_ms": 308.61, "outcome": "in window"}
+{"seed": 92, "band": "held", "answered": false, "receipt": true, "rtt_ms": 23.99, "kill_at_ms": 717.25, "outcome": "in window"}
+{"seed": 93, "band": "held", "answered": false, "receipt": true, "rtt_ms": 32.47, "kill_at_ms": 1311.05, "outcome": "in window"}
+{"seed": 94, "band": "held", "answered": false, "receipt": true, "rtt_ms": 28.12, "kill_at_ms": 870.22, "outcome": "in window"}
+{"seed": 95, "band": "held", "answered": false, "receipt": true, "rtt_ms": 15.85, "kill_at_ms": 1120.12, "outcome": "in window"}
+{"seed": 96, "band": "held", "answered": false, "receipt": true, "rtt_ms": 9.1, "kill_at_ms": 649.26, "outcome": "in window"}
+{"seed": 97, "band": "held", "answered": false, "receipt": true, "rtt_ms": 21.56, "kill_at_ms": 444.23, "outcome": "in window"}
+{"seed": 98, "band": "held", "answered": false, "receipt": true, "rtt_ms": 8.64, "kill_at_ms": 632.0, "outcome": "in window"}
+{"seed": 99, "band": "held", "answered": false, "receipt": true, "rtt_ms": 21.81, "kill_at_ms": 695.68, "outcome": "in window"}
+{"seed": 0, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 19.86, "kill_at_ms": 1233.17, "outcome": "VIOLATION"}
+{"seed": 1, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.42, "kill_at_ms": 364.66, "outcome": "VIOLATION"}
+{"seed": 2, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.47, "kill_at_ms": 1351.71, "outcome": "VIOLATION"}
+{"seed": 3, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.03, "kill_at_ms": 488.58, "outcome": "VIOLATION"}
+{"seed": 4, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.48, "kill_at_ms": 486.74, "outcome": "VIOLATION"}
+{"seed": 5, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 6.38, "kill_at_ms": 953.86, "outcome": "VIOLATION"}
+{"seed": 6, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 7.35, "kill_at_ms": 1159.36, "outcome": "VIOLATION"}
+{"seed": 7, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.42, "kill_at_ms": 592.02, "outcome": "VIOLATION"}
+{"seed": 8, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.33, "kill_at_ms": 486.37, "outcome": "VIOLATION"}
+{"seed": 9, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 6.16, "kill_at_ms": 761.77, "outcome": "VIOLATION"}
+{"seed": 10, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.23, "kill_at_ms": 887.91, "outcome": "VIOLATION"}
+{"seed": 11, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.08, "kill_at_ms": 745.94, "outcome": "VIOLATION"}
+{"seed": 12, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.88, "kill_at_ms": 784.37, "outcome": "VIOLATION"}
+{"seed": 13, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.95, "kill_at_ms": 513.76, "outcome": "VIOLATION"}
+{"seed": 14, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.7, "kill_at_ms": 330.9, "outcome": "VIOLATION"}
+{"seed": 15, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.99, "kill_at_ms": 1362.28, "outcome": "VIOLATION"}
+{"seed": 16, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.28, "kill_at_ms": 637.11, "outcome": "VIOLATION"}
+{"seed": 17, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.29, "kill_at_ms": 830.67, "outcome": "VIOLATION"}
+{"seed": 18, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 27.22, "kill_at_ms": 444.74, "outcome": "VIOLATION"}
+{"seed": 19, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.01, "kill_at_ms": 1015.56, "outcome": "VIOLATION"}
+{"seed": 20, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 21.33, "kill_at_ms": 1308.1, "outcome": "VIOLATION"}
+{"seed": 21, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.36, "kill_at_ms": 401.3, "outcome": "VIOLATION"}
+{"seed": 22, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.04, "kill_at_ms": 1353.9, "outcome": "VIOLATION"}
+{"seed": 23, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.24, "kill_at_ms": 1313.08, "outcome": "VIOLATION"}
+{"seed": 24, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.35, "kill_at_ms": 1057.16, "outcome": "VIOLATION"}
+{"seed": 25, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.91, "kill_at_ms": 655.27, "outcome": "VIOLATION"}
+{"seed": 26, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.78, "kill_at_ms": 1101.53, "outcome": "VIOLATION"}
+{"seed": 27, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.41, "kill_at_ms": 980.61, "outcome": "VIOLATION"}
+{"seed": 28, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.8, "kill_at_ms": 339.35, "outcome": "VIOLATION"}
+{"seed": 29, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 15.63, "kill_at_ms": 873.37, "outcome": "VIOLATION"}
+{"seed": 30, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.92, "kill_at_ms": 849.81, "outcome": "VIOLATION"}
+{"seed": 31, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.62, "kill_at_ms": 218.35, "outcome": "VIOLATION"}
+{"seed": 32, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.31, "kill_at_ms": 297.22, "outcome": "VIOLATION"}
+{"seed": 33, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 20.96, "kill_at_ms": 905.36, "outcome": "VIOLATION"}
+{"seed": 34, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.4, "kill_at_ms": 838.12, "outcome": "VIOLATION"}
+{"seed": 35, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.13, "kill_at_ms": 861.56, "outcome": "VIOLATION"}
+{"seed": 36, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.41, "kill_at_ms": 597.85, "outcome": "VIOLATION"}
+{"seed": 37, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 27.76, "kill_at_ms": 1046.17, "outcome": "VIOLATION"}
+{"seed": 38, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.15, "kill_at_ms": 981.52, "outcome": "VIOLATION"}
+{"seed": 39, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 13.13, "kill_at_ms": 464.95, "outcome": "VIOLATION"}
+{"seed": 40, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 13.85, "kill_at_ms": 764.18, "outcome": "VIOLATION"}
+{"seed": 41, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.57, "kill_at_ms": 659.8, "outcome": "VIOLATION"}
+{"seed": 42, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 18.18, "kill_at_ms": 985.49, "outcome": "VIOLATION"}
+{"seed": 43, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.56, "kill_at_ms": 248.82, "outcome": "VIOLATION"}
+{"seed": 44, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 15.13, "kill_at_ms": 705.38, "outcome": "VIOLATION"}
+{"seed": 45, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.58, "kill_at_ms": 530.83, "outcome": "VIOLATION"}
+{"seed": 46, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.46, "kill_at_ms": 1269.38, "outcome": "VIOLATION"}
+{"seed": 47, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.56, "kill_at_ms": 636.77, "outcome": "VIOLATION"}
+{"seed": 48, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.67, "kill_at_ms": 872.46, "outcome": "VIOLATION"}
+{"seed": 49, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 15.64, "kill_at_ms": 295.9, "outcome": "VIOLATION"}
+{"seed": 50, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.78, "kill_at_ms": 811.83, "outcome": "VIOLATION"}
+{"seed": 51, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.23, "kill_at_ms": 494.45, "outcome": "VIOLATION"}
+{"seed": 52, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.14, "kill_at_ms": 1388.17, "outcome": "VIOLATION"}
+{"seed": 53, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.54, "kill_at_ms": 955.11, "outcome": "VIOLATION"}
+{"seed": 54, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.9, "kill_at_ms": 1300.27, "outcome": "VIOLATION"}
+{"seed": 55, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.14, "kill_at_ms": 322.55, "outcome": "VIOLATION"}
+{"seed": 56, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.98, "kill_at_ms": 1362.08, "outcome": "VIOLATION"}
+{"seed": 57, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.66, "kill_at_ms": 265.74, "outcome": "VIOLATION"}
+{"seed": 58, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.08, "kill_at_ms": 899.99, "outcome": "VIOLATION"}
+{"seed": 59, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 15.18, "kill_at_ms": 484.2, "outcome": "VIOLATION"}
+{"seed": 60, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.01, "kill_at_ms": 583.37, "outcome": "VIOLATION"}
+{"seed": 61, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.3, "kill_at_ms": 807.68, "outcome": "VIOLATION"}
+{"seed": 62, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.18, "kill_at_ms": 1315.77, "outcome": "VIOLATION"}
+{"seed": 63, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.79, "kill_at_ms": 748.95, "outcome": "VIOLATION"}
+{"seed": 64, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.17, "kill_at_ms": 773.56, "outcome": "VIOLATION"}
+{"seed": 65, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.68, "kill_at_ms": 700.37, "outcome": "VIOLATION"}
+{"seed": 66, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.94, "kill_at_ms": 287.91, "outcome": "VIOLATION"}
+{"seed": 67, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.22, "kill_at_ms": 293.98, "outcome": "VIOLATION"}
+{"seed": 68, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 14.44, "kill_at_ms": 1104.44, "outcome": "VIOLATION"}
+{"seed": 69, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.44, "kill_at_ms": 1024.53, "outcome": "VIOLATION"}
+{"seed": 70, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.03, "kill_at_ms": 1294.75, "outcome": "VIOLATION"}
+{"seed": 71, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.79, "kill_at_ms": 592.3, "outcome": "VIOLATION"}
+{"seed": 72, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.78, "kill_at_ms": 291.9, "outcome": "VIOLATION"}
+{"seed": 73, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 13.38, "kill_at_ms": 549.16, "outcome": "VIOLATION"}
+{"seed": 74, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.4, "kill_at_ms": 1235.07, "outcome": "VIOLATION"}
+{"seed": 75, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.24, "kill_at_ms": 744.25, "outcome": "VIOLATION"}
+{"seed": 76, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 5.03, "kill_at_ms": 649.7, "outcome": "VIOLATION"}
+{"seed": 77, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.83, "kill_at_ms": 1163.77, "outcome": "VIOLATION"}
+{"seed": 78, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.15, "kill_at_ms": 1181.53, "outcome": "VIOLATION"}
+{"seed": 79, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.9, "kill_at_ms": 377.3, "outcome": "VIOLATION"}
+{"seed": 80, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.62, "kill_at_ms": 529.4, "outcome": "VIOLATION"}
+{"seed": 81, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 27.19, "kill_at_ms": 834.32, "outcome": "VIOLATION"}
+{"seed": 82, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.52, "kill_at_ms": 377.19, "outcome": "VIOLATION"}
+{"seed": 83, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.07, "kill_at_ms": 798.46, "outcome": "VIOLATION"}
+{"seed": 84, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 13.07, "kill_at_ms": 1090.91, "outcome": "VIOLATION"}
+{"seed": 85, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 15.17, "kill_at_ms": 454.68, "outcome": "VIOLATION"}
+{"seed": 86, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.38, "kill_at_ms": 1153.22, "outcome": "VIOLATION"}
+{"seed": 87, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.59, "kill_at_ms": 378.74, "outcome": "VIOLATION"}
+{"seed": 88, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.18, "kill_at_ms": 680.16, "outcome": "VIOLATION"}
+{"seed": 89, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.3, "kill_at_ms": 300.61, "outcome": "VIOLATION"}
+{"seed": 90, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.58, "kill_at_ms": 447.98, "outcome": "VIOLATION"}
+{"seed": 91, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.4, "kill_at_ms": 303.62, "outcome": "VIOLATION"}
+{"seed": 92, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.39, "kill_at_ms": 708.64, "outcome": "VIOLATION"}
+{"seed": 93, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.15, "kill_at_ms": 1297.96, "outcome": "VIOLATION"}
+{"seed": 94, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 2.7, "kill_at_ms": 858.86, "outcome": "VIOLATION"}
+{"seed": 95, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.5, "kill_at_ms": 1115.69, "outcome": "VIOLATION"}
+{"seed": 96, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.44, "kill_at_ms": 648.16, "outcome": "VIOLATION"}
+{"seed": 97, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 4.36, "kill_at_ms": 437.8, "outcome": "VIOLATION"}
+{"seed": 98, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 24.05, "kill_at_ms": 651.73, "outcome": "VIOLATION"}
+{"seed": 99, "band": "mutant", "answered": true, "receipt": false, "rtt_ms": 3.54, "kill_at_ms": 688.31, "outcome": "VIOLATION"}

@@ -337,7 +337,7 @@ def _point(row: Any, facts: TrialFacts, target: str, row_path: Any) -> list[str]
         f"   ·  duplicate_effects={row.metrics['duplicate_effects']}"
         f"  duplicate_receipts={row.metrics['duplicate_receipts']}",
         f"     verifier: {verdicts}"
-        "        (· = N/A, with the missing input named in the row)",
+        "        (· = N/A: an input the verdict needs is missing; `crashproof verify` names it)",
     ]
     if facts.replay is not None:
         lines.append(

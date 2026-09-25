@@ -336,7 +336,7 @@ def _paired(metric: str, pairs: list[Pairing], cell: str, rng: random.Random) ->
 
 def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = ()) -> str:
     """`sources` is `(results directory, the rows A and B were selected from it)`."""
-    from crashproof.report.markdown import sources_block
+    from crashproof.report.markdown import faq, sources_block
 
     out = [
         f"# compare — `{c.a_name}` (A) vs `{c.b_name}` (B)",
@@ -393,6 +393,9 @@ def render(c: Comparison, *, sources: list[tuple[str, list[dict[str, Any]]]] = (
         FIXTURE_CAVEAT,
         "",
         MDD_TABLES,
+        "",
+        # §15.11 rule 6: the FAQ in every report, a comparison included.
+        faq(confirmed=bool(c.screening)),
     ]
     return "\n".join(out)
 

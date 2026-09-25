@@ -45,10 +45,25 @@ DELEGATION_INVARIANTS = ("S8",)
 #: C1 arrives with replay as a first-class mode (v1, day 5). Listed apart from the MVP set because
 #: a cell that never had it is not missing a column — it is a cell from before the column existed.
 CONSISTENCY_INVARIANTS = ("C1",)
-#: C2 arrives with continuation segments (v1, week 3). Kept apart from C1 and out of the matrix's
-#: columns for the same reason: a run that never crossed a boundary prints N/A, and no published
-#: page had one.
+#: C2 arrives with continuation segments (v1, week 3). Kept apart from C1 for the same reason: a run
+#: that never crossed a boundary prints N/A, which is every workload but W3.
 SEGMENT_INVARIANTS = ("C2",)
+
+#: Every sentence an N/A below can carry, per invariant (§15.11 rule 3). A row keeps the verdict and not
+#: the sentence, so a page prints these as what that invariant's `·` can mean, and `crashproof verify`
+#: prints the one a trial got. `tests/unit/test_verifier.py` pins this against the calls below.
+NOT_APPLICABLE_WHEN: dict[str, tuple[str, ...]] = {
+    "S2": ("the runtime exposes no per-effect committed set",),
+    "S4": ("the runtime exposes no per-attempt STARTED with timestamps",),
+    "S5": ("the runtime exposes no step lifecycle",),
+    "S6": ("nothing was cancelled in this trial", "the runtime exposes no cancel-acknowledgement ordering"),
+    "S7": ("this workload gates nothing",
+           "the runtime exposes no journal with APPROVAL_REQUESTED/DECIDED to bind an applied effect to"),
+    "S8": ("this workload delegates nothing", "the runtime exposes no journal",
+           "needs the children's journals; the collector supplies the parent's only"),
+    "C1": ("the runtime exposes no replay mode",),
+    "C2": ("no continuation boundary in this run", "the runtime exposes no journal"),
+}
 
 
 @dataclass(slots=True)

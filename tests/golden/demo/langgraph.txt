@@ -31,7 +31,7 @@ AFTER RESTART
 THE POINT
 ────────────────────────────────────────────────────────────────────────
 [18] World: receipts(issues.create#1)=2  applied=2   ·  duplicate_effects=1  duplicate_receipts=1
-     verifier: S1✓ S2· S3✓ S4· S5· L1✓ L2✓ C1·        (· = N/A, with the missing input named in the row)
+     verifier: S1✓ S2· S3✓ S4· S5· L1✓ L2✓ S6· S7· S8· C1· C2·        (· = N/A: an input the verdict needs is missing; `crashproof verify` names it)
 [19] replay --verify: N/A — this runtime exposes no replay mode to check against
 [20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
 

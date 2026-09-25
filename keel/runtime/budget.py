@@ -19,7 +19,9 @@ no attempt and therefore no bill — a pre-dispatch refusal, `attempt_no = 0`, `
 (`providers/pricing.py`). An unpriced binding is admitted and makes the run's figure a floor, not a
 bound — so from then on `max_usd` is not admitted against at all, and `keel show` says so.
 
-# ponytail: `max_wall_clock` needs a deadline the waiting kinds respect (§16.4); it arrives with them.
+`max_wall_clock` and `deadline_at` are not admitted here: a deadline is not a quantity to reserve, so
+the step engine refuses a STARTED past it in that same transaction (`StepEngine._admit_deadline`) and
+caps every park's wake time at it.
 """
 
 from __future__ import annotations

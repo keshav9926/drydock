@@ -1,6 +1,6 @@
 # restate-sdk: `restate-sdk[pydantic-ai]` does not install what `import restate.ext.pydantic` needs
 
-## Pre-filing notes (for the owner; delete this section before filing)
+## Pre-filing notes (why it was not filed again)
 
 | | |
 |---|---|

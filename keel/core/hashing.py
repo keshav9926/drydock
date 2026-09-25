@@ -6,6 +6,7 @@ contract (Appendix A §2) is a property of this module's inputs, not a filter in
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from typing import Any
@@ -30,7 +31,35 @@ def _encode(o: Any) -> Any:
 
 
 def canonical_args(args: Any) -> str:
-    return canonical_json(args)
+    """A step's arguments, total and process-independent (§9.1): `bytes` as base64 (a model's own bytes
+    fields follow its `ser_json_bytes`), and a `set` or `frozenset` anywhere in them refused, bare or
+    inside a model, because its order follows per-process hash randomisation and two workers would hash
+    the same call differently. §9.1 refuses those at registration; arguments here are a keyword dict
+    with no declared type, so they are refused at the call, before anything is journaled. A value that
+    encoded before this rule and holds no set encodes exactly as it did."""
+    return json.dumps(args, sort_keys=True, separators=(",", ":"), default=_encode_arg)
+
+
+_UNORDERED = "a set or frozenset is not a canonical argument (its order is per-process); pass a sorted list"
+
+
+def _encode_arg(o: Any) -> Any:
+    if isinstance(o, (bytes, bytearray)):
+        return base64.b64encode(o).decode("ascii")
+    if isinstance(o, (set, frozenset)):
+        raise TypeError(_UNORDERED)
+    if hasattr(o, "model_dump"):
+        # JSON mode turns a set field into a list in iteration order: the case the rule exists for.
+        _refuse_sets(o.model_dump(mode="python"))
+    return _encode(o)
+
+
+def _refuse_sets(value: Any) -> None:
+    if isinstance(value, (set, frozenset)):
+        raise TypeError(_UNORDERED)
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, (list, tuple)) else ()
+    for item in items:
+        _refuse_sets(item)
 
 
 def args_hash(args: Any) -> str:

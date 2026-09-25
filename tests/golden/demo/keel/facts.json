@@ -4,13 +4,13 @@
       "endpoint": "kv.search",
       "effect_key": null,
       "logical_identity": "kv.search#1",
-      "ts": 1789263135.2640746
+      "ts": 1790336436.5482872
     },
     {
       "endpoint": "issues.create",
       "effect_key": null,
       "logical_identity": "issues.create#1",
-      "ts": 1789263135.3537526
+      "ts": 1790336436.6727726
     }
   ],
   "world_applied": {
@@ -23,14 +23,14 @@
     {
       "seq": 1,
       "type": "RUN_CREATED",
-      "ts": "2026-09-13T01:32:14.094602+00:00",
+      "ts": "2026-09-25T11:40:35.049796+00:00",
       "lease_epoch": 0,
       "step_index": null,
       "attempt_no": null,
       "body": {
         "type": "RUN_CREATED",
         "program": "tool_chain",
-        "program_version": "1.0+be0715",
+        "program_version": "1.0+e5ab55",
         "args": {
           "task": "file an issue"
         },
@@ -40,20 +40,23 @@
           "max_tokens": null,
           "deadline_at": null,
           "max_tool_calls": null,
+          "max_wall_clock": null,
           "max_model_calls": null
         },
         "model_config_": {
-          "provider": "scripted"
+          "provider": "scripted",
+          "pricing_ref": "scripted-2026-09"
         },
         "parent_run_id": null,
         "delegation_id": null,
-        "fork_of": null
+        "fork_of": null,
+        "policy": null
       }
     },
     {
       "seq": 2,
       "type": "RECOVERY_STARTED",
-      "ts": "2026-09-13T01:32:15.147270+00:00",
+      "ts": "2026-09-25T11:40:36.375321+00:00",
       "lease_epoch": 1,
       "step_index": null,
       "attempt_no": null,
@@ -62,13 +65,14 @@
         "lease_epoch": 1,
         "cause": "START",
         "from_seq": 1,
-        "from_segment": 0
+        "from_segment": 0,
+        "forced_by": null
       }
     },
     {
       "seq": 3,
       "type": "RECOVERY_COMPLETED",
-      "ts": "2026-09-13T01:32:15.177614+00:00",
+      "ts": "2026-09-25T11:40:36.418236+00:00",
       "lease_epoch": 1,
       "step_index": null,
       "attempt_no": null,
@@ -82,7 +86,7 @@
     {
       "seq": 4,
       "type": "STEP_INTENDED",
-      "ts": "2026-09-13T01:32:15.199221+00:00",
+      "ts": "2026-09-25T11:40:36.450694+00:00",
       "lease_epoch": 1,
       "step_index": 0,
       "attempt_no": null,
@@ -109,13 +113,13 @@
         "effect_class": null,
         "modifiers": [],
         "policy_verdict": "allow",
-        "program_version": "1.0+be0715"
+        "program_version": "1.0+e5ab55"
       }
     },
     {
       "seq": 5,
       "type": "STEP_ATTEMPT_STARTED",
-      "ts": "2026-09-13T01:32:15.199221+00:00",
+      "ts": "2026-09-25T11:40:36.450694+00:00",
       "lease_epoch": 1,
       "step_index": 0,
       "attempt_no": 1,
@@ -124,15 +128,20 @@
         "step_index": 0,
         "attempt_no": 1,
         "lease_epoch": 1,
-        "started_at": "2026-09-13T01:32:15.199221Z",
+        "started_at": "2026-09-25T11:40:36.450837Z",
         "attempt_deadline": null,
-        "reservation": 1055
+        "reservation": 1055,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015453
       }
     },
     {
       "seq": 6,
       "type": "STEP_COMPLETED",
-      "ts": "2026-09-13T01:32:15.228398+00:00",
+      "ts": "2026-09-25T11:40:36.479721+00:00",
       "lease_epoch": 1,
       "step_index": 0,
       "attempt_no": 1,
@@ -144,7 +153,8 @@
           "text": "",
           "usage": {
             "input_tokens": 31,
-            "output_tokens": 0
+            "output_tokens": 0,
+            "cache_read_tokens": 0
           },
           "message": {
             "role": "assistant",
@@ -168,7 +178,8 @@
         },
         "usage": {
           "input_tokens": 31,
-          "output_tokens": 0
+          "output_tokens": 0,
+          "cache_read_tokens": 0
         },
         "provider_meta": {
           "node": "start",
@@ -181,7 +192,7 @@
     {
       "seq": 7,
       "type": "STEP_INTENDED",
-      "ts": "2026-09-13T01:32:15.241917+00:00",
+      "ts": "2026-09-25T11:40:36.498514+00:00",
       "lease_epoch": 1,
       "step_index": 1,
       "attempt_no": null,
@@ -195,17 +206,17 @@
           "q": "flaky test in ci"
         },
         "request_hash": null,
-        "effect_key": "d84316a27af5acf1e5ab8abe06564037",
+        "effect_key": "fecf5255c5623b72247123e7d3343fb5",
         "effect_class": "PURE",
         "modifiers": [],
         "policy_verdict": "allow",
-        "program_version": "1.0+be0715"
+        "program_version": "1.0+e5ab55"
       }
     },
     {
       "seq": 8,
       "type": "STEP_ATTEMPT_STARTED",
-      "ts": "2026-09-13T01:32:15.241917+00:00",
+      "ts": "2026-09-25T11:40:36.498514+00:00",
       "lease_epoch": 1,
       "step_index": 1,
       "attempt_no": 1,
@@ -214,15 +225,17 @@
         "step_index": 1,
         "attempt_no": 1,
         "lease_epoch": 1,
-        "started_at": "2026-09-13T01:32:15.241917Z",
+        "started_at": "2026-09-25T11:40:36.498657Z",
         "attempt_deadline": null,
-        "reservation": null
+        "reservation": null,
+        "price": null,
+        "reservation_usd": null
       }
     },
     {
       "seq": 9,
       "type": "STEP_COMPLETED",
-      "ts": "2026-09-13T01:32:15.274454+00:00",
+      "ts": "2026-09-25T11:40:36.556869+00:00",
       "lease_epoch": 1,
       "step_index": 1,
       "attempt_no": 1,
@@ -246,7 +259,7 @@
     {
       "seq": 10,
       "type": "STEP_INTENDED",
-      "ts": "2026-09-13T01:32:15.291758+00:00",
+      "ts": "2026-09-25T11:40:36.582143+00:00",
       "lease_epoch": 1,
       "step_index": 2,
       "attempt_no": null,
@@ -291,13 +304,13 @@
         "effect_class": null,
         "modifiers": [],
         "policy_verdict": "allow",
-        "program_version": "1.0+be0715"
+        "program_version": "1.0+e5ab55"
       }
     },
     {
       "seq": 11,
       "type": "STEP_ATTEMPT_STARTED",
-      "ts": "2026-09-13T01:32:15.291758+00:00",
+      "ts": "2026-09-25T11:40:36.582143+00:00",
       "lease_epoch": 1,
       "step_index": 2,
       "attempt_no": 1,
@@ -306,15 +319,20 @@
         "step_index": 2,
         "attempt_no": 1,
         "lease_epoch": 1,
-        "started_at": "2026-09-13T01:32:15.291758Z",
+        "started_at": "2026-09-25T11:40:36.582286Z",
         "attempt_deadline": null,
-        "reservation": 1111
+        "reservation": 1111,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015621
       }
     },
     {
       "seq": 12,
       "type": "STEP_COMPLETED",
-      "ts": "2026-09-13T01:32:15.318165+00:00",
+      "ts": "2026-09-25T11:40:36.609013+00:00",
       "lease_epoch": 1,
       "step_index": 2,
       "attempt_no": 1,
@@ -326,7 +344,8 @@
           "text": "",
           "usage": {
             "input_tokens": 87,
-            "output_tokens": 0
+            "output_tokens": 0,
+            "cache_read_tokens": 0
           },
           "message": {
             "role": "assistant",
@@ -351,7 +370,8 @@
         },
         "usage": {
           "input_tokens": 87,
-          "output_tokens": 0
+          "output_tokens": 0,
+          "cache_read_tokens": 0
         },
         "provider_meta": {
           "node": "search1",
@@ -364,7 +384,7 @@
     {
       "seq": 13,
       "type": "STEP_INTENDED",
-      "ts": "2026-09-13T01:32:15.327651+00:00",
+      "ts": "2026-09-25T11:40:36.623061+00:00",
       "lease_epoch": 1,
       "step_index": 3,
       "attempt_no": null,
@@ -379,17 +399,17 @@
           "title": "CI flake: test_retry"
         },
         "request_hash": null,
-        "effect_key": "3f7ef6592549003042c4f6e911567059",
+        "effect_key": "145ab19a6711318bc4d6cff0fd7c259f",
         "effect_class": "EXTERNAL",
         "modifiers": [],
         "policy_verdict": "allow",
-        "program_version": "1.0+be0715"
+        "program_version": "1.0+e5ab55"
       }
     },
     {
       "seq": 14,
       "type": "STEP_ATTEMPT_STARTED",
-      "ts": "2026-09-13T01:32:15.327651+00:00",
+      "ts": "2026-09-25T11:40:36.623061+00:00",
       "lease_epoch": 1,
       "step_index": 3,
       "attempt_no": 1,
@@ -398,15 +418,17 @@
         "step_index": 3,
         "attempt_no": 1,
         "lease_epoch": 1,
-        "started_at": "2026-09-13T01:32:15.327651Z",
-        "attempt_deadline": "2026-09-13T01:32:16.327651Z",
-        "reservation": null
+        "started_at": "2026-09-25T11:40:36.623204Z",
+        "attempt_deadline": "2026-09-25T11:40:37.623204Z",
+        "reservation": null,
+        "price": null,
+        "reservation_usd": null
       }
     },
     {
       "seq": 15,
       "type": "RECOVERY_STARTED",
-      "ts": "2026-09-13T01:32:17.716089+00:00",
+      "ts": "2026-09-25T11:40:38.826281+00:00",
       "lease_epoch": 2,
       "step_index": null,
       "attempt_no": null,
@@ -415,13 +437,14 @@
         "lease_epoch": 2,
         "cause": "ORPHANED",
         "from_seq": 14,
-        "from_segment": 0
+        "from_segment": 0,
+        "forced_by": null
       }
     },
     {
       "seq": 16,
       "type": "STEP_AMBIGUOUS",
-      "ts": "2026-09-13T01:32:17.745010+00:00",
+      "ts": "2026-09-25T11:40:38.853367+00:00",
       "lease_epoch": 2,
       "step_index": 3,
       "attempt_no": 1,
@@ -435,7 +458,7 @@
     {
       "seq": 17,
       "type": "STEP_RESOLVED",
-      "ts": "2026-09-13T01:32:17.782885+00:00",
+      "ts": "2026-09-25T11:40:38.873539+00:00",
       "lease_epoch": 2,
       "step_index": 3,
       "attempt_no": 1,
@@ -461,7 +484,7 @@
     {
       "seq": 18,
       "type": "RECOVERY_COMPLETED",
-      "ts": "2026-09-13T01:32:17.796482+00:00",
+      "ts": "2026-09-25T11:40:38.892676+00:00",
       "lease_epoch": 2,
       "step_index": null,
       "attempt_no": null,
@@ -475,7 +498,7 @@
     {
       "seq": 19,
       "type": "STEP_INTENDED",
-      "ts": "2026-09-13T01:32:17.811403+00:00",
+      "ts": "2026-09-25T11:40:38.913131+00:00",
       "lease_epoch": 2,
       "step_index": 4,
       "attempt_no": null,
@@ -538,13 +561,13 @@
         "effect_class": null,
         "modifiers": [],
         "policy_verdict": "allow",
-        "program_version": "1.0+be0715"
+        "program_version": "1.0+e5ab55"
       }
     },
     {
       "seq": 20,
       "type": "STEP_ATTEMPT_STARTED",
-      "ts": "2026-09-13T01:32:17.811403+00:00",
+      "ts": "2026-09-25T11:40:38.913131+00:00",
       "lease_epoch": 2,
       "step_index": 4,
       "attempt_no": 1,
@@ -553,15 +576,20 @@
         "step_index": 4,
         "attempt_no": 1,
         "lease_epoch": 2,
-        "started_at": "2026-09-13T01:32:17.811403Z",
+        "started_at": "2026-09-25T11:40:38.913274Z",
         "attempt_deadline": null,
-        "reservation": 1186
+        "reservation": 1186,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015846
       }
     },
     {
       "seq": 21,
       "type": "STEP_COMPLETED",
-      "ts": "2026-09-13T01:32:17.832309+00:00",
+      "ts": "2026-09-25T11:40:38.940245+00:00",
       "lease_epoch": 2,
       "step_index": 4,
       "attempt_no": 1,
@@ -573,7 +601,8 @@
           "text": "Created issue 6d9c0ecf83bb",
           "usage": {
             "input_tokens": 162,
-            "output_tokens": 6
+            "output_tokens": 6,
+            "cache_read_tokens": 0
           },
           "message": {
             "role": "assistant",
@@ -589,7 +618,8 @@
         },
         "usage": {
           "input_tokens": 162,
-          "output_tokens": 6
+          "output_tokens": 6,
+          "cache_read_tokens": 0
         },
         "provider_meta": {
           "node": "search1-create_issue1",
@@ -602,7 +632,7 @@
     {
       "seq": 22,
       "type": "RUN_COMPLETED",
-      "ts": "2026-09-13T01:32:17.842164+00:00",
+      "ts": "2026-09-25T11:40:38.951297+00:00",
       "lease_epoch": 2,
       "step_index": null,
       "attempt_no": null,
@@ -635,10 +665,14 @@
       "landmark": "tool:create_issue",
       "occurrence": 1,
       "params": {},
-      "trigger_observed_at": 1789263135.3606167,
-      "trigger_observed_mono_ns": 334662641100700,
-      "sut_pid": 3548,
-      "sut_ref": {},
+      "trigger_observed_at": 1790336436.6803894,
+      "trigger_observed_mono_ns": 196574344751000,
+      "sut_pid": 24984,
+      "sut_ref": {
+        "run_id": "01a0d85e-0366-7fcf-81f7-fb527bce493c",
+        "step_index": 3,
+        "attempt_no": 1
+      },
       "executed": true
     }
   ],
@@ -648,20 +682,20 @@
   "reached_terminal": true,
   "replay": {
     "ok": true,
-    "run_id": "01a09864-bd8e-704f-a5fa-fc41336230a0",
-    "program_version": "1.0+be0715",
+    "run_id": "01a0d85e-0366-7fcf-81f7-fb527bce493c",
+    "program_version": "1.0+e5ab55",
     "live_from_step": null,
     "replayed_steps": 5,
     "stopped": null,
     "diff": null,
     "error": null,
     "drift": [],
-    "projection_hash": "7ed328693de7c8c43d28629daf9ff81809899b83897a1cfb0d4b449f9110c0b0",
+    "projection_hash": "24e3b58504e76025f42e1e105a8cfa8a2385a3c9b199a0b0713b4414449e7056",
     "projection_matches": null
   },
   "sut_effects": [
     {
-      "effect_key": "d84316a27af5acf1e5ab8abe06564037",
+      "effect_key": "fecf5255c5623b72247123e7d3343fb5",
       "step_index": 1,
       "tool": "search",
       "class": "PURE",
@@ -670,7 +704,7 @@
       "resolution": null
     },
     {
-      "effect_key": "3f7ef6592549003042c4f6e911567059",
+      "effect_key": "145ab19a6711318bc4d6cff0fd7c259f",
       "step_index": 3,
       "tool": "create_issue",
       "class": "EXTERNAL",
@@ -678,5 +712,8 @@
       "external_ref": "issues.create#1",
       "resolution": "probe"
     }
-  ]
+  ],
+  "gated_tools": {},
+  "sut_checkpoints": null,
+  "sut_commits": null
 }

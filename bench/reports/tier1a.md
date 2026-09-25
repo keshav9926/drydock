@@ -7,28 +7,43 @@ Workload `tool_chain_1_effect`. One cell is n **seeds**, not n trials of one see
 | (location, fault) | `keel.default` | `langgraph.sync` |
 |---|---|---|
 |  | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
-| `model_500@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.1s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.7s · +calls 1 |
-| `model_timeout@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.2s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.1s · +calls 0 |
-| `sigterm_grace_ok@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
-| `sigterm_grace_too_short@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
-| `tool_500@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.7s · +calls 0 |
-| `tool_delay@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 1.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 |
-| `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 0.0s · +calls 0 |
+| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
+| `model_500@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.1s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.7s · +calls 1 |
+| `model_timeout@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.2s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.1s · +calls 0 |
+| `sigterm_grace_ok@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
+| `sigterm_grace_too_short@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
+| `tool_500@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 2.7s · +calls 0 |
+| `tool_delay@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 1.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 |
+| `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 30 · dup_rcpt 30<br>lat 0.0s · +calls 0 |
 
 ## IDEMPOTENT  ·  key_source=framework, none
 
 | (location, fault) | `keel.default` | `langgraph.sync` |
 |---|---|---|
 |  | recovery=self<br>claims: PURE effectively-once · IDEM effectively-once · EXT at-least-once | recovery=harness<br>claims: PURE at-least-once · IDEM at-least-once · EXT at-least-once |
-| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
-| `model_500@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.1s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.8s · +calls 1 |
-| `model_timeout@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.2s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.1s · +calls 0 |
-| `sigterm_grace_ok@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.4s · +calls 0 |
-| `sigterm_grace_too_short@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
-| `tool_500@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.1s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.8s · +calls 0 |
-| `tool_delay@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.1s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 |
-| `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· C1·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 0 |
+| `baseline` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 |
+| `model_500@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 0.1s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.8s · +calls 1 |
+| `model_timeout@before:model_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>lat 2.2s · +calls 1 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>lat 2.1s · +calls 0 |
+| `sigterm_grace_ok@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.4s · +calls 0 |
+| `sigterm_grace_too_short@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0 · lost 0<br>+calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.3s · +calls 0 |
+| `tool_500@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.1s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 2.8s · +calls 0 |
+| `tool_delay@after:tool_effect` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 1.1s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 0<br>+calls 0 |
+| `tool_timeout@before:tool_call` | S1✓ S2✓ S3✓ S4✓ S5✓ S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30 · lost 0<br>lat 0.0s · +calls 0 | S1✓ S2· S3✓ S4· S5· S6· S7· S8· C1· C2·<br>L1 30/30 [0.89–1.00]<br>dup_eff 0 · dup_rcpt 30<br>lat 0.0s · +calls 0 |
+
+## Reading a cell
+
+`✓` holds in every scored trial of the cell; `✗` fails in at least one, and each failing trial is under Counterexamples; `·` is N/A — an input the verdict needs is missing, which is never a pass.
+
+| `·` | N/A when |
+|---|---|
+| S2 | the runtime exposes no per-effect committed set |
+| S4 | the runtime exposes no per-attempt STARTED with timestamps |
+| S5 | the runtime exposes no step lifecycle |
+| S6 | nothing was cancelled in this trial **or** the runtime exposes no cancel-acknowledgement ordering |
+| S7 | this workload gates nothing **or** the runtime exposes no journal with APPROVAL_REQUESTED/DECIDED to bind an applied effect to |
+| S8 | this workload delegates nothing **or** the runtime exposes no journal **or** needs the children's journals; the collector supplies the parent's only |
+| C1 | the runtime exposes no replay mode |
+| C2 | no continuation boundary in this run **or** the runtime exposes no journal |
 
 ## Counterexamples
 

@@ -379,3 +379,20 @@ def test_cancel_latency_runs_from_the_drain_to_the_later_of_terminal_and_last_re
     m = _compute(journal=f.journal, world_receipts=f.world_receipts)
     assert m.cancel_latency_ms == 1000.0, "drained at 50.0, cancelled at 51.0, last receipt at 50.5"
     assert _compute(journal=[]).cancel_latency_ms is None
+
+
+def test_the_n_a_legend_is_every_sentence_the_verifier_writes() -> None:
+    """A page names what an N/A lacked from `NOT_APPLICABLE_WHEN` (§15.11 rule 3), because a row keeps
+    the verdict and not the sentence. Read off the `v.add(..., "N/A", ...)` calls themselves, so a new
+    reason, or a reworded one, fails here rather than printing a legend the verifier no longer means."""
+    import ast
+    from pathlib import Path
+
+    from crashproof.verifier import invariants
+
+    written: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(Path(invariants.__file__).read_text(encoding="utf8"))):
+        if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add" and len(node.args) == 3
+                and isinstance(node.args[1], ast.Constant) and node.args[1].value == "N/A"):
+            written.setdefault(node.args[0].value, set()).add(node.args[2].value)
+    assert written == {k: set(v) for k, v in invariants.NOT_APPLICABLE_WHEN.items()}

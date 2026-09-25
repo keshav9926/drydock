@@ -1,6 +1,6 @@
 # Restate: a `ctx.run` whose result was not journaled runs again, so a tool side effect lands twice
 
-## Pre-filing notes (for the owner; delete this section before filing)
+## Pre-filing notes (the checks behind the filing; not part of the filed issue)
 
 | | |
 |---|---|

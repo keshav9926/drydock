@@ -86,6 +86,14 @@ class ToolSpec:
     def _validate(self) -> None:
         if Modifier.STREAMS in self.modifiers and self.effect_class is EffectClass.TRANSACTIONAL:
             raise ContractViolation(f"{self.name}: STREAMS is never valid with TRANSACTIONAL")
+        if self.effect_class is EffectClass.TRANSACTIONAL:
+            # §9.1's TRANSACTIONAL commits the tool's SQL in the outcome's own transaction on `tctx.db`,
+            # the journal's connection; that, and the effect-table bridge, are cut with W4 (§29.1). A tool
+            # declared TRANSACTIONAL would otherwise recover like PURE: refused, not silently weakened.
+            raise ToolRegistrationError(
+                f"{self.name}: TRANSACTIONAL is not built (it needs tctx.db, cut with W4); "
+                "declare IDEMPOTENT with a key or EXTERNAL with a resolution"
+            )
         if self.partial_ok and self.effect_class is not EffectClass.PURE:
             raise ContractViolation(f"{self.name}: partial_ok is only valid with PURE")
         if self.timeout <= 0:

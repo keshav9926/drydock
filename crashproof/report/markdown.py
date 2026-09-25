@@ -19,6 +19,7 @@ from typing import Any
 
 from crashproof.report.matrix import CONFIRMATION_BASE_SEED, CellSummary, wilson
 from crashproof.stats.ci import MDD_TABLES
+from crashproof.verifier.invariants import NOT_APPLICABLE_WHEN
 
 #: Claims are printed under every column, because a verdict without the claim it was judged
 #: against is a scoreboard with the rules left off.
@@ -30,6 +31,12 @@ SHORT_CLAIM = {
     "exactly_once": "exactly-once",
 }
 SHORT_CLASS = {"PURE": "PURE", "IDEMPOTENT": "IDEM", "EXTERNAL": "EXT", "TRANSACTIONAL": "TXN"}
+#: §15.11 rule 3: every verdict the verifier writes is on the grid, an N/A as `·`. L1 and L2 print as rates.
+GRID = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "C1", "C2")
+#: §15.11 rule 9: what makes a trial void — the three conditions `runner/trial.py` sets `valid` from
+#: (`STORE_CLOCK_TOLERANCE_S` is the 50 ms).
+VOID_WHEN = ("its fault never fired", "a fault row records a fault that did not happen",
+             "the store's clock moved more than 50 ms against the host's during the trial")
 
 
 def render(
@@ -50,6 +57,7 @@ def render(
             continue
         out += _band(band, variant, columns)
 
+    out += _legend(cells)
     out += _screening_appendix(cells)
     out += _counterexamples(cells)
     out += _provenance(cells, sources)
@@ -115,7 +123,7 @@ def _cell(cell: CellSummary | None) -> str:
         f"{name}{'✓' if cell.verdicts.get(name) == 'PASS' else '✗' if cell.verdicts.get(name) == 'FAIL' else '·'}"
         # §15.11 rule 3: never omitted from the grid. S7 prints `·` for a workload that gates
         # nothing, which is a different statement from a workload that gates something and passed.
-        for name in ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "C1")
+        for name in GRID
     )
     lo, hi = wilson(*cell.recovery_rate)
     live = f"L1 {cell.recovery_rate[0]}/{cell.recovery_rate[1]} [{lo:.2f}–{hi:.2f}]"
@@ -135,6 +143,27 @@ def _cell(cell: CellSummary | None) -> str:
     if cell.void:
         extra.append(f"void {cell.void}")
     return "<br>".join([safety, live, raw] + ([" · ".join(extra)] if extra else []))
+
+
+def _legend(cells: dict[str, CellSummary]) -> list[str]:
+    """§15.11 rules 3 and 9, for the marks this page prints. A row keeps a verdict and not the verifier's
+    sentence, so an N/A here names every input whose absence makes that invariant N/A, in the verifier's
+    words; `crashproof verify` prints the one a given trial got."""
+    shown = [n for n in GRID if any(c.n and c.verdicts.get(n, "N/A") == "N/A" for c in cells.values())]
+    out = [
+        "## Reading a cell",
+        "",
+        "`✓` holds in every scored trial of the cell; `✗` fails in at least one, and each failing trial is "
+        "under Counterexamples; `·` is N/A — an input the verdict needs is missing, which is never a pass.",
+        "",
+        "| `·` | N/A when |",
+        "|---|---|",
+    ]
+    out += [f"| {n} | {' **or** '.join(NOT_APPLICABLE_WHEN[n])} |" for n in shown]
+    if any(c.void for c in cells.values()):
+        out += ["", f"`void k`: k trials could not be scored — {', or '.join(VOID_WHEN)} — and no verdict "
+                f"counts them. A cell whose void rate is over {VOID_RATE_WITHDRAWN:.0%} is withdrawn (K7)."]
+    return out + [""]
 
 
 def _screening_appendix(cells: dict[str, CellSummary]) -> list[str]:
