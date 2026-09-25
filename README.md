@@ -445,7 +445,7 @@ rather than the rows, so no page under `bench/reports` carries them and CI canno
 | **K3** unfair triggers | **FIRED** | DBOS at `after:tool_return`, 47–80 % of kills in window against a 90 % floor |
 | **K4** window too narrow | not decidable | the widths are measured; the kill rate they must be multiplied by is not |
 | **K5** adapter infeasible | not fired | every arm expresses W1, W5 and W5-pre in cited primitives; what it cannot is N/A with the reason |
-| **K6** Keel fails itself | not fired on its measurement | no `hook` cell FAILs; two design defects found by other instruments, both fixed, both sections amended |
+| **K6** Keel fails itself | not fired on its measurement | no `hook` cell FAILs; two design defects found by other instruments, both fixed, both sections amended; the fallback's re-run, done after the tag: 4 199 Keel trials at the same `(spec_hash, seed)`, 0 verdict flips |
 | **K7** not reproducible | **FIRED** | two cells 70 % and 83 % void — withdrawn from the grid, counts kept; recheck green, and 0 of 300 verdicts flip after a no-op commit |
 | **K8** no power | not fired | at n = 300 the compare pages claim differences rather than reading them all too noisy |
 | **K9** prior art collision | not fired on its text · remedy applied | two public artifacts hold a clause each and neither holds both; cite, do not compete |
@@ -527,10 +527,17 @@ rather than the rows, so no page under `bench/reports` carries them and CI canno
   ([`table.md`](bench/keel_conformance/table.md), 54 run, 12 N/A, 0 failed). Both defects were found by
   other instruments — the property suite and the confirmation tier. §30's K6 fallback is four things:
   stop adding adapters, fix the design, amend the sections, then re-run the matrix at the same
-  `(spec_hash, seed)` and publish the diff. The first three were done for both defects; the re-run was
-  not, and no adapter was added after either fix. The published rows are the ones `251e52d` produced —
-  no published row reaches the IDEMPOTENT path, and exactly one reaches the resolution-key path, the
-  FAILED trial named above.
+  `(spec_hash, seed)` and publish the diff. The first three were done for both defects, and no adapter
+  was added after either fix. The fourth ran after the tag: every published Keel row — 4 200 trials over
+  the seven sets, both tiers — re-run at `v1` (`4b8eb62`, which carries both fixes) at the same
+  `(spec_hash, seed)`, rows in `bench/results/k6_*`, every one re-verified from its trial directory.
+  4 199 pairs compare (one proxy `kill@after:tool_return` trial voided twice) and **no safety, liveness or
+  consistency verdict flips**. Two statuses do, both FAILED → COMPLETED: seed 100067, the trial the
+  resolution-key path failed — the fix, visible in a row — and the proxy baseline's 100099, whose three
+  host-load timeouts did not recur. Raw counts move only in the freeze cells, which are timing races by
+  construction: Keel's EXTERNAL zombie residual reads 2 of 30 at screening (was 4) and 108 of 300 at
+  confirmation (was 97); the IDEMPOTENT twin receives twice in 7 of 30 (was 18) and applies once in
+  all 30 either way. The published pages keep the rows `251e52d` produced.
 
 - **K7 (not reproducible) fired, on the `void_rate` clause.** `langgraph.exit`'s two proxy
   `kill@after:tool_return` cells are 21 and 25 of 30 void, 70 % and 83 % against §30's 5 %; every other
@@ -1072,12 +1079,17 @@ AFTER RESTART split, in the event stream where it already lives).
 - `tool_duplicate_response` (§11.5, §27.7, proxy only): the World applies R1, and the proxy holds its
   answer past the tool's timeout and writes it late on R1's socket once the retry has been answered.
   Every Keel tool in the harness is a blocking call on a thread, so the late bytes do reach SUT code —
-  §11.5's physical caveat — and the cell is Keel-only (`bench/specs/dup_response.yaml`). The one-seed
-  smoke: EXTERNAL probes its way to one application, IDEMPOTENT retries under its key (2 received,
-  1 applied), one completion each, S1–S5 and C1 PASS.
+  §11.5's physical caveat — and the cell is Keel-only ([dup_response](bench/reports/dup_response.md),
+  120 trials at `0c6ebcd`, every verdict PASS). IDEMPOTENT: 30 of 30 retry under the key (2 received,
+  1 applied), and in all 30 the SUT's own shim saw two answers for the one attempt the journal
+  completed — R1's late answer reached SUT code and became neither a completion nor an effect.
+  EXTERNAL: 0 of 30 — the timeout goes AMBIGUOUS, the probe resolves it and the run ends inside the
+  3 s hold, so that row measures the AMBIGUOUS path under a withheld answer, not a late completion.
 - V2's first schema change (§6.5): STEP_COMPLETED v2 carries `cache_read_tokens`, and v1 rows are
   upcast at load — the fixtures in `tests/journals/` included — never rewritten. An event newer than
-  the worker is refused and the run handed back with a 30 s backoff. C4 is a property over journals
+  the worker is refused and the run handed back with a 30 s backoff, measured by the store: Postgres'
+  `release` caps a timestamp at `now()`, which would have erased it, and the in-memory journal had not
+  mirrored the cap (`tests/integration/test_post_v1_pg.py` now holds it). C4 is a property over journals
   the runtime wrote: every projection folds equal over the v1 form and its upcast, and a mutant
   upcaster fails it.
 - The OTel export (§19.7, V2): `keel otel RUN [--tree]` folds a journal into spans — run, one per lease

@@ -17,7 +17,8 @@ import sys
 
 RESULTS = ("matrix_v0", "tier1a", "tier1p", "reask_alternate", "w5", "w5_pre",
            "week2_w1_shim", "week2_w1_proxy", "week2_w5", "week2_w5_pre",
-           "v1_w1_shim", "v1_w1_proxy", "v1_w5", "v1_w5_pre", "v1_reask", "v1_w3", "v1_w7")
+           "v1_w1_shim", "v1_w1_proxy", "v1_w5", "v1_w5_pre", "v1_reask", "v1_w3", "v1_w7",
+           "dup_response")
 #: The release re-run's compare pages: Keel against every other configuration, per §15.6's families,
 #: on the three row sets where every arm has a cell of the same (variant, location, fault).
 V1_ARMS = ("langgraph.sync", "langgraph.async", "langgraph.exit", "dbos.native", "dbos.pydantic_ai",
