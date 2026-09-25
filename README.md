@@ -1091,6 +1091,10 @@ AFTER RESTART split, in the event stream where it already lives).
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
 - W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL, the
   effect-table bridge and a DBOS arm to be a comparison.
+- The rest of §29.3's V2 reach list is not started: retention/archival, the real-model subset and
+  its replay cache (K11(b)'s instrument — it spends a provider's money, which nobody has approved),
+  Hatchet, Inngest, a native Temporal adapter and Julep. The upcaster migration + C4 and the OTel
+  export were taken first, in the order §29.3's cut list protects them.
 
 §27 is the binding staging table. One published workload is ahead of it: W5-pre, a tier-2 cell built
 in week 2 for the reason given above, on three pages since (`w5_pre`, `week2_w5_pre`, `v1_w5_pre`).
