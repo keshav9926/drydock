@@ -1387,6 +1387,11 @@ class StepEngine:
             # Keyed on the step's intent, so a later epoch's re-insert is the same row.
             async with self.journal.append(self.lease) as tx:
                 await self._cancel_open_children(tx, i, causation_seq=journaled.intent_seq, reason="deadline")
+                # A subtree already terminal has no child_result left to settle the step on: close it
+                # now, or the parent would wake every grace period to the same unsettled step.
+                await self._maybe_settle_delegate(tx, i)
+            if (self.state.step(i) or journaled).settled:
+                return False  # the caller's loop reads the closed step
             stopping = True
         if stopping:
             forced = False
