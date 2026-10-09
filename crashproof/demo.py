@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from crashproof.faults.spec import NON_FATAL
 from crashproof.verifier.invariants import TrialFacts, iso
 from crashproof.verifier.views import placement
 
@@ -124,6 +125,8 @@ def narrate(row: Any, facts: TrialFacts, *, row_path: Any = None, canonical: boo
     after = [e for e in events if (e["seq"] > seq if seq is not None else cut and iso(e["ts"]) > cut)]
     receipts = sorted(facts.world_receipts, key=lambda r: iso(r["ts"]))
     target = _required(facts)
+    had = any(r["logical_identity"] == target for r in receipts if not cut or iso(r["ts"]) <= cut)
+    opened = _open(before, after)
 
     lines = [
         f"crashproof demo — {row.cell_id}   seed {row.seed}",
@@ -135,10 +138,10 @@ def narrate(row: Any, facts: TrialFacts, *, row_path: Any = None, canonical: boo
         RULE,
     ]
     lines += _before(row, facts, before, receipts, cut, fault, target)
-    lines += ["", RULE, "AFTER RESTART", RULE]
-    lines += _after(row, facts, after, receipts, cut, target)
+    lines += ["", RULE, "AFTER RESTART" if row.restarts else "AFTER THE CUT", RULE]
+    lines += _after(row, facts, before, after, receipts, cut, target, fault, had, opened)
     lines += ["", RULE, "THE POINT", RULE]
-    lines += _point(row, facts, target, row_path)
+    lines += _point(row, facts, target, row_path, opened, had)
     return [canonicalise(line) for line in lines] if canonical else lines
 
 
@@ -207,7 +210,7 @@ def _before(
     )
     lines += [
         f"[9]  fault {fault.get('type', '—')} @ {fault.get('boundary', '—')}"
-        f"  landmark {fault.get('landmark', '—')}  → fault-log row fsync → process gone",
+        f"  landmark {fault.get('landmark', '—')}  → fault-log row fsync → {_stop(fault.get('type'))}",
         f"     at the cut: last committed seq {_n(fault.get('last_seq_before'))}"
         f" · open step {_n(fault.get('open_step'))} · no outcome"
         f" · World's last receipt {_n(fault.get('receipt_before'))}"
@@ -263,14 +266,23 @@ def _approval_lines(events: list[dict[str, Any]]) -> list[str]:
 
 # --- after --------------------------------------------------------------------
 def _after(
-    row: Any, facts: TrialFacts, events: list[dict[str, Any]], receipts: list[dict[str, Any]],
-    cut: float, target: str,
+    row: Any, facts: TrialFacts, before: list[dict[str, Any]], events: list[dict[str, Any]],
+    receipts: list[dict[str, Any]], cut: float, target: str, fault: dict[str, Any], had: bool,
+    opened: dict[str, Any],
 ) -> list[str]:
-    lines = [
-        f"[10] supervisor: worker gone, {row.restarts} restart(s) ≤ max_recoveries "
-        f"{facts.max_recoveries}"
-        "  → restart with identical argv and env, no run id passed",
-    ]
+    if row.restarts:
+        lines = [
+            f"[10] supervisor: worker gone, {row.restarts} restart(s) ≤ max_recoveries "
+            f"{facts.max_recoveries}"
+            "  → restart with identical argv and env, no run id passed",
+        ]
+    elif fault.get("type") == "pause_past_ttl":
+        # A frozen process cannot reap itself: the supervisor starts a second worker beside the
+        # first at the outset, and that one finds the run (`Supervisor._spawn_others`).
+        lines = ["[10] supervisor: no restart — the holder is frozen, not gone; the second worker,"
+                 " started beside it, is the one that finds the run"]
+    else:
+        lines = ["[10] supervisor: no restart — the worker never stopped"]
     if facts.journal is None:
         lines += [
             f"[11] the harness re-invokes it by an id the framework persisted — recovery_mechanism="
@@ -281,35 +293,53 @@ def _after(
         ]
     else:
         rec = _first(events, "RECOVERY_STARTED")
-        amb = _first(events, "STEP_AMBIGUOUS")
-        res = _first(events, "STEP_RESOLVED")
         done = _first(events, "RECOVERY_COMPLETED")
-        lines += [
-            "[11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline"
-            "  → runs.orphaned_at set → claim",
-            f"[12] RECOVERY_STARTED{{cause={rec['body'].get('cause') if rec else '—'},"
-            f" from_seq={rec['body'].get('from_seq') if rec else '—'}}} seq {_n(rec and rec['seq'])}"
-            "   — a different process, told nothing",
-        ]
-        if done:
-            lines.append(
-                f"[13] re-execution: {done['body'].get('replayed_steps')} steps returned from the journal"
-                "  — 0 model calls, 0 World calls, 0 tokens"
-            )
-        if amb:
-            lines.append(
-                f"[14] #{amb['step_index']} STARTED without an outcome, class {facts.effect_class}"
-                f"  → STEP_AMBIGUOUS seq {amb['seq']}"
-                "   — the runtime does not guess"
-            )
-        if res:
-            body = res["body"]
+        if rec is None:
+            lines.append("[11] no RECOVERY_STARTED: no other process took the run over")
+        else:
+            # Only the steps settled before the cut come back from the memo for nothing; the open
+            # one is lines [14]–[15], and any call it costs is counted at [17].
+            settled = sum(1 for e in before if e["type"] == "STEP_COMPLETED")
             lines += [
-                f"[15] probe → the receiver is asked, not assumed:"
-                f" {body.get('method', 'probe')} says COMMITTED",
-                f"     STEP_RESOLVED{{{body.get('resolution')}}} seq {res['seq']}"
-                "   — resolved, never re-fired",
+                "[11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline"
+                "  → runs.orphaned_at set → claim",
+                f"[12] RECOVERY_STARTED{{cause={rec['body'].get('cause')},"
+                f" from_seq={rec['body'].get('from_seq')}}} seq {rec['seq']}"
+                "   — a different process, told nothing",
+                f"[13] re-execution: {settled} settled steps returned from the journal"
+                "  — 0 model calls, 0 World calls, 0 tokens",
             ]
+        if opened:
+            amb, dropped = opened["amb"], opened["dropped"]
+            lines.append(
+                f"[14] #{opened['index']} STARTED without an outcome, class {opened['cls']}"
+                + (
+                    f"  → STEP_AMBIGUOUS seq {amb['seq']}   — the runtime does not guess"
+                    if amb is not None
+                    else f"  → STEP_FAILED{{attempt_abandoned}} seq {dropped['seq']}"
+                    f"   — {_RERUN.get(opened['cls'], 'its class makes running it again safe')}"
+                )
+            )
+            again, closed = opened["again"], opened["closed"]
+            attempt = again and (
+                f"STEP_ATTEMPT_STARTED #{again['step_index']} attempt {again['attempt_no']} seq {again['seq']}"
+                + (f" → STEP_COMPLETED seq {closed['seq']}" if closed else " → no outcome")
+            )
+            res = opened["res"]
+            if res is not None:
+                body = res["body"]
+                method = body.get("method", "probe")
+                lines += [
+                    f"[15] probe → the receiver is asked, not assumed: {method} says {opened['how']}"
+                    if method == "probe"
+                    else f"[15] {method} → {(body.get('evidence') or {}).get('reason', 'nothing left to ask')}",
+                    f"     STEP_RESOLVED{{{body.get('resolution')}}} seq {res['seq']}"
+                    f"   — {_SETTLES[opened['how']]}",
+                ]
+                if attempt:
+                    lines.append(f"     {attempt}")
+            elif attempt:
+                lines.append(f"[15] {attempt}")
         if done:
             lines.append(
                 f"[16] RECOVERY_COMPLETED{{live_from_step={done['body'].get('live_from_step')},"
@@ -317,15 +347,22 @@ def _after(
             )
     after_receipts = [r for r in receipts if cut and iso(r["ts"]) > cut and r["logical_identity"] == target]
     lines.append(
-        f"[17] World after the restart: {len(after_receipts)} further receipt(s) for {target}"
-        + ("   — the effect was never re-sent" if not after_receipts else "")
+        f"[17] World after the {'restart' if row.restarts else 'cut'}:"
+        f" {len(after_receipts)} further receipt(s) for {target}"
+        + (
+            "   — the effect was never re-sent" if not after_receipts
+            else "   — the World had none before the cut" if not had
+            else ""
+        )
     )
     lines.append(f"     run status {row.status}  ·  result {_short(row.result)}")
     return lines
 
 
 # --- the point ----------------------------------------------------------------
-def _point(row: Any, facts: TrialFacts, target: str, row_path: Any) -> list[str]:
+def _point(
+    row: Any, facts: TrialFacts, target: str, row_path: Any, opened: dict[str, Any], had: bool
+) -> list[str]:
     raw = row.metrics["raw"]
     verdicts = " ".join(
         f"{name}{'✓' if v == 'PASS' else '✗' if v == 'FAIL' else '·'}" for name, v in row.verdicts.items()
@@ -350,12 +387,14 @@ def _point(row: Any, facts: TrialFacts, target: str, row_path: Any) -> list[str]
         f"[20] row → {row_path or row.trial_id}  ·  seed {row.seed}  ·  spec {row.spec_hash[:12]}"
         f"  ·  keel_commit {row.keel_commit or '—'}",
         "",
-        _moral(row, facts, target, applied, receipts),
+        _moral(row, facts, applied, receipts, opened, had),
     ]
     return lines
 
 
-def _moral(row: Any, facts: TrialFacts, target: str, applied: int, receipts: int) -> str:
+def _moral(
+    row: Any, facts: TrialFacts, applied: int, receipts: int, opened: dict[str, Any], had: bool
+) -> str:
     """One sentence, computed rather than written, so it cannot survive the behaviour changing."""
     if facts.journal is None:
         return (
@@ -364,12 +403,22 @@ def _moral(row: Any, facts: TrialFacts, target: str, applied: int, receipts: int
             f"It declares `{row.claims.get(facts.effect_class, 'none')}` for {facts.effect_class}, "
             f"so that is not a failure — it is the cost, printed."
         )
-    return (
-        f"The World had the effect and the journal did not. A different process read the journal, "
-        f"found the open {facts.effect_class} step, asked the receiver what had happened, and "
-        f"finished the run — {receipts} request, {applied} applied, nothing re-sent and nothing "
-        f"guessed."
+    sent = f"{receipts} request{'' if receipts == 1 else 's'}, {applied} applied"
+    if not opened:
+        return f"No step was left open for anyone to settle: the run went on — {sent}."
+    start = (
+        "The World had the effect and the journal did not. " if had
+        else "The journal had an attempt with no outcome, and the World had nothing. "
     )
+    found = f"A different process read the journal, found the open {opened['cls']} step"
+    return start + found + {
+        "COMMITTED": f", asked the receiver what had happened, and finished the run — {sent},"
+                     " nothing re-sent and nothing guessed.",
+        "ABSENT": f", asked the receiver, heard that it had never landed, and sent it — {sent}.",
+        "UNKNOWN": f", asked, got no answer it could act on, and stopped the run for a human — {sent},"
+                   " nothing guessed.",
+        "RERUN": f" and ran it again, which its class allows without asking anyone — {sent}.",
+    }[opened["how"]]
 
 
 # --- the page -----------------------------------------------------------------
@@ -415,6 +464,70 @@ def timeline_page(row: Any, facts: TrialFacts) -> str:
 
 
 # --- reading the artefacts ----------------------------------------------------
+#: The probe's three answers (§7.4), named by the resolution the journal records for each, and what
+#: each one settles. ABSENT's next attempt opens in the resolution's own transaction.
+_VERDICT = {"RESOLVED_COMPLETED": "COMMITTED", "RESOLVED_FAILED": "ABSENT", "RESOLVED_UNKNOWN": "UNKNOWN"}
+_SETTLES = {
+    "COMMITTED": "resolved, never re-fired",
+    "ABSENT": "it never landed, so it is safe to send: the next attempt opens in this transaction",
+    "UNKNOWN": "nobody can say, so the run stops for a human rather than guess",
+}
+#: §8.3's re-run column: why a successor may run an open step again without asking anyone.
+_RERUN = {
+    "PURE": "a read: running it again changes nothing",
+    "IDEMPOTENT": "it goes again under the same effect_key, which the receiver dedups on",
+    "MODEL": "no decision was journaled, so it is asked again",
+}
+
+
+def _stop(kind: str | None) -> str:
+    """What the fault did to the process. A freeze leaves it alive, and a non-fatal fault never
+    stops it at all."""
+    if kind == "pause_past_ttl":
+        return "process frozen, not killed"
+    return "the process keeps running" if kind in NON_FATAL else "process gone"
+
+
+def _open(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> dict[str, Any]:
+    """The step the fault left open and what the successor did with it, read off the journal.
+
+    One reading for lines [14]–[15] and the last sentence, so neither can say what the other does
+    not. `how` is the probe's answer, or RERUN for a class that is re-run without asking (§8.3);
+    empty when no step was left open."""
+    amb = _first(after, "STEP_AMBIGUOUS")
+    dropped = next(
+        (e for e in after if e["type"] == "STEP_FAILED" and e["body"].get("error") == "attempt_abandoned"),
+        None,
+    )
+    opened = amb or dropped
+    if opened is None:
+        return {}
+    index = opened["step_index"]
+    intent = next((e for e in before if e["type"] == "STEP_INTENDED" and e["step_index"] == index), None)
+    declared = intent["body"] if intent else {}
+    again = next(
+        (e for e in after
+         if e["type"] == "STEP_ATTEMPT_STARTED" and e["step_index"] == index and e["seq"] > opened["seq"]),
+        None,
+    )
+    closed = again and next(
+        (e for e in after
+         if e["type"] == "STEP_COMPLETED" and e["step_index"] == index and e["attempt_no"] == again["attempt_no"]),
+        None,
+    )
+    res = _first(after, "STEP_RESOLVED")
+    return {
+        "index": index,
+        "cls": declared.get("effect_class") or declared.get("kind") or "—",
+        "amb": amb,
+        "dropped": dropped,
+        "res": res,
+        "again": again,
+        "closed": closed,
+        "how": _VERDICT.get(res["body"].get("resolution"), "UNKNOWN") if res else "RERUN",
+    }
+
+
 def _required(facts: TrialFacts) -> str:
     return facts.required_effects[0] if facts.required_effects else "the effect under test"
 

@@ -1,0 +1,41 @@
+crashproof demo — keel.default.IDEMPOTENT.kill@after:tool_effect   seed 7
+  recovery_mechanism=self   key_source=framework
+  claims: EXTERNAL at_least_once · IDEMPOTENT effectively_once · PURE effectively_once
+
+────────────────────────────────────────────────────────────────────────
+BEFORE CRASH
+────────────────────────────────────────────────────────────────────────
+[1]  world up · endpoints issues.upsert dedup:true · kv.search dedup:n/a  · oracle exposed to the probe
+[2]  dependency: the adapter's own store, cloned fresh for this trial
+[3]  worker: lease_ttl 2.0 s > create_issue timeout 1.0 s   — the pre-dispatch check refuses an EXTERNAL effect otherwise (§8)
+[4]  RUN_CREATED seq 1 at lease_epoch 0   — the one append with no lease to fence against
+[5]  epoch 1 runs 3 steps clean: #0 · #1 · #2   (seq 6–12)
+     (this workload gates nothing; §26.3's approval half needs a gated tool call)
+[6]  #3 TOOL create_issue [IDEMPOTENT]  STEP_INTENDED seq 13  key=<hash>
+[7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
+[8]  World receipt issues.upsert#1  ·  1 request(s) received before the cut  — fsynced before the response was computed, which is what makes this landmark exact
+[9]  fault kill @ after:tool_effect  landmark tool:create_issue  → fault-log row fsync → process gone
+     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt issues.upsert#1
+
+────────────────────────────────────────────────────────────────────────
+AFTER RESTART
+────────────────────────────────────────────────────────────────────────
+[10] supervisor: worker gone, 1 restart(s) ≤ max_recoveries 3  → restart with identical argv and env, no run id passed
+[11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline  → runs.orphaned_at set → claim
+[12] RECOVERY_STARTED{cause=ORPHANED, from_seq=14} seq 15   — a different process, told nothing
+[13] re-execution: 3 settled steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
+[14] #3 STARTED without an outcome, class IDEMPOTENT  → STEP_FAILED{attempt_abandoned} seq 16   — it goes again under the same effect_key, which the receiver dedups on
+[15] STEP_ATTEMPT_STARTED #3 attempt 2 seq 17 → STEP_COMPLETED seq 18
+[16] RECOVERY_COMPLETED{live_from_step=4, replayed_steps=4} seq 19
+[17] World after the restart: 1 further receipt(s) for issues.upsert#1
+     run status COMPLETED  ·  result {'answer': 'Created issue <hash>'}
+
+────────────────────────────────────────────────────────────────────────
+THE POINT
+────────────────────────────────────────────────────────────────────────
+[18] World: receipts(issues.upsert#1)=2  applied=1   ·  duplicate_effects=0  duplicate_receipts=1
+     verifier: S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ S6· S7· S8· C1✓ C2·        (· = N/A: an input the verdict needs is missing; `crashproof verify` names it)
+[19] replay --verify: 5 steps reproduced  · projection hash match
+[20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
+
+The World had the effect and the journal did not. A different process read the journal, found the open IDEMPOTENT step and ran it again, which its class allows without asking anyone — 2 requests, 1 applied.

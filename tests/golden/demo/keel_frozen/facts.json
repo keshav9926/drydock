@@ -1,0 +1,758 @@
+{
+  "world_receipts": [
+    {
+      "endpoint": "kv.search",
+      "effect_key": null,
+      "logical_identity": "kv.search#1",
+      "ts": 1791032348.009893
+    },
+    {
+      "endpoint": "issues.create",
+      "effect_key": null,
+      "logical_identity": "issues.create#1",
+      "ts": 1791032350.5122614
+    }
+  ],
+  "world_applied": {
+    "issues.create#1": 1
+  },
+  "sut_committed": [
+    "issues.create#1"
+  ],
+  "journal": [
+    {
+      "seq": 1,
+      "type": "RUN_CREATED",
+      "ts": "2026-10-03T12:59:06.824886+00:00",
+      "lease_epoch": 0,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RUN_CREATED",
+        "program": "tool_chain",
+        "program_version": "1.0+e5ab55",
+        "args": {
+          "task": "file an issue"
+        },
+        "budget": {
+          "max_usd": null,
+          "on_exceed": "fail",
+          "max_tokens": null,
+          "deadline_at": null,
+          "max_tool_calls": null,
+          "max_wall_clock": null,
+          "max_model_calls": null
+        },
+        "model_config_": {
+          "provider": "scripted",
+          "pricing_ref": "scripted-2026-09"
+        },
+        "parent_run_id": null,
+        "delegation_id": null,
+        "fork_of": null,
+        "policy": null
+      }
+    },
+    {
+      "seq": 2,
+      "type": "RECOVERY_STARTED",
+      "ts": "2026-10-03T12:59:07.908051+00:00",
+      "lease_epoch": 1,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RECOVERY_STARTED",
+        "lease_epoch": 1,
+        "cause": "START",
+        "from_seq": 1,
+        "from_segment": 0,
+        "forced_by": null
+      }
+    },
+    {
+      "seq": 3,
+      "type": "RECOVERY_COMPLETED",
+      "ts": "2026-10-03T12:59:07.930189+00:00",
+      "lease_epoch": 1,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RECOVERY_COMPLETED",
+        "live_from_step": 0,
+        "replayed_steps": 0,
+        "elapsed_ms": 0
+      }
+    },
+    {
+      "seq": 4,
+      "type": "STEP_INTENDED",
+      "ts": "2026-10-03T12:59:07.944142+00:00",
+      "lease_epoch": 1,
+      "step_index": 0,
+      "attempt_no": null,
+      "body": {
+        "type": "STEP_INTENDED",
+        "step_index": 0,
+        "kind": "MODEL",
+        "name": "decide",
+        "args_hash": "f2752db48d79b957c3de0511d0092e4efbded73328873eb18dfd44f1a381a320",
+        "args": {
+          "tools": [],
+          "system": null,
+          "messages": [
+            {
+              "role": "user",
+              "content": "file an issue"
+            }
+          ],
+          "sampling": {},
+          "max_tokens": 1024
+        },
+        "request_hash": "f2752db48d79b957c3de0511d0092e4efbded73328873eb18dfd44f1a381a320",
+        "effect_key": null,
+        "effect_class": null,
+        "modifiers": [],
+        "policy_verdict": "allow",
+        "program_version": "1.0+e5ab55"
+      }
+    },
+    {
+      "seq": 5,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:07.944142+00:00",
+      "lease_epoch": 1,
+      "step_index": 0,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 0,
+        "attempt_no": 1,
+        "lease_epoch": 1,
+        "started_at": "2026-10-03T12:59:07.943921Z",
+        "attempt_deadline": null,
+        "reservation": 1055,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015453
+      }
+    },
+    {
+      "seq": 6,
+      "type": "STEP_COMPLETED",
+      "ts": "2026-10-03T12:59:07.968543+00:00",
+      "lease_epoch": 1,
+      "step_index": 0,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_COMPLETED",
+        "step_index": 0,
+        "attempt_no": 1,
+        "result": {
+          "text": "",
+          "usage": {
+            "input_tokens": 31,
+            "output_tokens": 0,
+            "cache_read_tokens": 0
+          },
+          "message": {
+            "role": "assistant",
+            "content": ""
+          },
+          "tool_calls": [
+            {
+              "id": "tu_0",
+              "args": {
+                "q": "flaky test in ci"
+              },
+              "name": "search"
+            }
+          ],
+          "stop_reason": "tool_use",
+          "provider_meta": {
+            "node": "start",
+            "model": "scripted-1",
+            "provider": "scripted"
+          }
+        },
+        "usage": {
+          "input_tokens": 31,
+          "output_tokens": 0,
+          "cache_read_tokens": 0
+        },
+        "provider_meta": {
+          "node": "start",
+          "model": "scripted-1",
+          "provider": "scripted"
+        },
+        "synthetic": false
+      }
+    },
+    {
+      "seq": 7,
+      "type": "STEP_INTENDED",
+      "ts": "2026-10-03T12:59:07.984368+00:00",
+      "lease_epoch": 1,
+      "step_index": 1,
+      "attempt_no": null,
+      "body": {
+        "type": "STEP_INTENDED",
+        "step_index": 1,
+        "kind": "TOOL",
+        "name": "search",
+        "args_hash": "ee28f2622ab44f47a564ec1f25a67534691f6491f3f191a9bdd6f54d4dee7e81",
+        "args": {
+          "q": "flaky test in ci"
+        },
+        "request_hash": null,
+        "effect_key": "bf90007af5c5effa93fff31ad633cf10",
+        "effect_class": "PURE",
+        "modifiers": [],
+        "policy_verdict": "allow",
+        "program_version": "1.0+e5ab55"
+      }
+    },
+    {
+      "seq": 8,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:07.984368+00:00",
+      "lease_epoch": 1,
+      "step_index": 1,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 1,
+        "attempt_no": 1,
+        "lease_epoch": 1,
+        "started_at": "2026-10-03T12:59:07.984147Z",
+        "attempt_deadline": null,
+        "reservation": null,
+        "price": null,
+        "reservation_usd": null
+      }
+    },
+    {
+      "seq": 9,
+      "type": "STEP_COMPLETED",
+      "ts": "2026-10-03T12:59:08.021645+00:00",
+      "lease_epoch": 1,
+      "step_index": 1,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_COMPLETED",
+        "step_index": 1,
+        "attempt_no": 1,
+        "result": {
+          "hits": [
+            "flaky test in ci #1",
+            "flaky test in ci #2",
+            "flaky test in ci #3"
+          ],
+          "logical_identity": "kv.search#1"
+        },
+        "usage": null,
+        "provider_meta": null,
+        "synthetic": false
+      }
+    },
+    {
+      "seq": 10,
+      "type": "STEP_INTENDED",
+      "ts": "2026-10-03T12:59:08.041684+00:00",
+      "lease_epoch": 1,
+      "step_index": 2,
+      "attempt_no": null,
+      "body": {
+        "type": "STEP_INTENDED",
+        "step_index": 2,
+        "kind": "MODEL",
+        "name": "decide",
+        "args_hash": "4dc03848789632491d9491a52fe1ddf529774880343931fa0082fb6e8020bab1",
+        "args": {
+          "tools": [],
+          "system": null,
+          "messages": [
+            {
+              "role": "user",
+              "content": "file an issue"
+            },
+            {
+              "role": "assistant",
+              "content": "search"
+            },
+            {
+              "role": "tool_result",
+              "content": {
+                "tool": "search",
+                "result": {
+                  "hits": [
+                    "flaky test in ci #1",
+                    "flaky test in ci #2",
+                    "flaky test in ci #3"
+                  ],
+                  "logical_identity": "kv.search#1"
+                }
+              }
+            }
+          ],
+          "sampling": {},
+          "max_tokens": 1024
+        },
+        "request_hash": "4dc03848789632491d9491a52fe1ddf529774880343931fa0082fb6e8020bab1",
+        "effect_key": null,
+        "effect_class": null,
+        "modifiers": [],
+        "policy_verdict": "allow",
+        "program_version": "1.0+e5ab55"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:08.041684+00:00",
+      "lease_epoch": 1,
+      "step_index": 2,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 2,
+        "attempt_no": 1,
+        "lease_epoch": 1,
+        "started_at": "2026-10-03T12:59:08.041463Z",
+        "attempt_deadline": null,
+        "reservation": 1111,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015621
+      }
+    },
+    {
+      "seq": 12,
+      "type": "STEP_COMPLETED",
+      "ts": "2026-10-03T12:59:08.059625+00:00",
+      "lease_epoch": 1,
+      "step_index": 2,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_COMPLETED",
+        "step_index": 2,
+        "attempt_no": 1,
+        "result": {
+          "text": "",
+          "usage": {
+            "input_tokens": 87,
+            "output_tokens": 0,
+            "cache_read_tokens": 0
+          },
+          "message": {
+            "role": "assistant",
+            "content": ""
+          },
+          "tool_calls": [
+            {
+              "id": "tu_0",
+              "args": {
+                "body": "{\"hits\": [\"flaky test in ci #1\", \"flaky test in ci #2\", \"flaky test in ci #3\"], \"logical_identity\": \"kv.search#1\"}",
+                "title": "CI flake: test_retry"
+              },
+              "name": "create_issue"
+            }
+          ],
+          "stop_reason": "tool_use",
+          "provider_meta": {
+            "node": "search1",
+            "model": "scripted-1",
+            "provider": "scripted"
+          }
+        },
+        "usage": {
+          "input_tokens": 87,
+          "output_tokens": 0,
+          "cache_read_tokens": 0
+        },
+        "provider_meta": {
+          "node": "search1",
+          "model": "scripted-1",
+          "provider": "scripted"
+        },
+        "synthetic": false
+      }
+    },
+    {
+      "seq": 13,
+      "type": "STEP_INTENDED",
+      "ts": "2026-10-03T12:59:08.072275+00:00",
+      "lease_epoch": 1,
+      "step_index": 3,
+      "attempt_no": null,
+      "body": {
+        "type": "STEP_INTENDED",
+        "step_index": 3,
+        "kind": "TOOL",
+        "name": "create_issue",
+        "args_hash": "e632e45cb36d1d8e720c0ea4aea9f28cf83c52b447b8d29ab9d91d4f847ce51e",
+        "args": {
+          "body": "{\"hits\": [\"flaky test in ci #1\", \"flaky test in ci #2\", \"flaky test in ci #3\"], \"logical_identity\": \"kv.search#1\"}",
+          "title": "CI flake: test_retry"
+        },
+        "request_hash": null,
+        "effect_key": "8a2abd5938233a96d7eae9e70e3fcd2b",
+        "effect_class": "EXTERNAL",
+        "modifiers": [],
+        "policy_verdict": "allow",
+        "program_version": "1.0+e5ab55"
+      }
+    },
+    {
+      "seq": 14,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:08.072275+00:00",
+      "lease_epoch": 1,
+      "step_index": 3,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 3,
+        "attempt_no": 1,
+        "lease_epoch": 1,
+        "started_at": "2026-10-03T12:59:08.072054Z",
+        "attempt_deadline": "2026-10-03T12:59:09.072054Z",
+        "reservation": null,
+        "price": null,
+        "reservation_usd": null
+      }
+    },
+    {
+      "seq": 15,
+      "type": "RECOVERY_STARTED",
+      "ts": "2026-10-03T12:59:10.453109+00:00",
+      "lease_epoch": 2,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RECOVERY_STARTED",
+        "lease_epoch": 2,
+        "cause": "ORPHANED",
+        "from_seq": 14,
+        "from_segment": 0,
+        "forced_by": null
+      }
+    },
+    {
+      "seq": 16,
+      "type": "STEP_AMBIGUOUS",
+      "ts": "2026-10-03T12:59:10.476959+00:00",
+      "lease_epoch": 2,
+      "step_index": 3,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_AMBIGUOUS",
+        "step_index": 3,
+        "attempt_no": 1,
+        "cause": "crash"
+      }
+    },
+    {
+      "seq": 17,
+      "type": "STEP_RESOLVED",
+      "ts": "2026-10-03T12:59:10.493499+00:00",
+      "lease_epoch": 2,
+      "step_index": 3,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_RESOLVED",
+        "step_index": 3,
+        "attempt_no": 1,
+        "resolution": "RESOLVED_FAILED",
+        "method": "probe",
+        "evidence": {
+          "verdict": "ABSENT",
+          "evidence": "no application at issues.create for an identity never received"
+        }
+      }
+    },
+    {
+      "seq": 18,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:10.493499+00:00",
+      "lease_epoch": 2,
+      "step_index": 3,
+      "attempt_no": 2,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 3,
+        "attempt_no": 2,
+        "lease_epoch": 2,
+        "started_at": "2026-10-03T12:59:10.493278Z",
+        "attempt_deadline": "2026-10-03T12:59:11.493278Z",
+        "reservation": null,
+        "price": null,
+        "reservation_usd": null
+      }
+    },
+    {
+      "seq": 19,
+      "type": "STEP_COMPLETED",
+      "ts": "2026-10-03T12:59:10.522552+00:00",
+      "lease_epoch": 2,
+      "step_index": 3,
+      "attempt_no": 2,
+      "body": {
+        "type": "STEP_COMPLETED",
+        "step_index": 3,
+        "attempt_no": 2,
+        "result": {
+          "id": "6d9c0ecf83bb",
+          "url": "world://issues.create/1",
+          "title": "CI flake: test_retry",
+          "number": 1,
+          "external_ref": "issues.create#1",
+          "logical_identity": "issues.create#1"
+        },
+        "usage": null,
+        "provider_meta": null,
+        "synthetic": false
+      }
+    },
+    {
+      "seq": 20,
+      "type": "RECOVERY_COMPLETED",
+      "ts": "2026-10-03T12:59:10.542625+00:00",
+      "lease_epoch": 2,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RECOVERY_COMPLETED",
+        "live_from_step": 4,
+        "replayed_steps": 4,
+        "elapsed_ms": 0
+      }
+    },
+    {
+      "seq": 21,
+      "type": "STEP_INTENDED",
+      "ts": "2026-10-03T12:59:10.558931+00:00",
+      "lease_epoch": 2,
+      "step_index": 4,
+      "attempt_no": null,
+      "body": {
+        "type": "STEP_INTENDED",
+        "step_index": 4,
+        "kind": "MODEL",
+        "name": "decide",
+        "args_hash": "7f489b4d977951f1d8cf0000351646b902ba0ed646db55b8080fa3759186fb41",
+        "args": {
+          "tools": [],
+          "system": null,
+          "messages": [
+            {
+              "role": "user",
+              "content": "file an issue"
+            },
+            {
+              "role": "assistant",
+              "content": "search"
+            },
+            {
+              "role": "tool_result",
+              "content": {
+                "tool": "search",
+                "result": {
+                  "hits": [
+                    "flaky test in ci #1",
+                    "flaky test in ci #2",
+                    "flaky test in ci #3"
+                  ],
+                  "logical_identity": "kv.search#1"
+                }
+              }
+            },
+            {
+              "role": "assistant",
+              "content": "create_issue"
+            },
+            {
+              "role": "tool_result",
+              "content": {
+                "tool": "create_issue",
+                "result": {
+                  "id": "6d9c0ecf83bb",
+                  "url": "world://issues.create/1",
+                  "title": "CI flake: test_retry",
+                  "number": 1,
+                  "external_ref": "issues.create#1",
+                  "logical_identity": "issues.create#1"
+                }
+              }
+            }
+          ],
+          "sampling": {},
+          "max_tokens": 1024
+        },
+        "request_hash": "7f489b4d977951f1d8cf0000351646b902ba0ed646db55b8080fa3759186fb41",
+        "effect_key": null,
+        "effect_class": null,
+        "modifiers": [],
+        "policy_verdict": "allow",
+        "program_version": "1.0+e5ab55"
+      }
+    },
+    {
+      "seq": 22,
+      "type": "STEP_ATTEMPT_STARTED",
+      "ts": "2026-10-03T12:59:10.558931+00:00",
+      "lease_epoch": 2,
+      "step_index": 4,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_ATTEMPT_STARTED",
+        "step_index": 4,
+        "attempt_no": 1,
+        "lease_epoch": 2,
+        "started_at": "2026-10-03T12:59:10.558710Z",
+        "attempt_deadline": null,
+        "reservation": 1186,
+        "price": [
+          3.0,
+          15.0
+        ],
+        "reservation_usd": 0.015846
+      }
+    },
+    {
+      "seq": 23,
+      "type": "STEP_COMPLETED",
+      "ts": "2026-10-03T12:59:10.580232+00:00",
+      "lease_epoch": 2,
+      "step_index": 4,
+      "attempt_no": 1,
+      "body": {
+        "type": "STEP_COMPLETED",
+        "step_index": 4,
+        "attempt_no": 1,
+        "result": {
+          "text": "Created issue 6d9c0ecf83bb",
+          "usage": {
+            "input_tokens": 162,
+            "output_tokens": 6,
+            "cache_read_tokens": 0
+          },
+          "message": {
+            "role": "assistant",
+            "content": "Created issue 6d9c0ecf83bb"
+          },
+          "tool_calls": [],
+          "stop_reason": "end_turn",
+          "provider_meta": {
+            "node": "search1-create_issue1",
+            "model": "scripted-1",
+            "provider": "scripted"
+          }
+        },
+        "usage": {
+          "input_tokens": 162,
+          "output_tokens": 6,
+          "cache_read_tokens": 0
+        },
+        "provider_meta": {
+          "node": "search1-create_issue1",
+          "model": "scripted-1",
+          "provider": "scripted"
+        },
+        "synthetic": false
+      }
+    },
+    {
+      "seq": 24,
+      "type": "RUN_COMPLETED",
+      "ts": "2026-10-03T12:59:10.589242+00:00",
+      "lease_epoch": 2,
+      "step_index": null,
+      "attempt_no": null,
+      "body": {
+        "type": "RUN_COMPLETED",
+        "result": {
+          "answer": "Created issue 6d9c0ecf83bb"
+        }
+      }
+    }
+  ],
+  "status": "COMPLETED",
+  "expected_status": "COMPLETED",
+  "required_effects": [
+    "issues.create#1"
+  ],
+  "claims": {
+    "PURE": "effectively_once",
+    "IDEMPOTENT": "effectively_once",
+    "EXTERNAL": "at_least_once"
+  },
+  "effect_class": "EXTERNAL",
+  "faults": [
+    {
+      "fault_id": "5d8af29fe95623ba",
+      "trial_id": "t-7",
+      "recovery_index": 0,
+      "type": "pause_past_ttl",
+      "boundary": "before:tool_call",
+      "landmark": "tool:create_issue",
+      "occurrence": 1,
+      "params": {
+        "pause_factor": 2.073604344201673
+      },
+      "trigger_observed_at": 1791032348.0917778,
+      "trigger_observed_mono_ns": 892488528535900,
+      "sut_pid": 22688,
+      "sut_ref": {
+        "run_id": "01a101d8-c8c6-713c-8e7d-b7420bafab02",
+        "step_index": 3,
+        "attempt_no": 1
+      },
+      "executed": true,
+      "pause_ms": 3000.0
+    }
+  ],
+  "restarts": 0,
+  "max_recoveries": 3,
+  "timed_out": false,
+  "reached_terminal": true,
+  "replay": {
+    "ok": true,
+    "run_id": "01a101d8-c8c6-713c-8e7d-b7420bafab02",
+    "program_version": "1.0+e5ab55",
+    "live_from_step": null,
+    "replayed_steps": 5,
+    "stopped": null,
+    "diff": null,
+    "error": null,
+    "drift": [],
+    "projection_hash": "24e3b58504e76025f42e1e105a8cfa8a2385a3c9b199a0b0713b4414449e7056",
+    "projection_matches": null
+  },
+  "sut_effects": [
+    {
+      "effect_key": "bf90007af5c5effa93fff31ad633cf10",
+      "step_index": 1,
+      "tool": "search",
+      "class": "PURE",
+      "status": "COMMITTED",
+      "external_ref": null,
+      "resolution": null
+    },
+    {
+      "effect_key": "8a2abd5938233a96d7eae9e70e3fcd2b",
+      "step_index": 3,
+      "tool": "create_issue",
+      "class": "EXTERNAL",
+      "status": "COMMITTED",
+      "external_ref": "issues.create#1",
+      "resolution": null
+    }
+  ],
+  "gated_tools": {},
+  "sut_checkpoints": null,
+  "sut_commits": null
+}

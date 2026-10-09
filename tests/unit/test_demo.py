@@ -3,11 +3,15 @@
 §28.7 names the risk in one phrase: *a demo that only works on the author's machine*. The
 mitigation it names is this test — CI runs the demo on every commit and diffs the printed lines.
 
-It runs against two recorded trials rather than against a live database, and that is the stronger
+It runs against recorded trials rather than against a live database, and that is the stronger
 form rather than the cheaper one. The narration is a pure function of `(row, facts)`, so a fixture
 pair pins exactly what a reader would see; and because the fixtures are real trial artefacts — one
 Keel run that crashed at `after:tool_effect` and recovered, one LangGraph run that did the same
 cell — a change to the narration shows up as a diff of the *script*, not as a database error.
+
+Two more Keel trials pin the recoveries the default cell never reaches: `keel_frozen`
+(`pause_past_ttl@before:tool_call` — the probe answers ABSENT and the step is sent once) and
+`keel_rerun` (IDEMPOTENT — no probe; the open attempt is abandoned and re-sent under its key).
 
 Everything that legitimately varies between two runs of the same command is canonicalised away:
 ids, hashes, ports, pids, timestamps, elapsed times, paths. What is left is the behaviour, which
@@ -30,7 +34,7 @@ from crashproof.runner.trial import TrialRow
 from crashproof.verifier import invariants
 
 GOLDEN = Path(__file__).resolve().parents[1] / "golden" / "demo"
-ARMS = ("keel", "langgraph")
+ARMS = ("keel", "langgraph", "keel_frozen", "keel_rerun")
 
 
 def load(arm: str) -> tuple[TrialRow, invariants.TrialFacts]:
@@ -72,6 +76,27 @@ def test_the_two_arms_disagree_where_the_demo_says_they_do() -> None:
     assert keel_row.recovery_mechanism == "self" and lg_row.recovery_mechanism == "harness"
     assert lg_row.verdicts["S1"] == "PASS", "at_least_once was declared; the duplicate is the cost"
     assert keel_facts.journal is not None and lg_facts.journal is None
+
+
+def test_the_recovery_lines_say_what_the_journal_says() -> None:
+    """Lines [9], [13], [15] and the last sentence were written for the default cell and printed
+    for every cell: a freeze read "process gone", a probe that answered ABSENT read "says
+    COMMITTED … never re-fired", and every run closed on "the World had the effect". A golden file
+    regenerated without reading would keep that; this would not."""
+
+    def text(arm: str) -> str:
+        return "\n".join(narrate(*load(arm), canonical=True))
+
+    frozen = text("keel_frozen")
+    assert "process frozen, not killed" in frozen and "process gone" not in frozen
+    assert "probe says ABSENT" in frozen and "COMMITTED" not in frozen and "never re-fired" not in frozen
+    assert "the World had nothing" in frozen and "The World had the effect" not in frozen
+
+    rerun = text("keel_rerun")
+    assert "STEP_FAILED{attempt_abandoned}" in rerun and "probe says" not in rerun
+    assert "asked the receiver" not in rerun and "nothing re-sent" not in rerun
+
+    assert "probe says COMMITTED" in text("keel"), "the default cell's probe did find the effect"
 
 
 def test_canonicalising_removes_the_weather_and_keeps_the_behaviour() -> None:

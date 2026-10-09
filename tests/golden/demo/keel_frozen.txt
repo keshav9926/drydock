@@ -1,0 +1,43 @@
+crashproof demo — keel.default.EXTERNAL.pause_past_ttl@before:tool_call   seed 7
+  recovery_mechanism=self   key_source=none
+  claims: EXTERNAL at_least_once · IDEMPOTENT effectively_once · PURE effectively_once
+
+────────────────────────────────────────────────────────────────────────
+BEFORE CRASH
+────────────────────────────────────────────────────────────────────────
+[1]  world up · endpoints issues.create dedup:false · kv.search dedup:n/a  · oracle exposed to the probe
+[2]  dependency: the adapter's own store, cloned fresh for this trial
+[3]  worker: lease_ttl 2.0 s > create_issue timeout 1.0 s   — the pre-dispatch check refuses an EXTERNAL effect otherwise (§8)
+[4]  RUN_CREATED seq 1 at lease_epoch 0   — the one append with no lease to fence against
+[5]  epoch 1 runs 3 steps clean: #0 · #1 · #2   (seq 6–12)
+     (this workload gates nothing; §26.3's approval half needs a gated tool call)
+[6]  #3 TOOL create_issue [EXTERNAL]  STEP_INTENDED seq 13  key=<hash>
+[7]  STEP_ATTEMPT_STARTED #3 attempt 1 seq 14   — the write-ahead barrier: no receipt may precede this seq
+[8]  World has no issues.create#1 yet
+[9]  fault pause_past_ttl @ before:tool_call  landmark tool:create_issue  → fault-log row fsync → process frozen, not killed
+     at the cut: last committed seq 14 · open step 3.1 · no outcome · World's last receipt kv.search#1
+
+────────────────────────────────────────────────────────────────────────
+AFTER THE CUT
+────────────────────────────────────────────────────────────────────────
+[10] supervisor: no restart — the holder is frozen, not gone; the second worker, started beside it, is the one that finds the run
+[11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline  → runs.orphaned_at set → claim
+[12] RECOVERY_STARTED{cause=ORPHANED, from_seq=14} seq 15   — a different process, told nothing
+[13] re-execution: 3 settled steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
+[14] #3 STARTED without an outcome, class EXTERNAL  → STEP_AMBIGUOUS seq 16   — the runtime does not guess
+[15] probe → the receiver is asked, not assumed: probe says ABSENT
+     STEP_RESOLVED{RESOLVED_FAILED} seq 17   — it never landed, so it is safe to send: the next attempt opens in this transaction
+     STEP_ATTEMPT_STARTED #3 attempt 2 seq 18 → STEP_COMPLETED seq 19
+[16] RECOVERY_COMPLETED{live_from_step=4, replayed_steps=4} seq 20
+[17] World after the cut: 1 further receipt(s) for issues.create#1   — the World had none before the cut
+     run status COMPLETED  ·  result {'answer': 'Created issue <hash>'}
+
+────────────────────────────────────────────────────────────────────────
+THE POINT
+────────────────────────────────────────────────────────────────────────
+[18] World: receipts(issues.create#1)=1  applied=1   ·  duplicate_effects=0  duplicate_receipts=0
+     verifier: S1✓ S2✓ S3✓ S4✓ S5✓ L1✓ L2✓ S6· S7· S8· C1✓ C2·        (· = N/A: an input the verdict needs is missing; `crashproof verify` names it)
+[19] replay --verify: 5 steps reproduced  · projection hash match
+[20] row → <results>  ·  seed 7  ·  spec <hash>  ·  keel_commit <sha>
+
+The journal had an attempt with no outcome, and the World had nothing. A different process read the journal, found the open EXTERNAL step, asked the receiver, heard that it had never landed, and sent it — 1 request, 1 applied.

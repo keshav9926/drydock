@@ -23,7 +23,7 @@ AFTER RESTART
 [10] supervisor: worker gone, 1 restart(s) ≤ max_recoveries 3  → restart with identical argv and env, no run id passed
 [11] reaper: the lease lapsed and no non-PURE attempt is still inside its deadline  → runs.orphaned_at set → claim
 [12] RECOVERY_STARTED{cause=ORPHANED, from_seq=14} seq 15   — a different process, told nothing
-[13] re-execution: 4 steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
+[13] re-execution: 3 settled steps returned from the journal  — 0 model calls, 0 World calls, 0 tokens
 [14] #3 STARTED without an outcome, class EXTERNAL  → STEP_AMBIGUOUS seq 16   — the runtime does not guess
 [15] probe → the receiver is asked, not assumed: probe says COMMITTED
      STEP_RESOLVED{RESOLVED_COMPLETED} seq 17   — resolved, never re-fired
