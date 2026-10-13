@@ -795,8 +795,39 @@ AFTER RESTART split, in the event stream where it already lives).
   byte-identical, and writes OTLP/JSON to a file or an OTLP/HTTP endpoint. MODEL attempts carry the
   GenAI attribute names a Langfuse generation is made of; Langfuse documents exactly this ingest
   (checked against its docs, not a live instance). Off the write path, and not a tail.
-- TRANSACTIONAL is refused at registration (`ToolRegistrationError`). It had been declarable while
-  unbuilt, and a tool declaring it recovered like PURE: silently weaker than its name.
+- TRANSACTIONAL was refused at registration (`ToolRegistrationError`; retired by the next item). It
+  had been declarable while unbuilt, and a tool declaring it recovered like PURE: silently weaker than
+  its name.
+- TRANSACTIONAL itself (§9.1), which retires that refusal: the tool runs inside the fenced transaction
+  that commits its outcome, on that transaction's own connection (`tctx.db`, lent by
+  `AppendTx.tool_db`), so its writes and STEP_COMPLETED are one commit; a timeout or an error rolls the
+  writes back and is journaled after, as STEP_FAILED; a holder that lost its lease is fenced before the
+  tool runs. On Postgres the transaction carries its own `statement_timeout` and
+  `idle_in_transaction_session_timeout`, so a holder frozen inside it cannot keep the run's row locked;
+  on the memory backend `tctx.db` is the journal's staged tables. Tested by `tests/unit/test_transactional.py`,
+  `tests/integration/test_transactional_pg.py` (including the server ending a frozen holder's
+  transaction, its lock with it), 16 TRANSACTIONAL rows in the conformance table (82 cells: 66 run,
+  16 N/A) and the class in `KeelMachine`'s generator. Four deliberate breaks were each caught: tool
+  writes applied outside the transaction, an append without its fence, no server bound, and the bound
+  set for the session instead of the transaction; the machine's own checks are shown to see a second
+  committed row as an S1 failure. An independent review then found the one thing the in-memory tests
+  could not: on Postgres a serialization failure, a deadlock or a cancelled query reaches the tool as an
+  `OperationalError`, which the append turned into `StoreUnavailable`, so the attempt was abandoned
+  rather than journaled (and never retried). The tool's error now leaves its transaction as itself
+  (`_RolledBack`), and only a connection the server actually ended (`AppendTx.lost()`) is an outage.
+  Three Postgres tests pin it: the serialization test fails on the code as first written, the
+  ended-connection test fails without the connection check, and an ordinary SQL error fails the step
+  either way. A second, adversarial review found four more, each now fixed and pinned by a Postgres
+  test that fails with its fix reverted: on Linux a session ended for idling surfaces as 25P03, an
+  `InternalError` the append did not read as an outage (the run would have been recorded FAILED with
+  its step open — the frozen-holder test passed only on Windows), so the append now reads any error on
+  a connection the server ended as `StoreUnavailable`; the lent connection was the pool's, so a row
+  factory or a session `SET` a tool left on it reached the next borrower, and it is now one of its own,
+  closed with the transaction; a tool that swallowed an error without a savepoint, tripped a deferred
+  constraint or ran its own `COMMIT` broke the journal's statements instead of failing its step, and
+  `AppendTx.tool_done` now checks the transaction when the tool returns; and the `statement_timeout`
+  half of the bound was untested, which a holder frozen in the middle of a statement now covers. No
+  cross-runtime cell: W4 is still cut. Keel's adapter now declares TRANSACTIONAL `exactly_once`.
 - S10 is a column of the conformance table (sim form: no receipt for a STARTED the journal refused),
   judged at `before:intent_commit`'s journal error, where attempt 1's STARTED is refused with its
   intent. The property was already asserted through that cell's window; now it is named.
@@ -816,8 +847,9 @@ AFTER RESTART split, in the event stream where it already lives).
 **Named, not built:**
 
 - `partition_worker_world`: V2 in §27.7, and fourth in §29.1's cut order.
-- W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs TRANSACTIONAL and the
-  effect-table bridge, neither built.
+- W4 `side_effecting_order` is **cut**, third in §29.1's cut order: it needs the workload itself, the
+  World's `payments` and `email` services and the effect-table bridge, none built (TRANSACTIONAL, the
+  class it exists for, now is, above).
 - The rest of §29.3's V2 reach list is not started: retention/archival, the real-model subset and
   its replay cache (K11(b)'s instrument — it spends a provider's money, which nobody has approved),
   Hatchet, Inngest, a native Temporal adapter and Julep. The upcaster migration + C4 and the OTel

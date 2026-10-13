@@ -139,6 +139,9 @@ class StepCtx:
     emit: Any = None
     #: A LOCAL_FS tool's per-epoch checkout (`runtime/sandbox.py`, §20.5); None without a Sandbox.
     workspace: Any = None
+    #: A TRANSACTIONAL tool's `tctx.db` (§9.1): the outcome transaction's own connection, lent for
+    #: the length of the attempt; None for every other class.
+    db: Any = None
 
 
 @runtime_checkable

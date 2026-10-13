@@ -29,7 +29,10 @@ Run: `uv run pytest tests/conformance -q`. The table lands in `bench/keel_confor
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -45,6 +48,8 @@ from keel import Keel
 from keel.agents import demo
 from keel.core.clock import FakeClock
 from keel.core.errors import StoreUnavailable
+from keel.core.protocols import EffectClass
+from keel.effects.registry import tool
 from keel.journal.memory import MemoryJournal
 from keel.providers.scripted import ScriptedProvider
 from keel.replay.verify import verify as run_verify
@@ -61,6 +66,58 @@ UNDER_TEST = {
     "PURE": (1, "EXTERNAL"),
     "IDEMPOTENT": (3, "IDEMPOTENT"),
     "EXTERNAL": (3, "EXTERNAL"),
+    "TRANSACTIONAL": (3, "TRANSACTIONAL"),
+}
+
+#: The TRANSACTIONAL band (§9.1): `create_issue` as a row in the journal's own `issues` table,
+#: written through `tctx.db` — the memory backend's tables. It never reaches the World, so its World
+#: is that table, read the way §14.1's effect-table bridge reads one: a committed row is an applied
+#: effect and its receipt, and a row staged in a transaction that never committed is nothing.
+TXN_IDENTITY = "issues.db#1"
+#: The heartbeat cell's hold, for a tool with no World response to hold: its first call sleeps, once.
+TXN_HOLD: list[float] = []
+
+
+@tool(effect=EffectClass.TRANSACTIONAL, timeout=1.0, name="create_issue")
+async def create_issue_txn(args: dict[str, Any], tctx: Any) -> dict[str, Any]:
+    if TXN_HOLD:
+        await asyncio.sleep(TXN_HOLD.pop())
+    tctx.db.setdefault("issues", []).append(
+        {"title": args["title"], "logical_identity": TXN_IDENTITY, "effect_key": tctx.effect_key, "ts": time.time()}
+    )
+    return {"id": tctx.effect_key[:12], "external_ref": TXN_IDENTITY}
+
+
+@dataclass(frozen=True, slots=True)
+class _Row:
+    endpoint: str
+    effect_key: str | None
+    logical_identity: str
+    ts: float
+
+
+class TableLedger:
+    """The TRANSACTIONAL band's World: the committed rows of `issues`, in the World's own shape, so
+    the window, the counts and the verdicts read them through the same code as every other band."""
+
+    def __init__(self, journal: MemoryJournal) -> None:
+        self._journal = journal
+
+    @property
+    def receipts(self) -> list[_Row]:
+        return [_Row("issues.db", r["effect_key"], r["logical_identity"], r["ts"])
+                for r in self._journal.tables.get("issues", [])]
+
+    def applied_counts(self) -> dict[str, int]:
+        return dict(Counter(r.logical_identity for r in self.receipts))
+
+
+#: The window the class exists to close. For the other three a crash between the effect and the
+#: outcome commit leaves `running/sent`; here the effect is *in* the outcome's transaction, so at the
+#: instant of the fault the journal has STARTED with no outcome and the table has nothing.
+TXN_WINDOW: dict[str, tuple[str, str]] = {
+    "after:effect_exec": ("running", "untouched"),
+    "before:outcome_commit": ("running", "untouched"),
 }
 
 #: What the journal and the World must hold at the instant the fault lands — the recovery table
@@ -270,10 +327,11 @@ RESULTS: dict[str, Result] = {}
 
 # --- the runner ---------------------------------------------------------------
 def _keel(clock: FakeClock, variant: str) -> Keel:
+    write = create_issue_txn if variant == "TRANSACTIONAL" else demo.create_issue_tool(variant)
     return Keel(
         journal=MemoryJournal(clock=clock),
         provider=ScriptedProvider(demo.SCRIPT),
-        tools=[demo.search, demo.create_issue_tool(variant)],
+        tools=[demo.search, write],
         programs=[demo.tool_chain],
         clock=clock,
     )
@@ -319,9 +377,13 @@ async def run_cell(cell: Cell) -> Result:
     step, variant = UNDER_TEST[cell.effect_class]
     result = Result(cell=cell)
     identity = _identity(cell.effect_class, variant)
+    txn = variant == "TRANSACTIONAL"
     world = build_world()
     if cell.boundary == "before:lease_heartbeat":
-        world.hold(identity.split("#")[0], HEARTBEAT_HOLD_MS, times=1)
+        if txn:
+            TXN_HOLD[:] = [HEARTBEAT_HOLD_MS / 1000]
+        else:
+            world.hold(identity.split("#")[0], HEARTBEAT_HOLD_MS, times=1)
     server = WorldServer(world, port=0)
     await server.start()
     previous_url = demo.WORLD_URL
@@ -332,6 +394,8 @@ async def run_cell(cell: Cell) -> Result:
         # outlive one heartbeat period — a short TTL and a held response, together.
         ttl = HEARTBEAT_TTL if cell.boundary == "before:lease_heartbeat" else TTL
         k = _keel(clock, variant)
+        # Where the effect under test lands: the World, or the journal's own table.
+        ledger = TableLedger(k.journal) if txn else world
         handle = await k.start(demo.tool_chain, {"task": "file an issue"})
 
         landed: list[str] = []
@@ -345,9 +409,10 @@ async def run_cell(cell: Cell) -> Result:
 
         # The window, read before anyone recovers: this is the whole point of the cell.
         state = fold(await k.events(handle.run_id))
-        result.window = _window(state, step, world, identity)
-        expected_journal, expected_world = WINDOW_OVERRIDE.get(
-            (cell.boundary, cell.fault), WINDOW[cell.boundary]
+        result.window = _window(state, step, ledger, identity)
+        expected_journal, expected_world = (
+            TXN_WINDOW[cell.boundary] if txn and cell.boundary in TXN_WINDOW
+            else WINDOW_OVERRIDE.get((cell.boundary, cell.fault), WINDOW[cell.boundary])
         )
         result.window_ok = (
             not result.fired
@@ -369,11 +434,11 @@ async def run_cell(cell: Cell) -> Result:
         result.status = final.phase
         # How the successor disposed of the step the fault interrupted. This is §8.3's per-class
         # table demonstrated rather than asserted: the same window resolved by probe for EXTERNAL,
-        # re-fired under the same key for IDEMPOTENT, and simply re-run for PURE.
+        # re-fired under the same key for IDEMPOTENT, and simply re-run for PURE and TRANSACTIONAL.
         row = final.steps.get(step)
         result.disposal = row.state if row else "—"
-        result.applied = world.applied_counts().get(identity, 0)
-        result.receipts = sum(1 for r in world.receipts if r.logical_identity == identity)
+        result.applied = ledger.applied_counts().get(identity, 0)
+        result.receipts = sum(1 for r in ledger.receipts if r.logical_identity == identity)
 
         replay = await run_verify(k.journal, handle.run_id, demo.tool_chain.fn, tools=k.tools)
         verdicts = invariants.verify(
@@ -381,9 +446,9 @@ async def run_cell(cell: Cell) -> Result:
                 world_receipts=[
                     {"endpoint": r.endpoint, "effect_key": r.effect_key,
                      "logical_identity": r.logical_identity, "ts": r.ts}
-                    for r in world.receipts
+                    for r in ledger.receipts
                 ],
-                world_applied=world.applied_counts(),
+                world_applied=ledger.applied_counts(),
                 sut_committed={
                     e.external_ref
                     for e in (await k.journal.effects(handle.run_id))
@@ -396,7 +461,7 @@ async def run_cell(cell: Cell) -> Result:
                     for e in events
                 ],
                 status=_status(final.phase),
-                required_effects=required_effects(variant),
+                required_effects=(TXN_IDENTITY,) if txn else required_effects(variant),
                 claims=KeelAdapter.claims,
                 effect_class=cell.effect_class,
                 faults=[{"type": cell.fault, "boundary": cell.boundary, "executed": result.fired}],
@@ -416,6 +481,7 @@ async def run_cell(cell: Cell) -> Result:
     finally:
         demo.WORLD_URL = previous_url
         hooks.reset()
+        TXN_HOLD.clear()
         await server.stop()
 
 
@@ -959,7 +1025,9 @@ async def run_stream_cell(cell: Cell) -> Result:
 def _identity(effect_class: str, variant: str) -> str:
     """The logical identity of the effect this cell aims at. The two bands run against different
     endpoints — `issues.create` honours nothing, `issues.upsert` deduplicates — so the identity is
-    the variant's, never a constant."""
+    the variant's, never a constant. TRANSACTIONAL's is its row in the journal's own table."""
+    if effect_class == "TRANSACTIONAL":
+        return TXN_IDENTITY
     return "kv.search#1" if effect_class == "PURE" else required_effects(variant)[0]
 
 
@@ -1047,6 +1115,10 @@ def render() -> str:
         "asserted. `applied` and `receipts` are what the World actually did and what it was asked",
         "to do, printed whatever the verdicts say: the gap between them is what the receiver's",
         "idempotency bought, and the runtime gets no credit for it.",
+        "",
+        "TRANSACTIONAL's World is the journal's own `issues` table (§9.1): its write commits in the",
+        "outcome's transaction, so a committed row is its one receipt and its one application, and a",
+        "row staged by a transaction the fault rolled back is neither. Its claim is `exactly_once`.",
         "",
         "| boundary | fault | class | window | disposal | applied | receipts | status | "
         + " | ".join(JUDGED) + " |",

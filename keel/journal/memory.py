@@ -9,6 +9,7 @@ would make the property suite prove nothing.
 from __future__ import annotations
 
 import asyncio
+import copy
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -58,6 +59,8 @@ class _MemoryAppendTx:
         self._settlements: list[tuple[Any, str, dict[str, Any] | None, int]] = []
         self._wake_cleared = False
         self._release: dict[str, Any] | None = None
+        #: A TRANSACTIONAL tool's view of `MemoryJournal.tables`, staged here; None until one asks.
+        self._tables: dict[str, Any] | None = None
         self._start_seq = lease.next_seq
 
     async def now(self) -> datetime:
@@ -95,6 +98,21 @@ class _MemoryAppendTx:
 
     async def set_run(self, **fields: Any) -> None:
         self._run_fields.update(fields)
+
+    async def tool_db(self, timeout_s: float) -> dict[str, Any]:
+        """The journal's tables as this transaction sees them: a deep copy, so a tool that mutates a
+        row in place cannot reach committed state, applied at the commit or dropped with the rest.
+        `timeout_s` bounds nothing here — there is no server to end a transaction, and the append
+        holds the journal's lock for its whole life, the memory form of the fence's row lock."""
+        if self._tables is None:
+            self._tables = copy.deepcopy(self._j.tables)
+        return self._tables
+
+    async def tool_done(self) -> None:
+        return None  # no aborted state and no deferred constraints: a dict has neither
+
+    def lost(self) -> bool:
+        return False  # an in-process dict cannot go away under the transaction holding it
 
     async def consume_signal(self, signal_id: Any, seq: int) -> None:
         self._consumed.append((signal_id, seq))
@@ -216,6 +234,10 @@ class _MemoryAppendTx:
         # and Postgres cannot bump a second runs row here without inverting the lock order.
         for row in self._signals_out:
             j._put_signal(row, wake=False)
+        if self._tables is not None:
+            # A TRANSACTIONAL tool's writes, with the outcome that carries them — copied, so a handle
+            # the tool kept past its call cannot reach committed state, as a closed connection cannot.
+            j.tables = copy.deepcopy(self._tables)
 
     def _rollback(self) -> None:
         self._lease.next_seq = self._start_seq
@@ -233,6 +255,9 @@ class MemoryJournal:
         self._programs: dict[tuple[str, str], dict[str, Any]] = {}
         self._signals: dict[Any, SignalRow] = {}
         self._delegations: dict[Any, DelegationRow] = {}
+        #: The application's own tables in the journal's database: what a TRANSACTIONAL tool reads and
+        #: writes through `tctx.db` on this backend (§9.1). Free-form — name → whatever the tool keeps.
+        self.tables: dict[str, Any] = {}
         self._lock = asyncio.Lock()
 
     # --- guards mirroring the partial unique indexes of §5.3 -----------------
@@ -381,7 +406,7 @@ class MemoryJournal:
         lease.valid_until_mono = asyncio.get_running_loop().time() + lease.ttl_seconds
 
     @asynccontextmanager
-    async def append(self, lease: Lease):
+    async def append(self, lease: Lease, *, lend: bool = False):  # nothing pooled to protect here
         async with self._lock:
             self._fence(lease)  # first statement of every append transaction
             tx = _MemoryAppendTx(self, lease)

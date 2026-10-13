@@ -125,6 +125,11 @@ MAX_ABANDONED_ATTEMPTS = 3
 #: STEP_CANCELLED's reason on a woken wait, RUN_FAILED either way.
 DEADLINE = "DeadlineExceeded"
 
+#: How much later than the worker's own timer the store ends a TRANSACTIONAL attempt's transaction
+#: (`AppendTx.tool_db`). Later, so a live worker's timeout is the one that fires and journals
+#: STEP_FAILED{timeout}; the store's bound is for a holder that has stopped (section-local decision).
+TOOL_TX_GRACE_S = 1.0
+
 # A probe that cannot tell, distinguished from a step whose value happens to be None.
 _UNRESOLVED = object()
 
@@ -1631,6 +1636,8 @@ class StepEngine:
         eff_class = intent.effect_class
         if eff_class is not None and eff_class != EffectClass.PURE:
             await self._pre_dispatch_gate(timeout)
+        if eff_class == EffectClass.TRANSACTIONAL:
+            return await self._dispatch_transactional(intent, attempt_no, started_seq, deadline, timeout, started_local)
         workspace = None
         if self.sandbox is not None and Modifier.LOCAL_FS in intent.modifiers:
             # This epoch's own directory: a zombie of an older epoch writes only into its own (§20.5).
@@ -1698,6 +1705,86 @@ class StepEngine:
                 # partial. Never across a crash — a crashed attempt has no outcome to relax.
                 outcome = Completed(result={"partial": True, "chunks": list(chunks.pieces)})
         return await self._commit_outcome(intent, attempt_no, started_seq, outcome)
+
+    async def _dispatch_transactional(
+        self,
+        intent: StepIntent,
+        attempt_no: int,
+        started_seq: int,
+        deadline: datetime | None,
+        timeout: float,
+        started_local: datetime,
+    ) -> Any:
+        """§9.1's fourth class: the tool's writes, STEP_COMPLETED and the row's COMMITTED status in
+        one transaction in the journal's own database — on a connection lent for that one transaction
+        (`append(lend=True)`) — whose first statement is the fence.
+
+        So there is no ambiguity window to dispose of. A crash, a timeout or an error before the
+        commit takes the tool's writes back with the outcome that would have carried them, and a
+        holder that has lost its lease is fenced before the tool runs: the step is STARTED without an
+        outcome, or FAILED, and either way the effect provably did not happen (§8.3). A failure is
+        the one outcome that commits elsewhere — after the rollback, in a transaction of its own,
+        through `_commit_outcome`, the path every class's failure takes (§8.5: ROLLBACK, then
+        STEP_FAILED{retryable})."""
+        sctx = StepCtx(
+            run_id=self.lease.run_id,
+            run_root_id=self.run_root_id,
+            attempt_no=attempt_no,
+            clock=self.clock,
+            deadline=deadline,
+            effect_key=intent.effect_key,
+            provider=self.provider,
+            tools=self.tools,
+        )
+        executor = EXECUTORS[intent.kind]
+        try:
+            hooks.at("before:effect_exec", attempt_no=attempt_no, **_where(intent))
+        except (Fenced, StoreUnavailable):
+            raise
+        except Exception as exc:  # noqa: BLE001 - a raise here reads as the tool's own, as in `_dispatch`
+            return await self._commit_outcome(intent, attempt_no, started_seq, _rolled_back(exc))
+        try:
+            async with self.journal.append(self.lease, lend=True) as tx:
+                # Counted from STARTED, after the connection and the fence have had their share.
+                remaining = timeout if deadline is None else _remaining(started_local, timeout, self.clock)
+                sctx.db = await tx.tool_db(remaining + TOOL_TX_GRACE_S)
+                try:
+                    async with _waits(self.clock).timeout(remaining):
+                        outcome: StepOutcome = await _execute(executor, intent, sctx, None)
+                    await tx.tool_done()  # handed back open and healthy, its deferred constraints checked
+                    # Inside the transaction: a crash here or at `before:outcome_commit` rolls the
+                    # tool's writes back — the whole difference between this class and the others.
+                    hooks.at("after:effect_exec", attempt_no=attempt_no, **_where(intent))
+                except (Fenced, StoreUnavailable):
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the tool's own error is an outcome
+                    if tx.lost():
+                        # The tool's connection *is* the journal's: one the store ended is an outage
+                        # to abandon on (§8.2), whatever the error says — never the tool's failure.
+                        raise StoreUnavailable(f"the store went away under {intent.name}: {exc}") from exc
+                    raise _RolledBack(exc) from exc
+                hooks.at("before:outcome_commit", attempt_no=attempt_no, **_where(intent))
+                seq = await tx.append(
+                    StepCompleted(
+                        step_index=intent.step_index,
+                        attempt_no=attempt_no,
+                        result=outcome.result,
+                        usage=outcome.usage,
+                        provider_meta=outcome.provider_meta,
+                    ),
+                    causation_seq=started_seq,
+                )
+                await tx.update_effect(
+                    intent.effect_key or "", status="COMMITTED", outcome_seq=seq, external_ref=outcome.external_ref
+                )
+                await tx.set_run(attempt_deadline=None)
+        except _RolledBack as rolled:
+            return await self._commit_outcome(intent, attempt_no, started_seq, _rolled_back(rolled.error))
+        except Fenced as exc:
+            raise Abandon("fenced before the TRANSACTIONAL tool ran") from exc
+        hooks.at("after:outcome_commit", attempt_no=attempt_no, **_where(intent))
+        self.state.charged.settle(intent.step_index, attempt_no, outcome.usage)
+        return outcome.result
 
     async def _pre_dispatch_gate(self, timeout: float) -> None:
         """require lease_valid_until - now >= tool.timeout; re-heartbeat, or abandon without
@@ -1884,9 +1971,11 @@ class StepEngine:
                     await tx.update_effect(intent.effect_key or "", status="AMBIGUOUS", outcome_seq=seq)
                     await tx.set_run(attempt_deadline=None)
                 return await self._resolve(intent, n)
-            # PURE / MODEL re-run; IDEMPOTENT re-runs under the SAME effect_key, which the key
-            # derivation guarantees: it is (run_root_id, step_index, tool, canonical_args), none of
-            # which an attempt changes, so a receiver that honours the key applies it once (§8.3).
+            # PURE / MODEL re-run; TRANSACTIONAL re-runs because the outcome transaction that would
+            # have carried its writes never committed, so they never happened; IDEMPOTENT re-runs
+            # under the SAME effect_key, which the key derivation guarantees: it is (run_root_id,
+            # step_index, tool, canonical_args), none of which an attempt changes, so a receiver
+            # that honours the key applies it once (§8.3).
             #
             # This is recovery, not retry: a FAILED outcome still ends the run, because the MVP
             # runs one attempt and an unmeasured retry policy is a guess (day 4, §27.5). But an
@@ -2148,6 +2237,37 @@ async def _execute(executor: StepExecutor, intent: StepIntent, sctx: StepCtx, ch
         raise
     await chunks.flush()
     return outcome
+
+
+class _RolledBack(Exception):
+    """A TRANSACTIONAL tool's own error, carried out of its transaction so the rollback runs and the
+    backend cannot read it as the store's: Postgres' append turns any `OperationalError` into
+    `StoreUnavailable`, and a serialization failure, a deadlock or a cancelled query is one."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+#: SQLSTATEs that say nothing about the tool's logic, only that this try ran into something: class 40,
+#: Postgres' own *retry this transaction* (a serialization failure, a deadlock); class 53, the server
+#: short of a resource; 55P03, a lock not granted in time; 57014, a cancelled query — a timeout.
+_TRANSIENT_SQLSTATES = ("40", "53", "55P03", "57014")
+
+
+def _rolled_back(exc: Exception) -> Failed:
+    """A TRANSACTIONAL attempt that ended before its commit, as the failure it is. Never `unknown`:
+    the rollback took the tool's writes with it. Retryable after the worker's own timeout, a receiver
+    that failed to answer, or a transient SQLSTATE (`_TRANSIENT_SQLSTATES`; section-local decision). A
+    refusal, a contract the tool broke, or any other error is the tool's, and final."""
+    if isinstance(exc, TimeoutError):
+        return Failed("timeout", retryable=True)
+    if isinstance(exc, UnknownOutcome):
+        return Failed(f"error_response: {exc}", retryable=True)
+    if isinstance(exc, Rejected):
+        return Failed(f"rejected: {exc}", retryable=False)
+    sqlstate = str(getattr(exc, "sqlstate", None) or "")
+    return Failed(f"{type(exc).__name__}: {exc}", retryable=sqlstate.startswith(_TRANSIENT_SQLSTATES))
 
 
 def _remaining(started_local: datetime, timeout: float, clock: Any = None) -> float:

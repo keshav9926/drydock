@@ -15,15 +15,19 @@ Workload binding: [`keel/agents/demo.py`](../../keel/agents/demo.py).
 |---|---|
 | `recovery_mechanism` | **`self`** — the restarted process scans its own store and finds its work. Nothing tells it which run to resume, and the `worker_argv` the supervisor re-spawns carries no run id. |
 | `key_sources` | `none` (F0) and `framework` (F1) |
-| `claims` | PURE `effectively_once` · IDEMPOTENT `effectively_once` · EXTERNAL `at_least_once` |
+| `claims` | PURE `effectively_once` · IDEMPOTENT `effectively_once` · EXTERNAL `at_least_once` · TRANSACTIONAL `exactly_once` |
 | Per-trial dependency | a Postgres database cloned from a migrated template |
 | Durable unit | one step: `STEP_INTENDED` → `STEP_ATTEMPT_STARTED` → outcome |
 
 The EXTERNAL claim is the one worth reading twice. A fence protects journal appends; it cannot
 reach a third party. So beyond PURE, which has no effect to repeat, the only class that may claim more
-than at-least-once is the one where the **receiver** is doing the work — which is why IDEMPOTENT is
-`effectively_once` and EXTERNAL is not, and why an EXTERNAL duplicate in the matrix is a printed cost
-rather than a failure.
+than at-least-once against a third party is the one where the **receiver** is doing the work — which
+is why IDEMPOTENT is `effectively_once` and EXTERNAL is not, and why an EXTERNAL duplicate in the
+matrix is a printed cost rather than a failure. TRANSACTIONAL is the exception that proves the rule:
+its receiver is the journal's own database and its writes are inside the fenced transaction, so the
+fence does reach it. No published workload exercises it (W4 is not built); the conformance table's
+TRANSACTIONAL rows judge it against `exactly_once` on the in-memory journal, with the table the tool
+writes as the World, and `tests/integration/test_transactional_pg.py` runs it on Postgres.
 
 ## `key_source` formula
 

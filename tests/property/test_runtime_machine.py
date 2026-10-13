@@ -49,6 +49,12 @@ ends it with no final response (`model_stream_truncate`). `crash_at_boundary` an
 `during:stream` through `hooks.BOUNDARIES`, so a stream is also killed or cut off from its store after a
 batch is durable. S9's sim form — the journal charges a run at least what the provider produced for it,
 abandoned and cut attempts included — is checked after every rule.
+
+TRANSACTIONAL (§9.1) is drawn like the other three classes: its tool writes one row to the journal's own
+table inside the transaction that commits its outcome. It is never held, so what reaches it is
+`crash_at_boundary` and `journal_fault` at the boundaries inside that transaction (`after:effect_exec`,
+`before:outcome_commit`), and a recovery that re-runs it; S1 is judged against `exactly_once` and C3
+against the table itself, after every rule.
 """
 
 from __future__ import annotations
@@ -72,7 +78,7 @@ MAX_SIGNALS = 4
 TOOL = st.builds(
     ToolDecl,
     name=st.just("t"),
-    cls=st.sampled_from(("PURE", "IDEMPOTENT", "EXTERNAL")),
+    cls=st.sampled_from(("PURE", "IDEMPOTENT", "EXTERNAL", "TRANSACTIONAL")),
     resolution=st.sampled_from(("escalate", "probe")),
     dedup=st.sampled_from((True, False)),
     gated=st.sampled_from((False, True)),
@@ -318,6 +324,37 @@ def test_the_sim_can_actually_lose_and_recover_a_run() -> None:
         sim.check()
         sim.quiesce()
         sim.check_teardown()
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("boundary", ["after:effect_exec", "before:outcome_commit"])
+def test_the_sim_kills_a_transactional_tool_inside_its_transaction(boundary: str) -> None:
+    """TRANSACTIONAL's machine path, pinned: killed with its row written and not committed, the row
+    goes with the transaction, and a successor re-runs the step and commits exactly one. The last
+    lines prove the checks read the table — a second committed row is an S1 failure against
+    `exactly_once` — because checks that could not see it would pass every TRANSACTIONAL example."""
+    sim = Sim([ToolDecl("t0", cls="TRANSACTIONAL")], [{"op": "tool", "tool": "t0", "gated": False}])
+    try:
+        sim.crash("W0", boundary)  # no worker yet: armed for the next one in the slot
+        assert sim.restart_worker("W0") and sim.workers["W0"].state == "dead"
+        assert fold(sim.events(sim.root)).steps[0].state == "RUNNING"
+        assert sim.applied_counts() == {}, "the row went with the transaction"
+        sim.check()
+
+        sim.tick(TTL + 2)
+        assert sim.restart_worker("W1")
+        state = fold(sim.events(sim.root))
+        assert state.phase == "COMPLETED" and state.steps[0].state == "COMPLETED"
+        assert list(sim.applied_counts().values()) == [1]
+        sim.check()
+        sim.quiesce()
+        sim.check_teardown()
+
+        [table] = sim.journal.tables.values()
+        table.append(dict(table[0]))
+        with pytest.raises(AssertionError, match="S1"):
+            sim.check()
     finally:
         sim.close()
 

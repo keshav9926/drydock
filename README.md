@@ -172,14 +172,27 @@ Those DBOS cells measure the kill's timing as much as DBOS, so they are explorat
 The matrix measures what every runtime exposes. Keel's own journal protocol is also tested where no
 outside instrument can reach — inside single transactions:
 
-- **66 white-box cells** at **17 named hook boundaries** inside the write path, the inbox drain, the
-  approval park and the delegation spawn, per effect class: **54 run, 12 N/A with the reason, 0 failed**
+- **82 white-box cells** at **17 named hook boundaries** inside the write path, the inbox drain, the
+  approval park and the delegation spawn, per effect class: **66 run, 16 N/A with the reason, 0 failed**
   ([`bench/keel_conformance/table.md`](bench/keel_conformance/table.md)). Published beside the matrix and
   never unioned with it — a boundary only one runtime exposes is not a fair column. Each cell prints what
   the journal and the receiver held at the instant of the fault and how the successor closed the step.
   The table judges three verdicts the matrix cannot: S8 over the whole tree of journals (the matrix
   collects one per trial), S9 — a run is never charged less than the provider billed — and S10, no
   receipt for a write-ahead record the journal refused.
+- **TRANSACTIONAL, the one exactly-once class.** Its receiver is the journal's own database, so no
+  cross-runtime cell measures it (W4, the workload that would, is not built). Its 16 rows of the white-box
+  table run on the in-memory journal and read the table the tool writes there: killed with the row written
+  and not committed, the journal holds STARTED with no outcome and the table holds nothing; the successor
+  re-runs it and commits one row. Against Postgres (`tests/integration/test_transactional_pg.py`): a
+  timed-out query is cancelled on the server and its INSERT rolled back; a serialization failure is
+  journaled retryable and retried, an ordinary SQL error fails the step; a connection the server ends
+  mid-tool abandons the attempt rather than failing it; a tool that swallows an error without a savepoint,
+  trips a deferred constraint or runs its own `COMMIT` fails its step instead of the journal's commit; the
+  tool's connection is its own, so nothing it sets reaches the pool; and a holder frozen inside the
+  transaction — between statements or in the middle of one — does not keep the run locked: the transaction
+  carries its own `statement_timeout` and `idle_in_transaction_session_timeout`, so Postgres ends it and
+  the successor writes once.
 - **A property-based state machine** (`KeelMachine`) drives the real worker, engine, inbox, approvals,
   delegation, takeover, reaper, retries, circuit breaker, segments, streams, deadlines and key windows over
   an in-memory journal and a simulated clock, with kills at every boundary, zombie resumes, late responses,
@@ -264,6 +277,7 @@ declared effect class**:
 | `PURE` | closed as abandoned; re-run | effectively-once to the program |
 | `IDEMPOTENT` | re-sent under the **same key**, `effect_key = sha256(run_root ‖ step ‖ tool ‖ canonical args)`, bounded by the key window its retry policy declares (`max_elapsed_s`) and by three abandoned attempts; past either, it goes to a human | effectively-once, if the receiver honours the key |
 | `EXTERNAL` | **never re-sent blindly**: `STEP_AMBIGUOUS`, then the tool's declared resolution — a probe, `assume_failed`, `assume_succeeded`, or escalate to a human (`keel signal --resolve`) | at-least-once, or at-most-once, or a human's decision |
+| `TRANSACTIONAL` | closed as abandoned; re-run — its writes went through `tctx.db`, the journal's own connection, inside the transaction that would have committed `STEP_COMPLETED`, so an open attempt provably applied nothing | exactly-once, within the journal's database — the one place Keel claims it |
 
 A program that issues a different step than the journal recorded at that index is not guessed at: the run
 is SUSPENDED with `NondeterminismDetected`, naming the step. `keel replay --verify` re-executes a run
@@ -373,7 +387,9 @@ flowchart LR
   residual above is the price, and a key is the remedy. A file write that is idempotent by content could
   be reordered by a zombie; the per-epoch workspace closes that by construction for writes inside it (a
   stale worker writes into its dead epoch's directory), and no published cell measures it.
-- **Not built:** the `TRANSACTIONAL` effect class and the workload that needs it (W4); counterfactual
+- **Not built:** W4 (`side_effecting_order`), the workload that would put `TRANSACTIONAL` in the
+  cross-runtime matrix, with the World's `payments` and `email` services it calls and the effect-table
+  bridge it needs; counterfactual
   replay (FORK); a network partition between worker and receiver; a live UI (the pages are static);
   retention and archival of old runs; adapters for Hatchet, Inngest, native Temporal and Julep. The OTel
   export is checked against Langfuse's documented ingest, not against a live instance.

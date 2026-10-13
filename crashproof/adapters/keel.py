@@ -412,11 +412,15 @@ class KeelAdapter:
         ),
     }
     claims: dict[str, str] = {
-        # A fence protects the journal; it cannot reach a third party. So the only classes that can
-        # claim more than at-least-once are the ones where the *receiver* is doing the work.
+        # A fence protects the journal; it cannot reach a third party. So the classes that claim
+        # more than at-least-once are the ones where the *receiver* is doing the work — and
+        # TRANSACTIONAL, whose receiver is the journal's own database and whose writes commit in the
+        # fenced transaction with their outcome (§9.1): the one place exactly-once is claimed. No
+        # workload exercises it yet (W4 is not built); Keel's conformance cells do.
         "PURE": "effectively_once",
         "IDEMPOTENT": "effectively_once",
         "EXTERNAL": "at_least_once",
+        "TRANSACTIONAL": "exactly_once",
     }
 
     def __init__(self, workload: Workload, variant: str, *, template_db: str = "keel_template") -> None:

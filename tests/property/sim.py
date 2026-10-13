@@ -10,7 +10,9 @@ functions the benchmark calls. Four things are fake, and only four:
                   makes — attempt timeout, heartbeat, in-process backoff — goes through the clock's
                   `sleep`/`timeout` seam (§12.2), so a timeout fires because a rule said so
     the World     the harness's own `World`, in-process: its dedup and its oracle, with every call
-                  that leaves the process *held* until a rule lands it (`Held`)
+                  that leaves the process *held* until a rule lands it (`Held`). A TRANSACTIONAL
+                  tool's World is the journal's own tables (`MemoryJournal.tables`): its one row is
+                  written in the outcome transaction and read back as a landing only once committed
     the process   a worker is one asyncio task over a journal handle that dies with it; a kill is
                   abandonment (§11.10), a pause is a task whose timers stop firing
     the program   one data-driven program (`sim_agent`) and its child (`sim_child`), whose script and
@@ -413,6 +415,7 @@ class Sim:
         self.world = World(
             Endpoint(id=t.endpoint, service=t.name, kind="read" if t.cls == "PURE" else "write", dedup=t.dedup)
             for t in tools
+            if t.cls != "TRANSACTIONAL"
         )
         self.provider = SimProvider(self)
         self.keel = Keel(
@@ -461,6 +464,8 @@ class Sim:
     # --- plug-ins the runtime takes ---------------------------------------------------------
     def _tool(self, decl: ToolDecl) -> Any:
         async def fn(args: dict[str, Any], tctx: Any) -> Any:
+            if decl.cls == "TRANSACTIONAL":
+                return self._write_row(decl, dict(args), tctx)
             key = tctx.effect_key if decl.cls == "IDEMPOTENT" else None
             return await self.call(decl, dict(args), key)
 
@@ -482,6 +487,40 @@ class Sim:
 
             spec.probe_hook(probe)
         return spec
+
+    @staticmethod
+    def _row_label(decl: ToolDecl, args: dict[str, Any]) -> str:
+        """A TRANSACTIONAL row's logical identity: one per (run, script position), as the World's
+        labels are one per distinct request — so a second row for one call is a duplicate S1 counts."""
+        return f"{decl.endpoint}#{args['run']}:{args['n']}"
+
+    def _write_row(self, decl: ToolDecl, args: dict[str, Any], tctx: Any) -> dict[str, Any]:
+        """A TRANSACTIONAL tool's whole effect: one row in the journal's own table, staged in the
+        outcome transaction and committed with STEP_COMPLETED or dropped with it (§9.1). Never held:
+        the append holds the journal's lock while the tool runs, so a call parked there would park
+        every other worker and every rule behind it. Its windows are the boundaries inside that
+        transaction, which the crash and journal-fault rules reach."""
+        label = self._row_label(decl, args)
+        tctx.db.setdefault(decl.endpoint, []).append({
+            "label": label, "run_id": tctx.run_id, "step": tctx.step_index, "attempt": tctx.attempt_no,
+            "ts": self.clock.now().timestamp(), "effect_key": tctx.effect_key,
+        })
+        return {"external_ref": label}
+
+    def _rows(self) -> list[Landing]:
+        """Every committed TRANSACTIONAL row, as the landing it is: the bridge §14.1 names, read from
+        the table the tool writes rather than from anything the sim counted."""
+        return [
+            Landing(r["run_id"], r["step"], r["attempt"], r["label"], r["ts"], r["effect_key"], endpoint)
+            for endpoint, rows in self.journal.tables.items() for r in rows
+        ]
+
+    def applied_counts(self) -> dict[str, int]:
+        """What was applied, per logical identity: the World's, and the journal's own tables'."""
+        counts = dict(self.world.applied_counts())
+        for row in self._rows():
+            counts[row.label] = counts.get(row.label, 0) + 1
+        return counts
 
     async def call(self, decl: ToolDecl | None, args: dict[str, Any], key: str | None, *, stream: bool = False) -> Any:
         """Every call that leaves a worker. A PURE read lands at once; everything else is held."""
@@ -884,7 +923,7 @@ class Sim:
 
     def fingerprint(self) -> tuple:
         return (sum(len(v) for v in self.journal._events.values()), len(self.landings), len(self.errors),
-                tuple(w.state for w in self.workers.values()), sum(self.world.applied_counts().values()),
+                tuple(w.state for w in self.workers.values()), sum(self.applied_counts().values()),
                 sum(self.billed.values()))
 
     # --- invariants (§12.4) -----------------------------------------------------------------
@@ -933,20 +972,20 @@ class Sim:
         # S1, per endpoint, against each tool's own claim.
         for decl in self.decls.values():
             prefix = decl.endpoint + "#"
-            applied = {k: n for k, n in self.world.applied_counts().items() if k.startswith(prefix)}
+            applied = {k: n for k, n in self.applied_counts().items() if k.startswith(prefix)}
             v = invariants.verify(invariants.TrialFacts(world_applied=applied, effect_class=decl.cls,
                                                         claims={decl.cls: decl.claim}))
             assert v.as_dict()["S1"] != "FAIL", {"S1": v.findings["S1"].detail, "tool": decl}
         # S4/S10 and S6, sharp: every landing belongs to an attempt the journal STARTED, before any
-        # cancel acknowledgement of its run.
-        for landing in self.landings:
+        # cancel acknowledgement of its run. A committed TRANSACTIONAL row is a landing too.
+        for landing in self.landings + self._rows():
             start = started.get((landing.run_id, landing.step, landing.attempt))
             assert start is not None, {"S4": f"{landing} has no STEP_ATTEMPT_STARTED"}
             assert start.ts.timestamp() <= landing.ts, {"S4": f"{landing} precedes its STARTED"}
             acks = [e.seq for e in runs[landing.run_id] if e.type == "CANCEL_ACKNOWLEDGED"]
             assert not acks or start.seq < min(acks), {"S6": f"{landing} started after the cancel"}
-        # The World only grows.
-        for label, n in self.world.applied_counts().items():
+        # The World only grows — and so does every committed table: a rollback takes nothing back.
+        for label, n in self.applied_counts().items():
             assert n >= self._applied_high.get(label, 0), {"world": label}
             self._applied_high[label] = n
         self._checked = self.fingerprint()
@@ -959,7 +998,7 @@ class Sim:
 
     def facts(self, run_id: Any, evs: list[Any], st: Any) -> invariants.TrialFacts:
         effects = self.run(self.journal.effects(run_id))
-        mine = [l for l in self.landings if l.run_id == run_id]
+        mine = [l for l in self.landings + self._rows() if l.run_id == run_id]
         labels = {l.label for l in mine}
         required = []
         if st.phase == "COMPLETED":
@@ -968,9 +1007,11 @@ class Sim:
                 # A call the run was refused (a Policy gate rejected, a PolicyDenied) and routed
                 # around is not an effect it requires.
                 refused = st.steps[e.body.step_index].state in ("FAILED", "RESOLVED_FAILED") if decl else False
-                if decl is not None and decl.cls != "PURE" and not refused:
+                if decl is not None and decl.cls == "TRANSACTIONAL" and not refused:
+                    required.append(self._row_label(decl, e.body.args))
+                elif decl is not None and decl.cls != "PURE" and not refused:
                     required.append(self.world.label_for(decl.endpoint, e.body.args) or f"{decl.endpoint}#never")
-        applied = {k: n for k, n in self.world.applied_counts().items() if k in labels}
+        applied = {k: n for k, n in self.applied_counts().items() if k in labels}
         by_endpoint = {d.endpoint: d for d in self.decls.values()}
         for label, n in applied.items():
             # S7's count, in its sim form: what Keel is answerable for under one approval. A second
@@ -1085,6 +1126,9 @@ class Sim:
         An IDEMPOTENT attempt that landed and answered 5xx or nothing is no exemption: its row is
         AMBIGUOUS while a retry is pending and RESOLVED_UNKNOWN when none is left (§7.4 and §9.1 as
         amended after the property suite found it — `tests/property/regressions/test_k6_*`).
+
+        A TRANSACTIONAL row can never need one: its row and its COMMITTED status are one commit, so
+        either side without the other is the class broken (§9.1).
         """
         committed, rows, steps = set(), {}, {}
         for r in self.run_ids():
@@ -1093,10 +1137,10 @@ class Sim:
                 if e.status in ("COMMITTED", "RESOLVED_COMMITTED") and e.external_ref:
                     committed.add(e.external_ref)
             steps.update({(r, i): s for i, s in fold(self.events(r)).steps.items()})
-        applied = {k for k, n in self.world.applied_counts().items() if n > 0}
+        applied = {k for k, n in self.applied_counts().items() if n > 0}
         missing = sorted(committed - applied)
         unaccounted = sorted({
-            l.label for l in self.landings
+            l.label for l in self.landings + self._rows()
             if l.current and l.label in applied and l.label not in committed
             and getattr(rows.get((l.run_id, l.step)), "status", None) not in ("RESOLVED_UNKNOWN", "AMBIGUOUS")
             and getattr(steps.get((l.run_id, l.step)), "state", None) != "CANCELLED"

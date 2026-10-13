@@ -12,56 +12,76 @@ asserted. `applied` and `receipts` are what the World actually did and what it w
 to do, printed whatever the verdicts say: the gap between them is what the receiver's
 idempotency bought, and the runtime gets no credit for it.
 
+TRANSACTIONAL's World is the journal's own `issues` table (§9.1): its write commits in the
+outcome's transaction, so a committed row is its one receipt and its one application, and a
+row staged by a transaction the fault rolled back is neither. Its claim is `exactly_once`.
+
 | boundary | fault | class | window | disposal | applied | receipts | status | S1 | S3 | S4 | S5 | S7 | S8 | S9 | S10 | L1 | C1 | C2 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `before:intent_commit` | `crash` | PURE | no row/untouched | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:intent_commit` | `crash` | IDEMPOTENT | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:intent_commit` | `crash` | EXTERNAL | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:intent_commit` | `crash` | TRANSACTIONAL | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:intent_commit` | `journal_error` | PURE | no row/untouched | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | PASS | N/A |
 | `before:intent_commit` | `journal_error` | IDEMPOTENT | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | PASS | N/A |
 | `before:intent_commit` | `journal_error` | EXTERNAL | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | PASS | N/A |
+| `before:intent_commit` | `journal_error` | TRANSACTIONAL | no row/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | PASS | N/A |
 | `after:intent_commit` | `crash` | PURE | running/untouched | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:intent_commit` | `crash` | IDEMPOTENT | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:intent_commit` | `crash` | EXTERNAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `after:intent_commit` | `crash` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:attempt_commit` | `crash` | PURE | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:attempt_commit` | `crash` | IDEMPOTENT | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:attempt_commit` | `crash` | EXTERNAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `before:attempt_commit` | `crash` | TRANSACTIONAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:attempt_commit` | `journal_error` | PURE | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:attempt_commit` | `journal_error` | IDEMPOTENT | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:attempt_commit` | `journal_error` | EXTERNAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `before:attempt_commit` | `journal_error` | TRANSACTIONAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `after:attempt_commit` | `crash` | PURE | running/untouched | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:attempt_commit` | `crash` | IDEMPOTENT | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:attempt_commit` | `crash` | EXTERNAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `after:attempt_commit` | `crash` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `crash` | PURE | running/untouched | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `crash` | IDEMPOTENT | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `crash` | EXTERNAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:effect_exec` | `crash` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `raise` | PURE | settled/untouched | FAILED | 0 | 0 | FAILED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `raise` | IDEMPOTENT | settled/untouched | FAILED | 0 | 0 | FAILED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:effect_exec` | `raise` | EXTERNAL | settled/untouched | FAILED | 0 | 0 | FAILED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:effect_exec` | `raise` | TRANSACTIONAL | settled/untouched | FAILED | 0 | 0 | FAILED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:effect_exec` | `crash` | PURE | running/sent | COMPLETED | 0 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:effect_exec` | `crash` | IDEMPOTENT | running/sent | COMPLETED | 1 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:effect_exec` | `crash` | EXTERNAL | running/sent | RESOLVED_COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `after:effect_exec` | `crash` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:effect_exec` | `raise` | PURE | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `after:effect_exec` | `raise` | IDEMPOTENT | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `after:effect_exec` | `raise` | EXTERNAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `after:effect_exec` | `raise` | TRANSACTIONAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:outcome_commit` | `crash` | PURE | running/sent | COMPLETED | 0 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:outcome_commit` | `crash` | IDEMPOTENT | running/sent | COMPLETED | 1 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:outcome_commit` | `crash` | EXTERNAL | running/sent | RESOLVED_COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:outcome_commit` | `crash` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:outcome_commit` | `journal_error` | PURE | running/sent | COMPLETED | 0 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:outcome_commit` | `journal_error` | IDEMPOTENT | running/sent | COMPLETED | 1 | 2 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:outcome_commit` | `journal_error` | EXTERNAL | running/sent | RESOLVED_COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:outcome_commit` | `journal_error` | TRANSACTIONAL | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:outcome_commit` | `crash` | PURE | settled/sent | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:outcome_commit` | `crash` | IDEMPOTENT | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `after:outcome_commit` | `crash` | EXTERNAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `after:outcome_commit` | `crash` | TRANSACTIONAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_heartbeat` | `crash` | PURE | settled/sent | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_heartbeat` | `crash` | IDEMPOTENT | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_heartbeat` | `crash` | EXTERNAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:lease_heartbeat` | `crash` | TRANSACTIONAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_heartbeat` | `sleep` | PURE | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:lease_heartbeat` | `sleep` | IDEMPOTENT | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:lease_heartbeat` | `sleep` | EXTERNAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `before:lease_heartbeat` | `sleep` | TRANSACTIONAL | N/A | — | — | — | — | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | `before:lease_release` | `crash` | PURE | settled/sent | COMPLETED | 0 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_release` | `crash` | IDEMPOTENT | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:lease_release` | `crash` | EXTERNAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
+| `before:lease_release` | `crash` | TRANSACTIONAL | settled/sent | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | PASS | PASS | N/A |
 | `during:approval_wait` | `crash` | GATED | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:signal_consume` | `crash` | GATED | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | N/A |
 | `before:signal_consume` | `journal_error` | GATED | running/untouched | COMPLETED | 1 | 1 | COMPLETED | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | PASS | PASS | N/A |
@@ -96,7 +116,7 @@ invariant's inputs.
 
 ## Provenance
 
-54 cells run, 12 N/A, 0 failed. Regenerate with `uv run pytest tests/conformance -q`.
+66 cells run, 16 N/A, 0 failed. Regenerate with `uv run pytest tests/conformance -q`.
 
 All seventeen boundaries exist: the ten of the write path (§28.6), the three the inbox and
 approvals brought with them (§4.10), the two delegation brought (§4.11), the continuation

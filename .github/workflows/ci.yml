@@ -1,8 +1,8 @@
 # Two jobs, because two of this repository's claims need checking on every commit and they need
 # different things to run.
 #
-# `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 66 white-box
-# conformance cells (54 run, 12 N/A with the reason), the golden diff of the demo's printed lines —
+# `checks` needs no database at all: the unit suite, the Hypothesis state machine, the 82 white-box
+# conformance cells (66 run, 16 N/A with the reason), the golden diff of the demo's printed lines —
 # which is §28.7's named mitigation for "a demo that only works on the author's machine" — and every
 # published page re-rendered from its committed rows. It installs the LangGraph, DBOS, Temporal and Restate
 # extras, because a change to the shared harness that breaks an arm should fail here and not in an
@@ -10,9 +10,10 @@
 # opt-in, CRASHPROOF_TEMPORAL_TESTS=1 and CRASHPROOF_RESTATE_TESTS=1. restate-sdk has no Windows wheel,
 # so this Linux job is the only place the Restate arm's unit tests run on every commit.)
 #
-# `integration` needs Postgres, because the five control-plane statements are the one place the
-# MemoryJournal tests and the real store could disagree, and a durability claim checked only against
-# an in-memory fake is not checked.
+# `integration` needs Postgres, because the five control-plane statements, and the connection a
+# TRANSACTIONAL tool is lent (`tctx.db`: a staged dict in memory, a server-bounded psycopg connection
+# here), are where the MemoryJournal tests and the real store could disagree, and a durability claim
+# checked only against an in-memory fake is not checked.
 #
 # Both run the Python the published rows were measured on (every row pins 3.13), from the lockfile
 # as committed: `--locked` fails on a pyproject edit nobody re-locked instead of re-resolving it.

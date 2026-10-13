@@ -38,9 +38,9 @@ reasons they were not adopted as the implementation: none has effect classes, so
 the developer's problem; none distinguishes a model call from a tool call; none exposes
 `before:outcome_commit` as a boundary a white-box property suite can fire at; and the objective was to
 build the lease, the fence, the journal and the recovery table, not to configure them. Keel claims
-exactly-once for nothing: the specification reserves it for a TRANSACTIONAL class that commits the
-tool's own write in the outcome's transaction, and that class is not built — a tool that declares it is
-refused at registration rather than recovered as something weaker.
+exactly-once in one place: the TRANSACTIONAL class, whose tool writes through the journal's own
+connection inside the transaction that commits its outcome. It was built after the tag and is tested in
+Keel's own suites; no cross-runtime cell measures it, because W4, the workload that would, is not built.
 
 ## 2. The mechanism
 
@@ -58,10 +58,11 @@ AND lease_epoch = $2 AND lease_expires_at IS NOT NULL` — so a worker that has 
 run is parked with none, cannot commit another event. Losing line 3 is
 the ambiguity; losing line 1 would be an unjournaled effect, which is why S4 and S10 are invariants.
 
-**Effect classes decide what a crash means.** A tool declares exactly one of PURE, IDEMPOTENT or
-EXTERNAL (the specification's fourth, TRANSACTIONAL, is not built), and the class alone decides retry,
-replay and recovery. `STARTED` without an outcome re-runs a PURE step, re-fires an IDEMPOTENT one under
-the same `effect_key`, and makes an EXTERNAL one `AMBIGUOUS` — resolved by the tool's declared `probe`,
+**Effect classes decide what a crash means.** A tool declares exactly one of PURE, IDEMPOTENT, EXTERNAL
+or TRANSACTIONAL (the fourth built after the tag), and the class alone decides retry, replay and
+recovery. `STARTED` without an outcome re-runs a PURE step, re-fires an IDEMPOTENT one under the same
+`effect_key`, re-runs a TRANSACTIONAL one — its writes rolled back with the outcome transaction that
+would have carried them — and makes an EXTERNAL one `AMBIGUOUS`, resolved by the tool's declared `probe`,
 `assume_failed`, `assume_succeeded` or `escalate`, never guessed. A timeout on an EXTERNAL tool is the
 same state (§8.5): the request left, the receiver's state is unknown, and retrying is how correct
 systems duplicate.
@@ -73,8 +74,8 @@ no effect, and the first step without one becomes live. The successor decides fr
 deterministic under replay by construction, and `VERIFY` is the same loop with `allow_live=False`. All
 visible state is a pure fold over the journal.
 
-What Keel does not guarantee is stated once (§8.8): no exactly-once (reserved for TRANSACTIONAL, which is
-not built); no fencing of third-party APIs; no elimination of the zombie window for EXTERNAL; no detection
+What Keel does not guarantee is stated once (§8.8): no exactly-once beyond TRANSACTIONAL, whose boundary
+is the journal's own database; no fencing of third-party APIs; no elimination of the zombie window for EXTERNAL; no detection
 of a mis-declared class; no automatic compensation (a program or an operator can run a tool's declared
 undo, and Keel never calls one by itself); no protection against a receiver that drops keys; no survival
 of the single Postgres node's disk. Each is a named fault or a reported invariant.
@@ -111,8 +112,9 @@ with the input named, never PASS.
 
 **Three injection modes.** `shim` fires inside the SUT's client at three instants every runtime has;
 `proxy` fires at the network edge with the shim riding along observe-only; `hook` fires inside Keel's own
-write path at seventeen boundaries no shim can reach, and its 66 cells (54 run, 12 N/A with the reason)
-print in [their own table](../bench/keel_conformance/table.md), never unioned with a cross-runtime row.
+write path at seventeen boundaries no shim can reach, and its 66 cells at the tag (54 run, 12 N/A with the
+reason; 82 since TRANSACTIONAL's 16 were added after it, 66 run and 16 N/A) print in [their own
+table](../bench/keel_conformance/table.md), never unioned with a cross-runtime row.
 
 ## 4. The matrix
 
@@ -225,8 +227,8 @@ resume — fixed (`8d90198`) before the release run.
 
 **The zombie.** A worker paused past its lease can still complete the HTTP call whose `STARTED` it
 committed; its outcome append is fenced, so the journal never records an effect the receiver has.
-Fencing protects journal appends and nothing else (§8.4; the TRANSACTIONAL effects it would also cover are
-not built). Keel bounds the
+Fencing protects journal appends and TRANSACTIONAL effects, which share the fenced transaction, and
+nothing else (§8.4). Keel bounds the
 window three ways — a pre-dispatch check that `lease_valid_until − now ≥ tool.timeout`, an
 `attempt_deadline` committed in `STARTED`, and a reaper that orphans a run with an open non-PURE attempt
 only when `now() > max(lease_expires_at, attempt_deadline)` — and eliminates it with none. A `probe` is
@@ -396,8 +398,9 @@ at-least-once and exploratory under K3; Restate's 4 of 60 was the harness.
 - **Workloads and faults.** W1, W5, W5-pre and the re-ask cell on every arm; W3 and W7 on the Keel arm
   only ([v1_w3](../bench/reports/v1_w3.md), [v1_w7](../bench/reports/v1_w7.md): 3 and 13 cells, every
   safety row PASS, L1 30/30, W3's kill and freeze at the 23rd put applied once and receipted twice), the
-  spec files naming why each other arm is N/A or not yet bound. W4 is cut (it needs TRANSACTIONAL and the
-  effect-table bridge, neither built); W6 has no cited child mechanism in any engine.
+  spec files naming why each other arm is N/A or not yet bound. W4 is cut (it needs the workload itself,
+  the World's `payments` and `email` services and the effect-table bridge, none built; TRANSACTIONAL, the
+  class it exists for, was built after the tag); W6 has no cited child mechanism in any engine.
   `partition_worker_world` is not built; `tool_duplicate_response` was built after the tag, Keel-only
   ([dup_response](../bench/reports/dup_response.md)); `provider_outage` ran in shim
   mode only; `kill @ landmark:approval_decided` did not run.
@@ -439,7 +442,7 @@ at-least-once and exploratory under K3; Restate's 4 of 60 was the harness.
 | K3 unfair triggers | **fired**, at `after:tool_return`, on both of §30's clauses. Over the shim screening trials `crashproof placement` reads 70 % / 63 % in window (`native`, EXTERNAL / IDEMPOTENT) and 47 % / 53 % (`pydantic_ai`); over the confirmation trials, which is the tier the grid publishes the two EXTERNAL cells at, 80 % and 68 %, against Keel's 300/300. The between-arms clause fires at 53 and 47 points across runtimes and at 23 points between DBOS's own two adapters. Every other tool-boundary trigger is 100 % on every arm at both tiers. §30's decision is that shim cross-runtime cells are not publishable, with the fallback that claims move to `proxy` mode and shim cells demote to exploratory: the trigger that failed has a proxy twin in every band and on every arm, and the cross-runtime reading at it rests there; those four DBOS cells are exploratory; and the rest of the shim set, whose every tool-boundary trigger is 100 % in window on every arm, is still published — a departure from §30's letter, stated as one. The placement pages are in [`bench/instrument/`](../bench/instrument/README.md) |
 | K4 window too narrow | week 3's; the widths in §6 are `crashproof placement --window` over the release baselines ([`window_v1_w1_shim`](../bench/instrument/window_v1_w1_shim.md)), medians 8.2–26.6 ms; the kill rate it also needs is not measured |
 | K5 adapter infeasible | not fired: DBOS ×2, Temporal and Restate express W1, W5, W5-pre in cited primitives with no counter, lookup, retry or dedup of the adapter's own; what they cannot express is N/A with the reason (S7; S4/S5; C1 for DBOS and Restate; W6) |
-| K6 Keel fails itself | not fired on §30's own measurement, which is a `hook`-mode conformance cell failing S1–S10 or C1–C3: none does (54 run, 12 N/A, 0 failed — judged on S1, S3–S5, S7–S9, L1, C1 and C2 wherever each has inputs, and on S10 as well since the tag). Two design defects were found by other instruments — the IDEMPOTENT unknown outcome from the property suite (`c509409`, §7.4 / §9.1 / §8.7 amended in `794161f`) and `events_resolved_once` keyed per step rather than per attempt from the confirmation tier (`2ffbe91`, §6.2 amended). §30's K6 fallback is four things: stop adding adapters, fix the design, amend the sections, re-run the matrix at the same `(spec_hash, seed)` and publish the diff. The first three were done for both, and no adapter was added after either fix. The re-run was done after the tag, over Keel's trials: §30 says the whole matrix, but both fixes are in Keel's code, and the one change between `251e52d` and the tag that the other arms run (`7a22596`, how the trial logs append) touches lines no metric reads. All 4 200 published Keel trials ran again at `v1` (`4b8eb62`) at the same `(spec_hash, seed)` (`bench/results/k6_*`, every row re-verified; `scripts/k6_compare.py` prints the diff from the committed rows): 4 199 pairs, **0 verdict flips**, two statuses FAILED → COMPLETED — seed 100067, named in §6, and seed 100099, the proxy baseline whose host-load timeouts did not recur. Raw counts moved in the freeze cells' timing races — the EXTERNAL residual 97 → 108 of 300 at confirmation and 4 → 2 of 30 at screening, the IDEMPOTENT receipts 18 → 7 — and wherever a count is read against seed 100099's baseline: its duplicate receipts 3 → 0, and its `kill@after:tool_return` twin's divergence 1 → 0 and extra model calls 2 → 0. The published pages keep the `251e52d` rows |
+| K6 Keel fails itself | not fired on §30's own measurement, which is a `hook`-mode conformance cell failing S1–S10 or C1–C3: none does (54 run, 12 N/A, 0 failed at the tag; 66 run, 16 N/A, 0 failed since TRANSACTIONAL's 16 rows were added after it — judged on S1, S3–S5, S7–S9, L1, C1 and C2 wherever each has inputs, and on S10 as well since the tag). Two design defects were found by other instruments — the IDEMPOTENT unknown outcome from the property suite (`c509409`, §7.4 / §9.1 / §8.7 amended in `794161f`) and `events_resolved_once` keyed per step rather than per attempt from the confirmation tier (`2ffbe91`, §6.2 amended). §30's K6 fallback is four things: stop adding adapters, fix the design, amend the sections, re-run the matrix at the same `(spec_hash, seed)` and publish the diff. The first three were done for both, and no adapter was added after either fix. The re-run was done after the tag, over Keel's trials: §30 says the whole matrix, but both fixes are in Keel's code, and the one change between `251e52d` and the tag that the other arms run (`7a22596`, how the trial logs append) touches lines no metric reads. All 4 200 published Keel trials ran again at `v1` (`4b8eb62`) at the same `(spec_hash, seed)` (`bench/results/k6_*`, every row re-verified; `scripts/k6_compare.py` prints the diff from the committed rows): 4 199 pairs, **0 verdict flips**, two statuses FAILED → COMPLETED — seed 100067, named in §6, and seed 100099, the proxy baseline whose host-load timeouts did not recur. Raw counts moved in the freeze cells' timing races — the EXTERNAL residual 97 → 108 of 300 at confirmation and 4 → 2 of 30 at screening, the IDEMPOTENT receipts 18 → 7 — and wherever a count is read against seed 100099's baseline: its duplicate receipts 3 → 0, and its `kill@after:tool_return` twin's divergence 1 → 0 and extra model calls 2 → 0. The published pages keep the `251e52d` rows |
 | K7 not reproducible | **fired**, on the `void_rate` clause: `langgraph.exit`'s two proxy `kill@after:tool_return` cells are 21 and 25 of 30 void — 70 % and 83 % against §30's threshold of 5 % — because the kill from outside the process races exit mode's own process exit; §30's fallback reads in full "Move the affected fault types to `hook` mode (deterministic with `MemoryJournal` + `FakeClock`) or to proxy cells; publish nothing from them until the recheck is byte-identical" — and these already *are* the proxy cells, while their recheck is byte-identical, so the fallback as written asks for nothing further. The release withholds them anyway, which is stricter than §30 requires and follows its own "decision forced" column, *the harness, not the runtimes, is being measured*: the grid **withdraws** any cell over the 5 % threshold, printing its void and raw counts and no verdict (`d65fa33`, a rule over the rows themselves). The shim twins are not a substitute: §7's agreement column records that they disagree with these cells (`duplicate_effects` 9/0 on the nine proxy trials that scored), which is the instrument finding rather than a reading to inherit. No other cell of any set leaves a trial void: 46 of 18 540, all in those two, the void rows elsewhere being ones a re-take superseded. 18 843 rows, `keel_commit` `251e52d` on every row. The confirmation tier's 5 100 trials each re-verified from their own trial directory (`119d605`). Over the release rows `verify --recheck`'s first pass reported one drift that was the gate's own: a void shim row had been re-taken, and recheck compared the superseded row with the re-take's trial directory. `ef203c4`, a child of `251e52d` that changes only `verify --recheck` (`crashproof/cli/main.py` and its unit test), makes it skip a superseded row; no page records a recheck result — recheck reads trial directories, which are not committed — so the gate's result is stated here rather than rendered: every published row of every v1 set re-verifies, and the confirmation tier's 5 100 did so cell by cell. The no-op-commit flip clause was run for the release: 300 `(spec_hash, seed)` pairs of ten `week2_w1_shim` cells, re-run at `251e52d` plus one blank line in README.md (`bench/results/k7_noop`), flip **0 of 300** safety verdicts and no L or C verdict; raw counts moved only in the three timing races — DBOS `native` T3 21 → 25, Keel's freeze residual 4 → 9, Temporal's freeze 47 → 45 — and Restate's cells were not in the sample |
 | K8 no power | not fired: after confirmation ([v1.yaml](../bench/confirm/v1.yaml), 17 cells at n = 300) the non-safety comparisons are not all `too noisy to claim` — `logical_correctness` is A better at that n in all four confirmed fault cells (300/300 against 59/300 and 95/300 at the shim's T3, 6/300 and 203/300 at the proxy's), Holm p 0.0000. `recovery_rate` is still `too noisy to claim` in every W1 cell, the same reading at ten times the seeds; the one cell where it claims anything is W5's `approval_expiry`, A better against each of LangGraph ×3 at thirty seeds, 30/30 against 0/30 |
 | K9 prior-art collision | **has not fired on §30's text, and its remedy is applied anyway.** The measurement is one conjunction — a common agent workload, under process kills, across ≥ 2 durable-execution runtimes, with an external oracle. [crashpoint](https://github.com/mstevens843/crashpoint) has the kills, five engines and the oracle, and a single-effect workload. [agent-crash-recovery](https://github.com/paolo-perrone/agent-crash-recovery) has the agent and the kills across four implementations, and counts inside the agent, with no receiver outside it. Neither meets every clause, so the threshold is not met — and a novelty claim resting on that gap is not one worth making, so §10 cites both and the headline is what neither checks. Nothing is retracted: this page has never used the word "first". jepsen.io/analyses, re-checked 2026-09-18, still lists no analysis of these engines |

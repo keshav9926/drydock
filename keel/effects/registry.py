@@ -48,6 +48,13 @@ class ToolCtx:
     #: STREAMS only (§24.3): `await tctx.emit(chunk)` journals what the tool has produced so far, as
     #: STEP_CHUNK batches. Observability, never the result; None for a tool that does not stream.
     emit: Callable[..., Any] | None = None
+    #: TRANSACTIONAL only (§9.1): the journal's own connection, inside the transaction that commits
+    #: this attempt's outcome — on Postgres a `psycopg.AsyncConnection` of its own, closed with the
+    #: transaction; on the memory backend the journal's tables (`MemoryJournal.tables`). The tool's
+    #: writes commit with STEP_COMPLETED or not at all. Never `COMMIT` or `ROLLBACK` it, and catch an
+    #: error only inside `async with tctx.db.transaction()` (a savepoint): a tool that hands back an
+    #: aborted or ended transaction fails its step (`AppendTx.tool_done`). None for every other class.
+    db: Any = None
 
 
 class ToolSpec:
@@ -86,13 +93,12 @@ class ToolSpec:
     def _validate(self) -> None:
         if Modifier.STREAMS in self.modifiers and self.effect_class is EffectClass.TRANSACTIONAL:
             raise ContractViolation(f"{self.name}: STREAMS is never valid with TRANSACTIONAL")
-        if self.effect_class is EffectClass.TRANSACTIONAL:
-            # §9.1's TRANSACTIONAL commits the tool's SQL in the outcome's own transaction on `tctx.db`,
-            # the journal's connection; that, and the effect-table bridge, are cut with W4 (§29.1). A tool
-            # declared TRANSACTIONAL would otherwise recover like PURE: refused, not silently weakened.
+        if self.effect_class is EffectClass.TRANSACTIONAL and not _takes_tctx(self._fn):
+            # §9.1's registration table: the effect *is* the tool's writes on `tctx.db`, so a tool that
+            # cannot be handed the context cannot make one. A tool that opens its own connection
+            # cannot be detected here; it is not TRANSACTIONAL, and its contract says so.
             raise ToolRegistrationError(
-                f"{self.name}: TRANSACTIONAL is not built (it needs tctx.db, cut with W4); "
-                "declare IDEMPOTENT with a key or EXTERNAL with a resolution"
+                f"{self.name}: a TRANSACTIONAL tool writes through tctx.db, so it must take (args, tctx)"
             )
         if self.partial_ok and self.effect_class is not EffectClass.PURE:
             raise ContractViolation(f"{self.name}: partial_ok is only valid with PURE")
@@ -122,6 +128,12 @@ class ToolSpec:
             raise ToolRegistrationError(f"{self.name}.compensate: IDEMPOTENT needs idempotency KEY or CONTENT")
 
         def attach(f: Callable[..., Any]) -> Callable[..., Any]:
+            if effect is EffectClass.TRANSACTIONAL and len(inspect.signature(f).parameters) < 4:
+                # Its effect is its writes on `tctx.db`, and only the four-argument form is handed one.
+                raise ToolRegistrationError(
+                    f"{self.name}.compensate: a TRANSACTIONAL undo writes through tctx.db, so it must take"
+                    " (effect_key, args, result, tctx)"
+                )
             self.compensate, self.compensate_effect, self.compensate_idempotency = f, effect, idempotency
             return f
 
@@ -169,6 +181,15 @@ def tool(
         return spec
 
     return wrap
+
+
+def _takes_tctx(fn: Callable[..., Any]) -> bool:
+    """Whether `fn(args, tctx)` binds — the call `ToolSpec.run` makes."""
+    try:
+        inspect.signature(fn).bind(None, None)
+    except TypeError:
+        return False
+    return True
 
 
 def compensation_spec(base: ToolSpec) -> ToolSpec:
@@ -267,6 +288,7 @@ class _ToolExecutor:
             credentials={n: os.environ[n] for n in spec.secrets if n in os.environ},
             resources=sctx.resources,
             emit=sctx.emit,
+            db=sctx.db,
         )
         result = await spec.run(intent.args, tctx)
         external_ref = result.get("external_ref") if isinstance(result, dict) else None

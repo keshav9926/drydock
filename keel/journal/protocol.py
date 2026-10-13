@@ -217,13 +217,37 @@ class AppendTx(Protocol):
 
     async def set_run(self, **fields: Any) -> None: ...
 
+    async def tool_db(self, timeout_s: float) -> Any:
+        """`tctx.db` for a TRANSACTIONAL tool (§9.1): this transaction's own connection, on which the
+        fence has already run, so the tool's writes commit with the outcome event or not at all.
+
+        `timeout_s` is a bound the *store* enforces on this transaction, beside the worker's own
+        timer: the fence holds the run's row from the first statement to the commit, and a holder
+        that freezes inside the transaction would keep it locked — past the reaper, past its lease.
+        Only the server can end a transaction whose client has stopped."""
+        ...
+
+    async def tool_done(self) -> None:
+        """Called when a TRANSACTIONAL tool returns, while a failure is still the tool's: the tool must
+        hand its transaction back as it found it — open and healthy — and a deferred constraint is
+        checked now rather than at the commit, where its violation would be the journal's. Raises
+        `ContractViolation` for a transaction the tool aborted (an error it caught without a savepoint)
+        or ended (a `COMMIT` or `ROLLBACK` it ran)."""
+        ...
+
+    def lost(self) -> bool:
+        """Whether this transaction's connection has gone — broken or closed under it. An error a
+        TRANSACTIONAL tool's SQL raised on a live connection is the tool's own outcome, whatever its
+        class; on a lost one it is the store going away (§8.2)."""
+        ...
+
     async def consume_signal(self, signal_id: SignalId, seq: int) -> None:
         """`UPDATE signals SET consumed_seq = $seq WHERE signal_id = $s AND consumed_seq IS NULL`.
 
         In *this* transaction, with the event that records what was done about it. That co-commit
         is the whole guarantee of the inbox: a signal cannot be applied without being consumed, and
         cannot be consumed without the journal saying so. It is the same same-database-transaction
-        argument §5.6 makes for TRANSACTIONAL tools, a class specified and not built.
+        argument §5.6 makes for TRANSACTIONAL tools, whose writes share the outcome's transaction.
         """
         ...
 
@@ -315,7 +339,10 @@ class JournalBackend(Protocol):
 
     async def acquire(self, run_id: RunId, worker_id: str, ttl: timedelta) -> Lease | None: ...
 
-    def append(self, lease: Lease) -> AbstractAsyncContextManager[AppendTx]: ...
+    def append(self, lease: Lease, *, lend: bool = False) -> AbstractAsyncContextManager[AppendTx]:
+        """One fenced append transaction. `lend=True` is a TRANSACTIONAL attempt's: its connection is
+        lent to the tool (`AppendTx.tool_db`), so it must be one nothing else will use after it."""
+        ...
 
     async def heartbeat(self, lease: Lease, ttl: timedelta) -> bool: ...
 

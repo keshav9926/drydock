@@ -18,11 +18,12 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from keel.core.errors import DuplicateEffectKey, Fenced, IllegalTransition, WakeRaced
+from keel.core.errors import ContractViolation, DuplicateEffectKey, Fenced, IllegalTransition, WakeRaced
 from keel.core.ids import EffectKey, RunId, uuid7
 from keel.events import Envelope, Event
 from keel.events.registry import CURRENT, body_from_payload, payload_of
@@ -177,6 +178,39 @@ class _PgAppendTx:
             " WHERE run_id = %s AND lease_epoch = %s",
             (*values, self._lease.run_id, self._lease.epoch),
         )
+
+    async def tool_db(self, timeout_s: float) -> psycopg.AsyncConnection:
+        """The connection itself (§9.1) — one of its own, never the pool's (`append(lend=True)`) —
+        bounded by the server: no statement may run, and the transaction may not sit idle, longer than
+        `timeout_s`. A frozen holder's transaction is then ended by Postgres, its row lock with it.
+        `set_config(..., true)` is SET LOCAL, so the bound ends with this transaction."""
+        ms = str(max(1, round(timeout_s * 1000)))
+        await self._conn.execute(
+            "SELECT set_config('statement_timeout', %s, true),"
+            " set_config('idle_in_transaction_session_timeout', %s, true)",
+            (ms, ms),
+        )
+        return self._conn
+
+    async def tool_done(self) -> None:
+        status = self._conn.info.transaction_status
+        if status == TransactionStatus.INERROR:
+            raise ContractViolation(
+                "the tool returned with its transaction aborted: an error caught without a savepoint still"
+                " aborts it — catch it inside `async with tctx.db.transaction()`"
+            )
+        if status != TransactionStatus.INTRANS:
+            raise ContractViolation(
+                "the tool ended the transaction it was lent (a COMMIT or ROLLBACK): its writes are no longer"
+                " the outcome's"
+            )
+        await self._conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+    def lost(self) -> bool:
+        """A server that ended the session (the bound above, or anything else) leaves the connection
+        broken and closed; a statement that merely failed — a serialization failure, a cancelled
+        query, a constraint — leaves it open with the transaction aborted. Only the first is an outage."""
+        return self._conn.broken or self._conn.closed
 
     # --- the wake path (§5.4 (4), (7)) -------------------------------------------
     async def pending_signals(self) -> list[SignalRow]:
@@ -527,18 +561,23 @@ class PostgresJournal:
         return True
 
     @asynccontextmanager
-    async def append(self, lease: Lease):
+    async def append(self, lease: Lease, *, lend: bool = False):
         try:
             pool = await self._ready()
-            async with pool.connection() as conn:
+            async with self._lent_connection() if lend else pool.connection() as conn:
                 tx = _PgAppendTx(self, lease, conn)
                 try:
                     async with conn.transaction():
                         if not await self._fence(conn, lease):
                             raise Fenced(f"run {lease.run_id} epoch {lease.epoch}")
                         yield tx
-                except BaseException:
+                except BaseException as exc:
                     lease.next_seq = tx.start_seq  # the counter is rewound on rollback (§6.3)
+                    if isinstance(exc, psycopg.Error) and (conn.broken or conn.closed):
+                        # The server ended the session: an outage, whatever the error is called. A
+                        # session ended for idling in a transaction reads as an OperationalError on
+                        # Windows and as 25P03, an InternalError, on Linux.
+                        raise StoreUnavailable(str(exc)) from exc
                     raise
         except psycopg.OperationalError as exc:
             # The store is gone, not the program. Re-raised as `StoreUnavailable` so the worker
@@ -548,6 +587,17 @@ class PostgresJournal:
             # "the store was unavailable" would hide the very thing the unique indexes exist to
             # catch.
             raise StoreUnavailable(str(exc)) from exc
+
+    @asynccontextmanager
+    async def _lent_connection(self) -> AsyncIterator[psycopg.AsyncConnection]:
+        """The connection a TRANSACTIONAL tool is lent: opened for its one transaction and closed after
+        it, never the pool's. A row factory, an adapter, a session SET or an advisory lock the tool left
+        on it would otherwise reach the next borrower — and the next fence reads `row[0]`."""
+        conn = await psycopg.AsyncConnection.connect(self.dsn)
+        try:
+            yield conn
+        finally:
+            await conn.close()
 
     async def heartbeat(self, lease: Lease, ttl: timedelta | None = None) -> bool:
         pool = await self._ready()
