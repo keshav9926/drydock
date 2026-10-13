@@ -405,9 +405,9 @@ docker compose up -d postgres
 uv run keel db migrate --app keel.agents.demo:app
 
 uv run crashproof demo                                 # the one command
-uv run pytest tests/unit tests/property tests/conformance -q  # no database; 511 pass with the three arms' extras
+uv run pytest tests/unit tests/property tests/conformance -q  # no database; 552 pass with the three arms' extras (CI)
 KEEL_TEST_DSN=postgresql://keel:keel@localhost:5432/keel \
-  uv run pytest tests/integration -q                                    # 39 pass against Postgres
+  uv run pytest tests/integration -q                                    # 52 pass against Postgres (CI)
 
 uv run crashproof bench --matrix bench/specs/week2_w1_shim.yaml --cells 'keel.*' --out out/keel
 uv run crashproof verify out/keel/results.jsonl --recheck               # re-derive every row from its trial
